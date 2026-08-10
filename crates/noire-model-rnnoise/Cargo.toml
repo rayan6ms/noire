@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 nnnoiseless = { workspace = true, optional = true }
-noire-model = { path = "../noire-model" }
+noire-model.workspace = true
 
 [features]
 default = []
@@ -17,4 +17,3 @@ rnnoise = ["dep:nnnoiseless"]
 
 [lints]
 workspace = true
-

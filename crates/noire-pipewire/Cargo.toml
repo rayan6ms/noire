@@ -9,8 +9,8 @@ repository.workspace = true
 
 [dependencies]
 libspa = { workspace = true, optional = true }
-noire-core = { path = "../noire-core" }
-noire-dsp = { path = "../noire-dsp" }
+noire-core.workspace = true
+noire-dsp.workspace = true
 pipewire = { workspace = true, optional = true }
 rtrb = { workspace = true, optional = true }
 
@@ -20,4 +20,3 @@ pipewire-backend = ["dep:libspa", "dep:pipewire", "dep:rtrb"]
 
 [lints]
 workspace = true
-

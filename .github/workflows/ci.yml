@@ -48,6 +48,66 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo +1.97.0 doc --workspace --no-deps --locked
 
+  supply-chain:
+    name: Supply chain and policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      CARGO_AUDIT_VERSION: "0.22.2"
+      CARGO_AUDIT_SHA256: "7fb9497f8594b389e5fce5ef9b92db08432996895b2e0c5a0167a69ed445c428"
+      CARGO_DENY_VERSION: "0.20.2"
+      CARGO_DENY_SHA256: "9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal --no-self-update
+
+      - name: Install verified policy tools
+        run: |
+          tool_dir="$RUNNER_TEMP/noire-policy-tools"
+          bin_dir="$tool_dir/bin"
+          mkdir -p "$bin_dir"
+
+          deny_archive="$tool_dir/cargo-deny.tar.gz"
+          curl --proto '=https' --tlsv1.2 --retry 3 --fail --silent --show-error \
+            --location --output "$deny_archive" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$CARGO_DENY_VERSION/cargo-deny-$CARGO_DENY_VERSION-x86_64-unknown-linux-musl.tar.gz"
+          printf '%s  %s\n' "$CARGO_DENY_SHA256" "$deny_archive" | sha256sum --check --strict
+          tar -xzf "$deny_archive" -C "$tool_dir"
+          install -m 0755 \
+            "$tool_dir/cargo-deny-$CARGO_DENY_VERSION-x86_64-unknown-linux-musl/cargo-deny" \
+            "$bin_dir/cargo-deny"
+
+          audit_archive="$tool_dir/cargo-audit.tar.gz"
+          curl --proto '=https' --tlsv1.2 --retry 3 --fail --silent --show-error \
+            --location --output "$audit_archive" \
+            "https://github.com/rustsec/rustsec/releases/download/cargo-audit/v$CARGO_AUDIT_VERSION/cargo-audit-x86_64-unknown-linux-musl-v$CARGO_AUDIT_VERSION.tgz"
+          printf '%s  %s\n' "$CARGO_AUDIT_SHA256" "$audit_archive" | sha256sum --check --strict
+          tar -xzf "$audit_archive" -C "$tool_dir"
+          install -m 0755 \
+            "$tool_dir/cargo-audit-x86_64-unknown-linux-musl-v$CARGO_AUDIT_VERSION/cargo-audit" \
+            "$bin_dir/cargo-audit"
+
+          printf '%s\n' "$bin_dir" >> "$GITHUB_PATH"
+
+      - name: Check dependency policy
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.0
+        run: cargo-deny --locked check
+
+      - name: Audit the locked dependency graph
+        run: cargo-audit audit --deny warnings --file Cargo.lock
+
+      - name: Enforce the empty unsafe allowlist
+        run: |
+          if grep --recursive --line-number --word-regexp \
+            --include='*.rs' unsafe crates; then
+            echo "unsafe Rust requires an explicit SECURITY.md allowlist entry" >&2
+            exit 1
+          fi
+
   msrv:
     name: MSRV 1.92
     runs-on: ubuntu-24.04

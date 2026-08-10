@@ -23,6 +23,5 @@ cargo check --workspace --all-targets
 Noire does not modify global PipeWire or WirePlumber configuration, upload audio,
 or require a graphical session for daemon and CLI use.
 
-Source code is licensed under `GPL-3.0-or-later`. The original Noire icon is
-licensed under `CC-BY-SA-4.0`.
-
+Source code is licensed under [GPL-3.0-or-later](LICENSE). The original Noire
+icon is licensed under [CC-BY-SA-4.0](icons/LICENSE).

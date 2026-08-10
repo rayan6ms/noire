@@ -9,9 +9,8 @@ repository.workspace = true
 
 [dependencies]
 clap.workspace = true
-noire-core = { path = "../noire-core" }
-noire-ipc = { path = "../noire-ipc" }
+noire-core.workspace = true
+noire-ipc.workspace = true
 
 [lints]
 workspace = true
-

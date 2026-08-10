@@ -10,11 +10,11 @@ repository.workspace = true
 [dependencies]
 anyhow = { workspace = true, optional = true }
 clap.workspace = true
-noire-config = { path = "../noire-config" }
-noire-core = { path = "../noire-core" }
-noire-ipc = { path = "../noire-ipc" }
-noire-model = { path = "../noire-model" }
-noire-pipewire = { path = "../noire-pipewire" }
+noire-config.workspace = true
+noire-core.workspace = true
+noire-ipc.workspace = true
+noire-model.workspace = true
+noire-pipewire.workspace = true
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
@@ -25,4 +25,3 @@ runtime = ["dep:anyhow", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "
 
 [lints]
 workspace = true
-

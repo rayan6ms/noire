@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-noire-core = { path = "../noire-core" }
+noire-core.workspace = true
 serde = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
@@ -20,4 +20,3 @@ default = []
 
 [lints]
 workspace = true
-

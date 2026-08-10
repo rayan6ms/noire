@@ -9,7 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-noire-core = { path = "../noire-core" }
+noire-core.workspace = true
 proptest = { workspace = true, optional = true }
 
 [features]
@@ -18,4 +18,3 @@ properties = ["dep:proptest"]
 
 [lints]
 workspace = true
-

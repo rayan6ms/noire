@@ -14,8 +14,8 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 gtk4 = { workspace = true, optional = true }
-noire-core = { path = "../noire-core" }
-noire-ipc = { path = "../noire-ipc" }
+noire-core.workspace = true
+noire-ipc.workspace = true
 
 [features]
 default = []
@@ -23,4 +23,3 @@ gtk-ui = ["dep:gtk4"]
 
 [lints]
 workspace = true
-
