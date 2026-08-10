@@ -16,6 +16,7 @@ rtrb = { workspace = true, optional = true }
 
 [features]
 default = []
+native-test = ["pipewire-backend"]
 pipewire-backend = ["dep:libspa", "dep:pipewire", "dep:rtrb"]
 
 [lints]

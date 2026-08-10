@@ -7,6 +7,8 @@ mod capture;
 mod connection;
 mod format;
 mod registry;
+#[cfg(feature = "native-test")]
+mod synthetic;
 
 pub use capture::{
     CaptureBufferError, CaptureCounters, CaptureProcessor, CaptureReport, CaptureSink,
@@ -28,4 +30,8 @@ pub use registry::{
     AdvertisedFormat, DeviceAvailability, DeviceSelector, InputResolution, InputUnavailable,
     NodeDescriptor, NodeProperties, REGISTRY_COALESCE_MILLIS, RESERVED_NODE_NAME, RegistryMonitor,
     RegistrySnapshot, SelectionPolicy,
+};
+#[cfg(feature = "native-test")]
+pub use synthetic::{
+    SYNTHETIC_SOURCE_RATE, SyntheticSource, SyntheticSourceError, SyntheticSourceTelemetry,
 };

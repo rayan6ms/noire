@@ -242,13 +242,14 @@ jobs:
             ~/.cargo/git/db
           key: cargo-sources-v1-headless-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
 
-      - name: Install PipeWire build requirements
+      - name: Install PipeWire build and session requirements
         run: |
           {
             sudo apt-get update
             sudo apt-get install --no-install-recommends --yes \
-              gcc pkg-config libclang-dev \
-              libpipewire-0.3-dev libspa-0.2-dev
+              gcc pkg-config libclang-dev dbus-daemon \
+              libpipewire-0.3-dev libspa-0.2-dev \
+              pipewire pipewire-bin wireplumber
             pkg-config --modversion libpipewire-0.3
             pkg-config --modversion libspa-0.2
           } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-packages.log"
@@ -260,13 +261,16 @@ jobs:
           python3 .github/scripts/verify_headless_boundary.py \
             2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/headless-boundary.log"
 
-      - name: Build and test without UI assets or a session
+      - name: Build and test without UI assets
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.0
         run: |
           {
             headless_source="$RUNNER_TEMP/noire-headless-source"
             mkdir -p "$headless_source"
             git archive --format=tar HEAD -- \
               Cargo.toml Cargo.lock rust-toolchain.toml crates \
+              .github/scripts/run_pipewire_session.sh \
               | tar -xf - -C "$headless_source"
             cd "$headless_source"
 
@@ -281,6 +285,10 @@ jobs:
               cargo +1.97.0 test --package noired --package noirectl \
                 --features noired/runtime,noired/pipewire-backend \
                 --locked
+
+            NOIRE_PIPEWIRE_LOG_DIR="$RUNNER_TEMP/noire-ci-logs" \
+              NOIRE_PIPEWIRE_TEST_SECONDS=5 \
+              dbus-run-session -- .github/scripts/run_pipewire_session.sh
           } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-headless.log"
 
       - name: Upload failure evidence

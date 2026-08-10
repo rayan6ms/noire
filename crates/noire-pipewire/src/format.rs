@@ -80,6 +80,13 @@ impl std::error::Error for NegotiatedFormatError {}
 /// Returns the serializer error if the fixed SPA object cannot be encoded.
 #[cfg(feature = "pipewire-backend")]
 pub fn build_capture_format_pod() -> Result<Vec<u8>, libspa::pod::serialize::GenError> {
+    build_raw_audio_format_pod(CANONICAL_CAPTURE_FORMAT.sample_rate)
+}
+
+#[cfg(feature = "pipewire-backend")]
+pub(crate) fn build_raw_audio_format_pod(
+    sample_rate: u32,
+) -> Result<Vec<u8>, libspa::pod::serialize::GenError> {
     use std::io::Cursor;
 
     use libspa::{
@@ -93,7 +100,7 @@ pub fn build_capture_format_pod() -> Result<Vec<u8>, libspa::pod::serialize::Gen
 
     let mut info = AudioInfoRaw::new();
     info.set_format(native_f32_format());
-    info.set_rate(CANONICAL_CAPTURE_FORMAT.sample_rate);
+    info.set_rate(sample_rate);
     info.set_channels(u32::from(CANONICAL_CAPTURE_FORMAT.channels));
     let mut positions = [0; MAX_CHANNELS];
     positions[0] = libspa::sys::SPA_AUDIO_CHANNEL_MONO;
