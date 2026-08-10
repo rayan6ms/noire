@@ -54,6 +54,12 @@ contracts never import GTK, D-Bus, Tokio, or PipeWire. The RNNoise pipeline sees
 the model contract, not a concrete implementation. Tokio is restricted to the
 daemon control plane and IPC; GTK is restricted to `noire-ui`.
 
+The `AudioBackend` port in `noire-core` carries only ordered lifecycle commands
+and compact state/fault events. It carries no samples and imposes no `Send` or
+`Sync` bound, so callback audio and thread-affine objects stay inside the native
+adapter. `noire-test-support` implements this port and separately scripts owned
+capture buffers and source requests for deterministic tests.
+
 ## Audio and control planes
 
 PipeWire owns two process callbacks: capture produces processed audio and the
