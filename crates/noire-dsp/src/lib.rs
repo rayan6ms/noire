@@ -10,14 +10,15 @@ mod canonical;
 mod channels;
 mod dc;
 mod delay;
+mod fault;
 mod frame;
 mod meter;
 mod ramp;
 mod sanitize;
 
 pub use canonical::{
-    CANONICAL_CHANNELS, CANONICAL_FORMAT, CanonicalFormat, CanonicalSample,
-    FRAME_ASSEMBLER_CAPACITY, MAX_CALLBACK_FRAMES, MAX_DRY_DELAY_SAMPLES,
+    CANONICAL_CHANNELS, CANONICAL_FORMAT, CLICK_EXCESS_THRESHOLD, CanonicalFormat, CanonicalSample,
+    FAULT_RAMP_SAMPLES, FRAME_ASSEMBLER_CAPACITY, MAX_CALLBACK_FRAMES, MAX_DRY_DELAY_SAMPLES,
     MIN_STRENGTH_RAMP_SAMPLES, MODEL_FRAME_SAMPLES, ModelFrame, SAMPLE_RATE_HZ,
 };
 pub use channels::{
@@ -26,6 +27,9 @@ pub use channels::{
 };
 pub use dc::DcBlocker;
 pub use delay::{DryDelay, DryDelayError};
+pub use fault::{
+    ClickDetector, ClickDetectorError, FaultRamp, FaultRampError, FaultRampReport, FaultRampState,
+};
 pub use frame::{FrameAssembler, FrameAssemblerError, FramePushReport};
 pub use meter::{Meter, MeterSnapshot};
 pub use ramp::{EqualPowerMixer, MixReport, StrengthRamp};

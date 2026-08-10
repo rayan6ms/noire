@@ -18,6 +18,12 @@ pub const FRAME_ASSEMBLER_CAPACITY: usize = MODEL_FRAME_SAMPLES * 2;
 /// The shortest allowed strength transition, equal to 20 ms at 48 kHz.
 pub const MIN_STRENGTH_RAMP_SAMPLES: u32 = 960;
 
+/// The 5 ms fade used for overflow, underflow, and recovery transitions.
+pub const FAULT_RAMP_SAMPLES: u16 = 240;
+
+/// Maximum transition-induced adjacent-sample step above source continuity.
+pub const CLICK_EXCESS_THRESHOLD: f32 = 0.01;
+
 /// The largest supported dry delay: one model frame plus one callback quantum.
 pub const MAX_DRY_DELAY_SAMPLES: usize = MODEL_FRAME_SAMPLES + MAX_CALLBACK_FRAMES;
 

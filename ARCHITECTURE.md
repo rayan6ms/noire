@@ -114,6 +114,12 @@ After same-thread warm-up, allocator instrumentation covers the production DSP
 stages and model call; P2-07 records zero steady-state allocation calls and a
 reference-host model p99 below the 0.75 ms gate.
 
+Overflow/underflow policy uses a fixed 5 ms equal-power gain transition. Missing
+processed input fades from only the last published scalar and then holds silence;
+it never replays a stale buffer. Recovery requires an explicit fresh-generation
+signal. Phase-2 tests set the transition click limit to 0.01 full scale above
+the source's own adjacent-sample step (approximately -40 dBFS).
+
 D-Bus, configuration, lifecycle, retries, and metrics snapshots run in the
 non-real-time control plane. Scalar changes cross into audio through atomic
 snapshots; compound changes use a fixed-capacity command queue with a fixed

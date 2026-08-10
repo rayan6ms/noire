@@ -6,8 +6,8 @@ use std::alloc::System;
 use std::error::Error;
 
 use noire_dsp::{
-    ChannelMap, ChannelPosition, ChannelSelection, DcBlocker, DryDelay, EqualPowerMixer,
-    FrameAssembler, Meter, MixReport, sanitize_buffer,
+    ChannelMap, ChannelPosition, ChannelSelection, ClickDetector, DcBlocker, DryDelay,
+    EqualPowerMixer, FaultRamp, FrameAssembler, Meter, MixReport, sanitize_buffer,
 };
 use noire_model::DenoiserFactory;
 use noire_model_rnnoise::{RNNOISE_FRAME_SAMPLES, RnnoiseFactory};
@@ -28,6 +28,8 @@ fn warmed_dsp_and_model_processing_allocate_nothing() -> Result<(), Box<dyn Erro
     let mut assembler = FrameAssembler::new();
     let mut delay = DryDelay::new(RNNOISE_FRAME_SAMPLES)?;
     let mut meter = Meter::new();
+    let mut fault_ramp = FaultRamp::new();
+    let mut click_detector = ClickDetector::new();
     let input = signal_frame();
     let mut stereo = [0.0; RNNOISE_FRAME_SAMPLES * 2];
     for (frame, sample) in stereo.chunks_exact_mut(2).zip(input) {
@@ -37,6 +39,7 @@ fn warmed_dsp_and_model_processing_allocate_nothing() -> Result<(), Box<dyn Erro
     let mut delayed = [0.0; RNNOISE_FRAME_SAMPLES];
     let mut model_output = [0.0; RNNOISE_FRAME_SAMPLES];
     let mut mixed = [0.0; RNNOISE_FRAME_SAMPLES];
+    let mut safe_output = [0.0; RNNOISE_FRAME_SAMPLES];
 
     model.process_frame(&input, &mut model_output)?;
     let region = Region::new(GLOBAL);
@@ -55,7 +58,9 @@ fn warmed_dsp_and_model_processing_allocate_nothing() -> Result<(), Box<dyn Erro
         {
             *output = EqualPowerMixer::mix(*dry, *wet, 0.75, &mut report);
         }
-        meter.observe(&mixed);
+        fault_ramp.process(Some(&mixed), &mut safe_output)?;
+        click_detector.observe(&mixed, &safe_output)?;
+        meter.observe(&safe_output);
         meter.take_snapshot();
     }
     let change = region.change();
@@ -63,6 +68,7 @@ fn warmed_dsp_and_model_processing_allocate_nothing() -> Result<(), Box<dyn Erro
     assert_eq!(change.allocations, 0, "allocation calls: {change:?}");
     assert_eq!(change.reallocations, 0, "reallocation calls: {change:?}");
     assert_eq!(change.deallocations, 0, "deallocation calls: {change:?}");
+    assert_eq!(click_detector.clicks(), 0);
     Ok(())
 }
 

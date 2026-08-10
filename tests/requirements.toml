@@ -49,7 +49,7 @@ evidence = ["AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE"]
 id = "FR-008"
 summary = "Recover from input, PipeWire, stream, and format failures"
 priority = "must"
-evidence = ["AT-PIPEWIRE-RECOVERY", "AT-SAFE-FAILURE"]
+evidence = ["AT-FAULT-TRANSITIONS", "AT-PIPEWIRE-RECOVERY", "AT-SAFE-FAILURE"]
 
 [[requirement]]
 id = "FR-009"
@@ -127,7 +127,7 @@ evidence = ["AT-IDLE-RESOURCE", "AT-RECOVERY-SOAK"]
 id = "NFR-005"
 summary = "Keep audio callbacks allocation-free, nonblocking, and bounded"
 priority = "release"
-evidence = ["AT-MODEL-PERFORMANCE", "AT-REALTIME-PERFORMANCE"]
+evidence = ["AT-MODEL-PERFORMANCE", "AT-FAULT-TRANSITIONS", "AT-REALTIME-PERFORMANCE"]
 
 [[requirement]]
 id = "NFR-006"

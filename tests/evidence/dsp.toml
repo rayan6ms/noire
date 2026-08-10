@@ -18,16 +18,32 @@ sources = ["crates/noire-dsp/src/channels.rs::fn fallback_mix_preserves_coherent
 [[template]]
 id = "AT-DSP-BYPASS"
 kind = "automated"
-status = "planned"
+status = "active"
 phase = 2
 owner = "rayan6ms"
 requirements = ["FR-004", "FR-006", "QG-002"]
 observable = "Arbitrary chunks conserve samples and latency-matched bypass preserves a 1 kHz signal within the gain, finiteness, channel, and clipping gates."
 test_ids = ["T-DSP-BYPASS-INTEGRITY"]
-commands = ["Run deterministic signal and randomized chunk-boundary tests"]
+commands = ["cargo test -p noire-dsp --all-features --locked"]
 fixtures = ["1 kHz tone, silence, impulse, finite edge values, and randomized chunks"]
 environments = ["Pinned Rust test environment"]
 result_artifacts = ["Machine-readable gain, delay, clipping, finiteness, and sample-count assertions"]
+sources = ["crates/noire-dsp/src/ramp.rs::fn latency_matched_zero_strength_bypass_preserves_tone", "crates/noire-dsp/src/frame.rs::fn randomized_chunks_conserve_every_sample", "crates/noire-dsp/src/delay.rs::fn arbitrary_chunking_matches_a_reference_delay"]
+
+[[template]]
+id = "AT-FAULT-TRANSITIONS"
+kind = "automated"
+status = "active"
+phase = 2
+owner = "rayan6ms"
+requirements = ["FR-008", "NFR-005"]
+observable = "The bounded fail-closed transition utility drains already-processed overflow audio through a fixed 5 ms equal-power fade, turns missing underflow input into silence without replaying a buffer, holds silence until explicit fresh-data recovery, fails malformed shapes closed, and stays below the 0.01 full-scale excess-step click threshold."
+test_ids = ["T-DSP-FAULT-RAMP-CLICK"]
+commands = ["cargo test -p noire-dsp --all-features --locked"]
+fixtures = ["Constant processed samples, missing input, explicit overflow drain/recovery, malformed shapes, and an abrupt-cut click control"]
+environments = ["Pinned Rust test environment; no PipeWire, model, UI, device, file, or network dependency"]
+result_artifacts = ["Cargo assertions for exact fade state/duration, held silence, missing-sample count, fail-closed malformed output, click threshold, and positive click control"]
+sources = ["crates/noire-dsp/src/fault.rs::fn underflow_fades_to_silence_without_click_or_replay", "crates/noire-dsp/src/fault.rs::fn overflow_drain_and_fresh_recovery_are_click_bounded", "crates/noire-dsp/src/fault.rs::fn detector_rejects_an_abrupt_full_scale_cut", "crates/noire-dsp/src/fault.rs::fn malformed_shapes_fail_closed"]
 
 [[template]]
 id = "AT-MODEL-CONTRACT"

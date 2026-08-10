@@ -128,10 +128,10 @@ fn duration_as_f32(duration: u32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::float_cmp)]
+    #![allow(clippy::cast_precision_loss, clippy::float_cmp)]
 
     use super::{EqualPowerMixer, MixReport, StrengthRamp};
-    use crate::MIN_STRENGTH_RAMP_SAMPLES;
+    use crate::{DryDelay, MIN_STRENGTH_RAMP_SAMPLES, SAMPLE_RATE_HZ};
 
     #[test]
     fn strength_endpoints_are_exact() {
@@ -159,5 +159,54 @@ mod tests {
         assert_eq!(EqualPowerMixer::mix(1.0, 1.0, 0.5, &mut report), 1.0);
         assert_eq!(report.sanitized.non_finite, 1);
         assert_eq!(report.hard_ceiling, 1);
+    }
+
+    #[test]
+    fn latency_matched_zero_strength_bypass_preserves_tone()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const DELAY: usize = 480;
+        const SAMPLES: usize = 4_800;
+        let mut input = vec![0.0; SAMPLES];
+        let phase_step = 2.0 * core::f32::consts::PI * 1_000.0 / SAMPLE_RATE_HZ as f32;
+        let mut phase = 0.0_f32;
+        for sample in &mut input {
+            *sample = phase.sin() * 0.5;
+            phase += phase_step;
+        }
+
+        let mut delay = DryDelay::new(DELAY)?;
+        let mut output = vec![0.0; SAMPLES];
+        let mut offset = 0;
+        for size in [64, 128, 256, 480, 512].into_iter().cycle() {
+            if offset == SAMPLES {
+                break;
+            }
+            let end = (offset + size).min(SAMPLES);
+            let mut dry = [0.0; 512];
+            delay.process(&input[offset..end], &mut dry[..end - offset])?;
+            let mut report = MixReport::default();
+            for (dry, destination) in dry[..end - offset]
+                .iter()
+                .zip(output[offset..end].iter_mut())
+            {
+                *destination = EqualPowerMixer::mix(*dry, -*dry, 0.0, &mut report);
+            }
+            assert_eq!(report.hard_ceiling, 0);
+            offset = end;
+        }
+
+        assert!(output.iter().all(|sample| sample.is_finite()));
+        assert!(output.iter().all(|sample| sample.abs() <= 1.0));
+        for (actual, expected) in output[DELAY..].iter().zip(input[..SAMPLES - DELAY].iter()) {
+            assert!((*actual - *expected).abs() <= 1.0e-6);
+        }
+        let input_energy: f32 = input[..SAMPLES - DELAY]
+            .iter()
+            .map(|sample| sample * sample)
+            .sum();
+        let output_energy: f32 = output[DELAY..].iter().map(|sample| sample * sample).sum();
+        let gain_db = 10.0 * (output_energy / input_energy).log10();
+        assert!(gain_db.abs() <= 0.1);
+        Ok(())
     }
 }
