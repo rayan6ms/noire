@@ -37,7 +37,7 @@ evidence = ["AT-PIPEWIRE-AUDIO-IO"]
 id = "FR-006"
 summary = "Provide RNNoise suppression and latency-matched bypass"
 priority = "must"
-evidence = ["AT-DSP-PRIMITIVES", "AT-MODEL-CONTRACT", "AT-RNNOISE-ADAPTER", "AT-OFFLINE-WAV", "AT-RNNOISE-CHUNKING", "AT-DSP-BYPASS", "AT-SUPPRESSION-QUALITY", "MX-SPEECH-PRESERVATION"]
+evidence = ["AT-DSP-PRIMITIVES", "AT-MODEL-CONTRACT", "AT-RNNOISE-ADAPTER", "AT-OFFLINE-WAV", "AT-RNNOISE-CHUNKING", "AT-MODEL-PERFORMANCE", "AT-DSP-BYPASS", "AT-SUPPRESSION-QUALITY", "MX-SPEECH-PRESERVATION"]
 
 [[requirement]]
 id = "FR-007"
@@ -127,7 +127,7 @@ evidence = ["AT-IDLE-RESOURCE", "AT-RECOVERY-SOAK"]
 id = "NFR-005"
 summary = "Keep audio callbacks allocation-free, nonblocking, and bounded"
 priority = "release"
-evidence = ["AT-REALTIME-PERFORMANCE"]
+evidence = ["AT-MODEL-PERFORMANCE", "AT-REALTIME-PERFORMANCE"]
 
 [[requirement]]
 id = "NFR-006"

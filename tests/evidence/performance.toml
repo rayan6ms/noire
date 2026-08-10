@@ -1,6 +1,21 @@
 schema_version = 1
 
 [[template]]
+id = "AT-MODEL-PERFORMANCE"
+kind = "automated"
+status = "active"
+phase = 2
+owner = "rayan6ms"
+requirements = ["FR-006", "NFR-005"]
+observable = "An instrumented allocator reports zero allocation/reallocation/deallocation calls across warmed production DSP and model processing, every bounded DSP stage has a Criterion benchmark, and 20,000 release model frames meet the 0.75 ms p99 reference-host gate."
+test_ids = ["T-MODEL-ALLOCATION-P99"]
+commands = ["cargo test -p noire-model-rnnoise --test allocation --features rnnoise --release --locked", "cargo bench -p noire-dsp --bench dsp_stages --locked", "cargo bench -p noire-model-rnnoise --bench model_frame --features rnnoise --locked"]
+fixtures = ["Deterministic 480-sample tones, stereo coherent input, warmed embedded-default RNNoise state, and every bounded DSP stage"]
+environments = ["Pinned Rust release profile on the recorded x86_64 reference host; no PipeWire, UI, device, file, or network dependency"]
+result_artifacts = ["tests/performance/phase2-model.toml with allocation counts, DSP Criterion estimates, 20,000-frame p99, commands, and environment"]
+sources = ["crates/noire-model-rnnoise/tests/allocation.rs::fn warmed_dsp_and_model_processing_allocate_nothing", "crates/noire-model-rnnoise/benches/model_frame.rs::P99_LIMIT", "crates/noire-dsp/benches/dsp_stages.rs::fn dsp_stages", "tests/performance/phase2-model.toml::p99_microseconds = 160.629"]
+
+[[template]]
 id = "AT-REALTIME-PERFORMANCE"
 kind = "automated"
 status = "planned"

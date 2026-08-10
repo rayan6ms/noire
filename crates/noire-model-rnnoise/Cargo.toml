@@ -14,8 +14,10 @@ noire-dsp = { workspace = true, optional = true }
 noire-model.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 noire-dsp.workspace = true
 proptest.workspace = true
+stats_alloc.workspace = true
 
 [features]
 default = []
@@ -26,6 +28,11 @@ rnnoise = ["dep:nnnoiseless"]
 name = "noire-denoise-wav"
 path = "src/bin/noire-denoise-wav.rs"
 required-features = ["offline-wav"]
+
+[[bench]]
+name = "model_frame"
+harness = false
+required-features = ["rnnoise"]
 
 [lints]
 workspace = true

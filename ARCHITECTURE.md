@@ -110,6 +110,9 @@ This implementation remains subject to the Phase-2 quality, provenance,
 allocation, and timing gates. Its P2-06 automated selection evidence passes the
 frozen-corpus objective thresholds and the pinned C-reference comparison; the
 independent QG-004 listening result remains explicitly outstanding.
+After same-thread warm-up, allocator instrumentation covers the production DSP
+stages and model call; P2-07 records zero steady-state allocation calls and a
+reference-host model p99 below the 0.75 ms gate.
 
 D-Bus, configuration, lifecycle, retries, and metrics snapshots run in the
 non-real-time control plane. Scalar changes cross into audio through atomic

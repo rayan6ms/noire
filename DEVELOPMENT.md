@@ -126,6 +126,18 @@ When native packages are available, repeat check, Clippy, and test with
 `--all-features`. Feature-specific integration, latency, quality, and soak tests
 are additional evidence; they are not replaced by the standard sequence.
 
+Phase-2 offline allocation and timing checks use the release profile:
+
+```bash
+cargo test -p noire-model-rnnoise --test allocation --features rnnoise --release --locked
+cargo bench -p noire-dsp --bench dsp_stages --locked
+cargo bench -p noire-model-rnnoise --bench model_frame --features rnnoise --locked
+```
+
+The model benchmark enforces the recorded reference-host p99 gate before it
+runs Criterion. Benchmark build output and local Criterion reports are not
+committed.
+
 CI pins `cargo-deny` 0.20.2 and `cargo-audit` 0.22.2. With those versions
 available locally, run:
 

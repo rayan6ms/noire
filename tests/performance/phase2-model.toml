@@ -1,0 +1,46 @@
+schema_version = 1
+task = "P2-07"
+run_date = "2026-08-10"
+profile = "release"
+environment = "noire-reference-x86_64-2026-08-10"
+cpu = "Intel Xeon E5-2697 v3"
+os = "Fedora Linux 44"
+rust = "1.97.1"
+
+[allocation]
+iterations = 1024
+stages = ["stereo downmix", "sanitizer", "DC blocker", "frame assembler", "dry delay", "RNNoise frame", "wet/dry mixer", "meter"]
+allocations = 0
+reallocations = 0
+deallocations = 0
+pass = true
+
+[model_percentile]
+frames = 20000
+warmup_frames = 100
+p99_microseconds = 160.629
+limit_microseconds = 750.0
+pass = true
+
+[criterion_model]
+sample_size = 60
+measurement_seconds = 3
+lower_microseconds = 129.55
+estimate_microseconds = 130.34
+upper_microseconds = 131.07
+
+[criterion_dsp]
+sample_size = 50
+measurement_seconds = 2
+sanitize_nanoseconds = 665.41
+downmix_microseconds = 2.8522
+dc_blocker_microseconds = 2.3187
+frame_assembler_nanoseconds = 881.13
+dry_delay_nanoseconds = 939.98
+wet_dry_mix_microseconds = 2.2563
+meter_microseconds = 3.0786
+
+[commands]
+allocation = "cargo test -p noire-model-rnnoise --test allocation --features rnnoise --release --locked"
+dsp = "cargo bench -p noire-dsp --bench dsp_stages --locked -- --warm-up-time 1 --measurement-time 2 --sample-size 50"
+model = "cargo bench -p noire-model-rnnoise --bench model_frame --features rnnoise --locked -- --warm-up-time 1 --measurement-time 3 --sample-size 60"

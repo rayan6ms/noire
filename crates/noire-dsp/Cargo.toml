@@ -14,3 +14,6 @@ proptest.workspace = true
 [lints]
 workspace = true
 
+[[bench]]
+name = "dsp_stages"
+harness = false
