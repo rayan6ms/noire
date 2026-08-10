@@ -95,6 +95,7 @@ a microphone, a display server, or changes to the host session.
 Run this sequence on the exact state being submitted:
 
 ```bash
+python3 .github/scripts/validate_traceability.py --self-test
 cargo fmt --all -- --check
 RUSTFLAGS="-D warnings" cargo check --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -103,6 +104,12 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
 RUSTFLAGS="-D warnings" cargo +1.92.0 check --workspace --all-targets --locked
 cargo build --workspace --release --locked
 ```
+
+When behavior, scope, or release evidence changes, update
+[`tests/requirements.toml`](tests/requirements.toml) and the relevant
+[`tests/evidence/`](tests/evidence/) template in the same change. A template being
+`planned` records its future evidence contract; only set it to `active` when its
+cited automated sources exist and run.
 
 When native packages are available, repeat check, Clippy, and test with
 `--all-features`. Feature-specific integration, latency, quality, and soak tests

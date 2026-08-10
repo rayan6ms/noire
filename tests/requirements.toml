@@ -1,0 +1,232 @@
+[traceability]
+schema_version = 1
+plan_version = "1.2"
+scope = "All current FR, NFR, and QG identifiers in the normative project plan"
+
+[[requirement]]
+id = "FR-001"
+summary = "Enumerate capturable physical microphones from PipeWire"
+priority = "must"
+evidence = ["AT-PIPEWIRE-REGISTRY"]
+
+[[requirement]]
+id = "FR-002"
+summary = "Exclude monitor, virtual, and Noire-owned sources by default"
+priority = "must"
+evidence = ["AT-PIPEWIRE-REGISTRY"]
+
+[[requirement]]
+id = "FR-003"
+summary = "Persist and recover a stable input selector"
+priority = "must"
+evidence = ["AT-PIPEWIRE-REGISTRY", "AT-CONFIG-MIGRATION"]
+
+[[requirement]]
+id = "FR-004"
+summary = "Capture and process mono audio internally at 48 kHz"
+priority = "must"
+evidence = ["AT-PIPEWIRE-AUDIO-IO", "AT-DSP-BYPASS"]
+
+[[requirement]]
+id = "FR-005"
+summary = "Publish one stable human-readable virtual audio source"
+priority = "must"
+evidence = ["AT-PIPEWIRE-AUDIO-IO"]
+
+[[requirement]]
+id = "FR-006"
+summary = "Provide RNNoise suppression and latency-matched bypass"
+priority = "must"
+evidence = ["AT-DSP-BYPASS", "AT-SUPPRESSION-QUALITY", "MX-SPEECH-PRESERVATION"]
+
+[[requirement]]
+id = "FR-007"
+summary = "Control and query the daemon through a versioned IPC API"
+priority = "must"
+evidence = ["AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE"]
+
+[[requirement]]
+id = "FR-008"
+summary = "Recover from input, PipeWire, stream, and format failures"
+priority = "must"
+evidence = ["AT-PIPEWIRE-RECOVERY", "AT-SAFE-FAILURE"]
+
+[[requirement]]
+id = "FR-009"
+summary = "Expose complete health, format, latency, counter, and error state"
+priority = "must"
+evidence = ["AT-PIPEWIRE-RECOVERY", "AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE", "MX-ERROR-USABILITY"]
+
+[[requirement]]
+id = "FR-010"
+summary = "Save configuration atomically and migrate supported schemas"
+priority = "must"
+evidence = ["AT-CONFIG-MIGRATION"]
+
+[[requirement]]
+id = "FR-011"
+summary = "Provide a GTK4 settings and status UI"
+priority = "must"
+evidence = ["AT-GTK-UI", "AT-STATE-CONVERGENCE", "MX-ACCESSIBILITY", "MX-ERROR-USABILITY"]
+
+[[requirement]]
+id = "FR-012"
+summary = "Provide noirectl with machine-readable JSON output"
+priority = "must"
+evidence = ["AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE", "MX-ERROR-USABILITY"]
+
+[[requirement]]
+id = "FR-013"
+summary = "Support launch at login as a systemd user service"
+priority = "must"
+evidence = ["AT-SYSTEMD-USER-SERVICE", "AT-PACKAGE-LIFECYCLE"]
+
+[[requirement]]
+id = "FR-014"
+summary = "Build and run daemon and CLI without GTK or a graphical session"
+priority = "must"
+evidence = ["AT-HEADLESS-BUILD"]
+
+[[requirement]]
+id = "FR-015"
+summary = "Load third-party model files at runtime"
+priority = "later"
+evidence = ["ME-DEFERRED-SCOPE"]
+
+[[requirement]]
+id = "FR-016"
+summary = "Support post-1.0 advanced audio and inference capabilities"
+priority = "later"
+evidence = ["ME-DEFERRED-SCOPE"]
+
+[[requirement]]
+id = "NFR-001"
+summary = "Meet the software-latency thresholds"
+priority = "release"
+evidence = ["AT-REALTIME-PERFORMANCE"]
+
+[[requirement]]
+id = "NFR-002"
+summary = "Keep active RNNoise CPU below the release threshold"
+priority = "release"
+evidence = ["AT-REALTIME-PERFORMANCE"]
+
+[[requirement]]
+id = "NFR-003"
+summary = "Keep idle CPU below the release threshold"
+priority = "release"
+evidence = ["AT-IDLE-RESOURCE", "AT-RECOVERY-SOAK"]
+
+[[requirement]]
+id = "NFR-004"
+summary = "Keep daemon and UI memory below release thresholds"
+priority = "release"
+evidence = ["AT-IDLE-RESOURCE", "AT-RECOVERY-SOAK"]
+
+[[requirement]]
+id = "NFR-005"
+summary = "Keep audio callbacks allocation-free, nonblocking, and bounded"
+priority = "release"
+evidence = ["AT-REALTIME-PERFORMANCE"]
+
+[[requirement]]
+id = "NFR-006"
+summary = "Survive the required hotplug and PipeWire restart cycles"
+priority = "release"
+evidence = ["AT-PIPEWIRE-RECOVERY", "AT-RECOVERY-SOAK"]
+
+[[requirement]]
+id = "NFR-007"
+summary = "Restore source and selected input within recovery thresholds"
+priority = "release"
+evidence = ["AT-PIPEWIRE-RECOVERY", "AT-RECOVERY-SOAK"]
+
+[[requirement]]
+id = "NFR-008"
+summary = "Pass the 24-hour release soak"
+priority = "release"
+evidence = ["AT-RECOVERY-SOAK"]
+
+[[requirement]]
+id = "NFR-009"
+summary = "Support the x86_64 distribution baseline"
+priority = "release"
+evidence = ["AT-NATIVE-DISTRO-BUILD", "MX-APPLICATION-COMPAT"]
+
+[[requirement]]
+id = "NFR-010"
+summary = "Meet keyboard, labeling, screen-reader, and color accessibility"
+priority = "release"
+evidence = ["MX-ACCESSIBILITY"]
+
+[[requirement]]
+id = "NFR-011"
+summary = "Meet control-response latency and nonblocking UI requirements"
+priority = "release"
+evidence = ["AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE"]
+
+[[requirement]]
+id = "NFR-012"
+summary = "Provide no network, telemetry, audio persistence, or fail-open leak"
+priority = "release"
+evidence = ["AT-SAFE-FAILURE", "AT-PRIVACY-BOUNDARY"]
+
+[[requirement]]
+id = "QG-001"
+summary = "Route only the selected source and publish exactly one virtual source"
+priority = "release"
+evidence = ["AT-PIPEWIRE-REGISTRY", "AT-PIPEWIRE-AUDIO-IO"]
+
+[[requirement]]
+id = "QG-002"
+summary = "Preserve bypass signal gain, channels, finiteness, and headroom"
+priority = "release"
+evidence = ["AT-DSP-BYPASS"]
+
+[[requirement]]
+id = "QG-003"
+summary = "Meet frozen-corpus suppression quality thresholds"
+priority = "release"
+evidence = ["AT-SUPPRESSION-QUALITY"]
+
+[[requirement]]
+id = "QG-004"
+summary = "Meet objective and listening-panel speech-preservation thresholds"
+priority = "release"
+evidence = ["MX-SPEECH-PRESERVATION"]
+
+[[requirement]]
+id = "QG-005"
+summary = "Emit processed audio then silence for injected unsafe failures"
+priority = "release"
+evidence = ["AT-SAFE-FAILURE"]
+
+[[requirement]]
+id = "QG-006"
+summary = "Converge UI and CLI state to daemon truth"
+priority = "release"
+evidence = ["AT-STATE-CONVERGENCE"]
+
+[[requirement]]
+id = "QG-007"
+summary = "Pass clean package and service lifecycle scenarios"
+priority = "release"
+evidence = ["AT-PACKAGE-LIFECYCLE"]
+
+[[requirement]]
+id = "QG-008"
+summary = "Capture intelligible speech through the required application matrix"
+priority = "release"
+evidence = ["MX-APPLICATION-COMPAT"]
+
+[[requirement]]
+id = "QG-009"
+summary = "Provide stable, actionable, usable error states"
+priority = "release"
+evidence = ["MX-ERROR-USABILITY"]
+
+[[requirement]]
+id = "QG-010"
+summary = "Preserve D-Bus and configuration compatibility"
+priority = "release"
+evidence = ["AT-CONFIG-MIGRATION"]

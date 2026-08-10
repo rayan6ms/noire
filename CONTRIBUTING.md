@@ -13,6 +13,8 @@ read [ARCHITECTURE.md](ARCHITECTURE.md), [DEVELOPMENT.md](DEVELOPMENT.md), and
   review.
 - Keep domain behavior out of PipeWire, D-Bus, and GTK adapters.
 - Add tests with behavior. Reproduce a bug with a failing test when practical.
+- Keep requirement mappings and evidence templates synchronized with observable
+  behavior; planned evidence is not a passing claim.
 - Do not mix dependency updates, generated fixtures, or threshold changes into
   an unrelated change.
 

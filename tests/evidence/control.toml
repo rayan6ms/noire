@@ -1,0 +1,59 @@
+schema_version = 1
+
+[[template]]
+id = "AT-IPC-CONTRACT"
+kind = "automated"
+status = "planned"
+phase = 6
+owner = "rayan6ms"
+requirements = ["FR-007", "FR-009", "FR-012", "NFR-011"]
+observable = "Versioned D-Bus and JSON CLI requests return complete typed state and accepted commands appear within the response deadline."
+test_ids = ["T-IPC-CLI-CONTRACT"]
+commands = ["Run daemon D-Bus contract fixtures and noirectl JSON assertions"]
+fixtures = ["Valid, invalid, stale-revision, unavailable, and latency-measured requests"]
+environments = ["Headless disposable session D-Bus environment"]
+result_artifacts = ["D-Bus replies, CLI JSON schema results, state timestamps, and exit codes"]
+
+[[template]]
+id = "AT-CONFIG-MIGRATION"
+kind = "automated"
+status = "planned"
+phase = 6
+owner = "rayan6ms"
+requirements = ["FR-003", "FR-010", "QG-010"]
+observable = "Atomic writes preserve intended settings across supported migrations, reject invalid data, and never rewrite an unknown newer schema."
+test_ids = ["T-CONFIG-ATOMIC-MIGRATION"]
+commands = ["Run config contract fixtures across every supported schema transition"]
+fixtures = ["Current, legacy, malformed, interrupted-write, and unknown-newer config files"]
+environments = ["Isolated temporary filesystem"]
+result_artifacts = ["Before/after bytes, parsed settings, file permissions, errors, and exit status"]
+
+[[template]]
+id = "AT-STATE-CONVERGENCE"
+kind = "automated"
+status = "planned"
+phase = 8
+owner = "rayan6ms"
+requirements = ["FR-007", "FR-009", "FR-011", "FR-012", "NFR-011", "QG-006"]
+observable = "CLI and UI converge to daemon truth after success, rejection, restart, and stale revision without presenting rejected settings as applied."
+test_ids = ["T-CONTROL-STATE-CONVERGENCE"]
+commands = ["Run D-Bus, CLI, and UI integration scenarios with revision and timing assertions"]
+fixtures = ["Accepted, rejected, stale, disconnected, and daemon-restart state sequences"]
+environments = ["Headless control runner and disposable GTK test session"]
+result_artifacts = ["Daemon, CLI, and UI state snapshots with convergence timestamps"]
+
+[[template]]
+id = "MX-ERROR-USABILITY"
+kind = "mixed"
+status = "planned"
+phase = 8
+owner = "rayan6ms"
+requirements = ["FR-009", "FR-011", "FR-012", "QG-009"]
+observable = "Every user-fixable degraded state has a stable code, plain cause, actionable recovery, and a usable UI without PipeWire or an input."
+test_ids = ["T-ERROR-CATALOG-COVERAGE"]
+commands = ["Run error-catalog coverage tests and the degraded-state UI review"]
+fixtures = ["Every public error code and user-fixable degraded-state scenario"]
+environments = ["Headless control runner and GNOME/KDE test sessions"]
+result_artifacts = ["Catalog coverage JSON and signed usability checklist"]
+manual_reason = "Plain-language clarity and actionable recovery wording require human review even when catalog coverage and state behavior are automated."
+manual_fields = ["reviewer", "date", "error code", "cause clarity", "recovery clarity", "UI remains operable"]

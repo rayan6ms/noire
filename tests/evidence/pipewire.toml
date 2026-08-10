@@ -1,0 +1,43 @@
+schema_version = 1
+
+[[template]]
+id = "AT-PIPEWIRE-REGISTRY"
+kind = "automated"
+status = "planned"
+phase = 3
+owner = "rayan6ms"
+requirements = ["FR-001", "FR-002", "FR-003", "QG-001"]
+observable = "Registry snapshots expose only eligible physical inputs, retain stable selectors across graph IDs, and never select Noire or monitor nodes."
+test_ids = ["T-PW-REGISTRY-SELECTION"]
+commands = ["Run PipeWire registry integration tests against deterministic graph fixtures"]
+fixtures = ["Physical, monitor, virtual, Noire-owned, renamed, and re-ID graph fixtures"]
+environments = ["Disposable PipeWire integration session"]
+result_artifacts = ["Machine-readable selected-node and exclusion assertions"]
+
+[[template]]
+id = "AT-PIPEWIRE-AUDIO-IO"
+kind = "automated"
+status = "planned"
+phase = 4
+owner = "rayan6ms"
+requirements = ["FR-004", "FR-005", "QG-001"]
+observable = "Exactly one named virtual source publishes processed mono 48 kHz audio from only the selected capture source and disappears cleanly."
+test_ids = ["T-PW-CAPTURE-PUBLISH-GRAPH"]
+commands = ["Run graph integration and pw-dump assertions while capturing deterministic audio"]
+fixtures = ["Selected and unselected physical-source signal fixtures"]
+environments = ["Disposable PipeWire integration session"]
+result_artifacts = ["pw-dump graph assertion and captured sample metadata"]
+
+[[template]]
+id = "AT-PIPEWIRE-RECOVERY"
+kind = "automated"
+status = "planned"
+phase = 7
+owner = "rayan6ms"
+requirements = ["FR-008", "FR-009", "NFR-006", "NFR-007"]
+observable = "The daemon reports typed state and counters while recovering within thresholds from unplug, restart, stream error, and renegotiation."
+test_ids = ["T-PW-RECOVERY-CYCLES"]
+commands = ["Run 100 input hotplug cycles and 20 PipeWire restart cycles with deadline assertions"]
+fixtures = ["Scripted unplug, restart, stream-error, and format-change scenarios"]
+environments = ["Approved disposable PipeWire VM or purpose-built runner"]
+result_artifacts = ["Cycle-by-cycle state, counter, crash, and recovery-time results"]

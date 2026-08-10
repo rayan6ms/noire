@@ -1,0 +1,59 @@
+schema_version = 1
+
+[[template]]
+id = "AT-DSP-BYPASS"
+kind = "automated"
+status = "planned"
+phase = 2
+owner = "rayan6ms"
+requirements = ["FR-004", "FR-006", "QG-002"]
+observable = "Arbitrary chunks conserve samples and latency-matched bypass preserves a 1 kHz signal within the gain, finiteness, channel, and clipping gates."
+test_ids = ["T-DSP-BYPASS-INTEGRITY"]
+commands = ["Run deterministic signal and randomized chunk-boundary tests"]
+fixtures = ["1 kHz tone, silence, impulse, finite edge values, and randomized chunks"]
+environments = ["Pinned Rust test environment"]
+result_artifacts = ["Machine-readable gain, delay, clipping, finiteness, and sample-count assertions"]
+
+[[template]]
+id = "AT-SUPPRESSION-QUALITY"
+kind = "automated"
+status = "planned"
+phase = 2
+owner = "rayan6ms"
+requirements = ["FR-006", "QG-003"]
+observable = "The approved adapter meets frozen-corpus segmental-SNR thresholds at strength 1.0 against latency-matched bypass."
+test_ids = ["T-DSP-SUPPRESSION-QUALITY"]
+commands = ["Run the pinned offline quality harness over the frozen corpus"]
+fixtures = ["Frozen multilingual speech and stationary/recorded noise corpus"]
+environments = ["Pinned offline quality environment"]
+result_artifacts = ["Machine-readable per-case and aggregate segmental-SNR report"]
+
+[[template]]
+id = "MX-SPEECH-PRESERVATION"
+kind = "mixed"
+status = "planned"
+phase = 2
+owner = "rayan6ms"
+requirements = ["FR-006", "QG-004"]
+observable = "Objective metrics meet STOI/clipping thresholds and at least three blinded reviewers find no majority missing-word failure."
+test_ids = ["T-DSP-SPEECH-PRESERVATION"]
+commands = ["Run the pinned offline quality harness and blinded listening protocol"]
+fixtures = ["Frozen clean-speech corpus and deterministic level-matched listening bundle"]
+environments = ["Pinned offline quality environment", "Independent blinded listening sessions"]
+result_artifacts = ["STOI/clipping JSON report and signed concealed-key listening record"]
+manual_reason = "Missing words, musical noise, and perceived distortion require blinded human listening; objective metrics alone cannot establish those outcomes."
+manual_fields = ["reviewer identifier", "review date", "randomized answers", "missing-word judgment", "concealed-key verification"]
+
+[[template]]
+id = "AT-SAFE-FAILURE"
+kind = "automated"
+status = "planned"
+phase = 7
+owner = "rayan6ms"
+requirements = ["FR-008", "NFR-012", "QG-005"]
+observable = "Injected model, buffer, queue, and deadline failures emit only already-processed queued samples followed by ramped silence, never new raw capture."
+test_ids = ["T-DSP-FAIL-CLOSED-CORRELATION"]
+commands = ["Run deterministic fault-injection correlation tests"]
+fixtures = ["Tagged capture samples and every mandatory model/buffer/queue fault"]
+environments = ["Pinned Rust test environment and PipeWire integration runner"]
+result_artifacts = ["Input/output correlation, ramp, error-code, and counter assertions"]

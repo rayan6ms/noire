@@ -1,0 +1,31 @@
+schema_version = 1
+
+[[template]]
+id = "AT-GTK-UI"
+kind = "automated"
+status = "planned"
+phase = 8
+owner = "rayan6ms"
+requirements = ["FR-011"]
+observable = "The GTK4 UI exposes settings and status, survives missing daemon/audio state, and performs daemon I/O asynchronously."
+test_ids = ["T-GTK-SETTINGS-STATUS"]
+commands = ["Run GTK widget/state integration tests against a fake control client"]
+fixtures = ["Healthy, degraded, disconnected, rejected, and reconnecting daemon states"]
+environments = ["Disposable GTK test session"]
+result_artifacts = ["Widget state, action availability, responsiveness, and crash assertions"]
+
+[[template]]
+id = "MX-ACCESSIBILITY"
+kind = "mixed"
+status = "planned"
+phase = 8
+owner = "rayan6ms"
+requirements = ["FR-011", "NFR-010"]
+observable = "All controls are keyboard-operable and labeled, state never relies on color alone, and a screen reader exposes meaningful names and changes."
+test_ids = ["T-GTK-ACCESSIBILITY-TREE"]
+commands = ["Run accessibility-tree assertions followed by keyboard and screen-reader smoke review"]
+fixtures = ["Every interactive control and healthy/degraded status presentation"]
+environments = ["GNOME Wayland and KDE Wayland test sessions"]
+result_artifacts = ["Accessibility-tree report and signed keyboard/screen-reader checklist"]
+manual_reason = "Assistive-technology speech output and end-to-end keyboard usability require human review beyond machine inspection of the accessibility tree."
+manual_fields = ["reviewer", "date", "desktop", "screen reader", "keyboard path", "spoken labels", "color independence"]

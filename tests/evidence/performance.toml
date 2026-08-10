@@ -1,0 +1,57 @@
+schema_version = 1
+
+[[template]]
+id = "AT-REALTIME-PERFORMANCE"
+kind = "automated"
+status = "planned"
+phase = 7
+owner = "rayan6ms"
+requirements = ["NFR-001", "NFR-002", "NFR-005"]
+observable = "Reference-host latency and CPU percentiles meet thresholds while callback instrumentation reports no allocation, wait, lock, I/O, or unbounded work."
+test_ids = ["T-RT-LATENCY-CPU-CALLBACK"]
+commands = ["Run the pinned loopback latency, CPU accounting, allocation, and callback audit procedures"]
+fixtures = ["128-frame and 256-frame reference audio workloads"]
+environments = ["Recorded x86_64 reference hardware and PipeWire configuration"]
+result_artifacts = ["Raw samples, percentile report, process accounting, and callback audit result"]
+
+[[template]]
+id = "AT-IDLE-RESOURCE"
+kind = "automated"
+status = "planned"
+phase = 7
+owner = "rayan6ms"
+requirements = ["NFR-003", "NFR-004"]
+observable = "No-consumer idle CPU and ten-minute daemon/UI RSS remain below their release thresholds."
+test_ids = ["T-IDLE-CPU-MEMORY"]
+commands = ["Run the pinned idle CPU and RSS sampling procedures"]
+fixtures = ["No-consumer daemon state and open-UI steady state"]
+environments = ["Recorded x86_64 reference hardware"]
+result_artifacts = ["Timestamped CPU and RSS samples with percentile and maximum summaries"]
+
+[[template]]
+id = "AT-RECOVERY-SOAK"
+kind = "automated"
+status = "planned"
+phase = 7
+owner = "rayan6ms"
+requirements = ["NFR-003", "NFR-004", "NFR-006", "NFR-007", "NFR-008"]
+observable = "The 24-hour workload and mandatory recovery cycles finish without crash, attributable xrun, unbounded counters, missed deadlines, or excessive RSS growth."
+test_ids = ["T-RELEASE-RECOVERY-SOAK"]
+commands = ["Run the 24-hour soak with scheduled hotplug and PipeWire restart scenarios"]
+fixtures = ["Continuous deterministic source, consumer, hotplug, and restart schedule"]
+environments = ["Approved disposable reference-host session"]
+result_artifacts = ["Timestamped health, xrun, counter, recovery, CPU, and RSS time series"]
+
+[[template]]
+id = "AT-PRIVACY-BOUNDARY"
+kind = "automated"
+status = "planned"
+phase = 7
+owner = "rayan6ms"
+requirements = ["NFR-012"]
+observable = "Normal operation opens no network connection, writes no audio, emits no telemetry, and preserves fail-closed output under faults."
+test_ids = ["T-PRIVACY-NETWORK-PERSISTENCE"]
+commands = ["Run network, filesystem, process, and fail-closed observation under representative operation"]
+fixtures = ["Tagged synthetic capture and every normal operating mode"]
+environments = ["Network-observed disposable VM with isolated temporary home"]
+result_artifacts = ["Socket/process trace, filesystem diff, and tagged output-correlation report"]

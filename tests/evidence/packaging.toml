@@ -1,0 +1,45 @@
+schema_version = 1
+
+[[template]]
+id = "AT-SYSTEMD-USER-SERVICE"
+kind = "automated"
+status = "planned"
+phase = 9
+owner = "rayan6ms"
+requirements = ["FR-013"]
+observable = "The packaged user service supports opt-in login start, explicit stop/disable, bounded restart, and least-privilege session operation."
+test_ids = ["T-SYSTEMD-USER-SERVICE"]
+commands = ["Run user-service install, enable, login, stop, disable, and failure-restart scenarios"]
+fixtures = ["Fresh user account and packaged systemd user unit"]
+environments = ["Clean supported-distribution VM"]
+result_artifacts = ["systemd user-unit states, process identities, exit codes, and journal excerpts"]
+
+[[template]]
+id = "AT-PACKAGE-LIFECYCLE"
+kind = "automated"
+status = "planned"
+phase = 9
+owner = "rayan6ms"
+requirements = ["FR-013", "QG-007"]
+observable = "Install, login, upgrade, stop, uninstall, and reinstall leave no duplicate process/node or stale node and preserve user configuration."
+test_ids = ["T-PACKAGE-LIFECYCLE-VM"]
+commands = ["Run the complete headless and desktop package lifecycle in clean VMs"]
+fixtures = ["Signed candidate packages and pre-upgrade user configuration"]
+environments = ["Clean Ubuntu, Debian, and Fedora x86_64 VMs"]
+result_artifacts = ["Package-manager, process, graph-node, service, and config byte assertions"]
+
+[[template]]
+id = "MX-APPLICATION-COMPAT"
+kind = "mixed"
+status = "planned"
+phase = 10
+owner = "rayan6ms"
+requirements = ["NFR-009", "QG-008"]
+observable = "Every required application can select the single Noire source and capture intelligible speech on the supported release matrix."
+test_ids = ["T-RELEASE-APPLICATION-MATRIX"]
+commands = ["Run source-selection and capture scenarios for every required application and recorder API"]
+fixtures = ["Level-matched intelligible reference utterance and packaged release candidate"]
+environments = ["Required distribution, desktop, security, and application matrix"]
+result_artifacts = ["Application/version matrix, selected-node assertion, capture metadata, and signed intelligibility result"]
+manual_reason = "Third-party GUI source selection and end-to-end speech intelligibility cannot be established reliably from process exit codes alone."
+manual_fields = ["reviewer", "date", "distribution", "desktop", "application/version", "selected source", "intelligibility"]

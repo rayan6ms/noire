@@ -1,0 +1,15 @@
+schema_version = 1
+
+[[template]]
+id = "ME-DEFERRED-SCOPE"
+kind = "manual"
+status = "planned"
+phase = 10
+owner = "rayan6ms"
+requirements = ["FR-015", "FR-016"]
+observable = "Deferred capabilities remain excluded from 1.0 claims unless an owner-approved plan and architecture decision explicitly admit them."
+fixtures = ["Current release scope, roadmap, and architecture decisions"]
+environments = ["Project release-governance review"]
+result_artifacts = ["Owner-approved scope review or superseding ADR and requirement update"]
+manual_reason = "Product scope and architecture approval are accountable owner decisions rather than executable software behavior."
+manual_fields = ["owner", "date", "release", "decision", "rationale", "superseding task or ADR"]

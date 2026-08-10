@@ -1,0 +1,30 @@
+schema_version = 1
+
+[[template]]
+id = "AT-HEADLESS-BUILD"
+kind = "automated"
+status = "active"
+phase = 1
+owner = "rayan6ms"
+requirements = ["FR-014"]
+observable = "Daemon and CLI compile and test with native PipeWire while GTK, UI assets, display variables, and session variables are absent."
+test_ids = ["T-CI-HEADLESS-BOUNDARY"]
+commands = ["python3 .github/scripts/verify_headless_boundary.py", "cargo check/test -p noired -p noirectl with native headless features"]
+fixtures = ["Git archive containing only workspace Cargo files and crates/"]
+environments = ["ubuntu-24.04-x86_64 without DISPLAY, WAYLAND_DISPLAY, XDG_SESSION_TYPE, or session D-Bus"]
+result_artifacts = ["GitHub Actions native-headless job log"]
+sources = [".github/workflows/ci.yml::native-headless:", ".github/scripts/verify_headless_boundary.py::def main()"]
+
+[[template]]
+id = "AT-NATIVE-DISTRO-BUILD"
+kind = "automated"
+status = "planned"
+phase = 10
+owner = "rayan6ms"
+requirements = ["NFR-009"]
+observable = "Locked release sources build and pass native tests on every supported x86_64 distribution baseline."
+test_ids = ["T-RELEASE-DISTRO-MATRIX"]
+commands = ["Run the clean-checkout release matrix on Ubuntu, Debian, and Fedora"]
+fixtures = ["Locked source checkout and native development packages"]
+environments = ["Ubuntu 24.04 LTS x86_64", "Debian 13 x86_64", "Fedora 43+ x86_64"]
+result_artifacts = ["Per-distribution build and test logs with package versions"]

@@ -41,6 +41,11 @@ jobs:
             ~/.cargo/git/db
           key: cargo-sources-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
 
+      - name: Validate requirement traceability
+        run: |
+          python3 .github/scripts/validate_traceability.py --self-test \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/traceability.log"
+
       - name: Check formatting
         run: cargo +1.97.0 fmt --all -- --check 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/format.log"
 
