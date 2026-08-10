@@ -1,0 +1,631 @@
+//! Bounded capture-buffer validation, decoding, metering, and native stream glue.
+
+use std::{
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, AtomicU64, Ordering},
+    },
+};
+
+use noire_dsp::{MAX_CALLBACK_FRAMES, Meter, MeterSnapshot, SanitizeReport, sanitize_buffer};
+
+const F32_BYTES: usize = size_of::<f32>();
+const F32_BYTES_U32: u32 = 4;
+
+/// Trusted copy of one SPA chunk's metadata.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ChunkMetadata {
+    /// Byte offset from the mapped data-plane start.
+    pub offset_bytes: u32,
+    /// Declared byte length.
+    pub size_bytes: u32,
+    /// Byte stride, where zero means tightly packed.
+    pub stride_bytes: i32,
+    /// Whether SPA marked this chunk corrupted.
+    pub corrupted: bool,
+}
+
+/// Error rejecting untrusted capture-buffer metadata.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CaptureBufferError {
+    /// Metadata does not describe an aligned accessible `f32` region.
+    MalformedChunk,
+    /// The declared quantum exceeds the fixed callback bound.
+    QuantumTooLarge,
+}
+
+impl fmt::Display for CaptureBufferError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::MalformedChunk => "capture chunk metadata is malformed",
+            Self::QuantumTooLarge => "capture chunk exceeds the fixed callback bound",
+        })
+    }
+}
+
+impl std::error::Error for CaptureBufferError {}
+
+/// Callback counters retained by the processor and mirrored atomically.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CaptureCounters {
+    /// Process callback invocations.
+    pub callbacks: u64,
+    /// Successfully delivered canonical frames.
+    pub frames: u64,
+    /// Empty mapped buffers/chunks.
+    pub empty_buffers: u64,
+    /// Rejected malformed chunks.
+    pub malformed_chunks: u64,
+    /// Rejected oversized chunks.
+    pub oversized_chunks: u64,
+    /// Non-finite samples replaced with silence.
+    pub non_finite_samples: u64,
+    /// Subnormal samples flushed to silence.
+    pub subnormal_samples: u64,
+}
+
+/// One successful bounded capture call.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CaptureReport {
+    /// Canonical frames delivered to the sink.
+    pub frames: u16,
+    /// Invalid values sanitized at the boundary.
+    pub sanitized: SanitizeReport,
+}
+
+/// Allocation-free destination called with validated canonical samples.
+pub trait CaptureSink {
+    /// Accepts one finite mono callback slice.
+    fn write(&mut self, samples: &[f32]);
+}
+
+/// Lock-free callback telemetry readable by the control plane.
+#[derive(Clone, Debug, Default)]
+pub struct CaptureTelemetry {
+    inner: Arc<CaptureTelemetryInner>,
+}
+
+#[derive(Debug, Default)]
+struct CaptureTelemetryInner {
+    callbacks: AtomicU64,
+    frames: AtomicU64,
+    empty_buffers: AtomicU64,
+    malformed_chunks: AtomicU64,
+    oversized_chunks: AtomicU64,
+    non_finite_samples: AtomicU64,
+    subnormal_samples: AtomicU64,
+    peak_bits: AtomicU32,
+}
+
+/// Immutable control-plane snapshot of capture telemetry.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CaptureTelemetrySnapshot {
+    /// Current callback counters.
+    pub counters: CaptureCounters,
+    /// Largest absolute finite sample observed since construction.
+    pub peak: f32,
+}
+
+impl CaptureTelemetry {
+    /// Reads all counters without locking the process callback.
+    #[must_use]
+    pub fn snapshot(&self) -> CaptureTelemetrySnapshot {
+        let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
+        CaptureTelemetrySnapshot {
+            counters: CaptureCounters {
+                callbacks: load(&self.inner.callbacks),
+                frames: load(&self.inner.frames),
+                empty_buffers: load(&self.inner.empty_buffers),
+                malformed_chunks: load(&self.inner.malformed_chunks),
+                oversized_chunks: load(&self.inner.oversized_chunks),
+                non_finite_samples: load(&self.inner.non_finite_samples),
+                subnormal_samples: load(&self.inner.subnormal_samples),
+            },
+            peak: f32::from_bits(self.inner.peak_bits.load(Ordering::Relaxed)),
+        }
+    }
+
+    fn publish(&self, counters: CaptureCounters, samples: &[f32]) {
+        self.inner
+            .callbacks
+            .store(counters.callbacks, Ordering::Relaxed);
+        self.inner.frames.store(counters.frames, Ordering::Relaxed);
+        self.inner
+            .empty_buffers
+            .store(counters.empty_buffers, Ordering::Relaxed);
+        self.inner
+            .malformed_chunks
+            .store(counters.malformed_chunks, Ordering::Relaxed);
+        self.inner
+            .oversized_chunks
+            .store(counters.oversized_chunks, Ordering::Relaxed);
+        self.inner
+            .non_finite_samples
+            .store(counters.non_finite_samples, Ordering::Relaxed);
+        self.inner
+            .subnormal_samples
+            .store(counters.subnormal_samples, Ordering::Relaxed);
+        let peak = samples
+            .iter()
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+        self.inner
+            .peak_bits
+            .fetch_max(peak.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// Fixed-storage capture processor used directly by the native callback.
+#[derive(Debug)]
+pub struct CaptureProcessor<S> {
+    sink: S,
+    scratch: [f32; MAX_CALLBACK_FRAMES],
+    meter: Meter,
+    counters: CaptureCounters,
+    telemetry: CaptureTelemetry,
+}
+
+impl<S: CaptureSink> CaptureProcessor<S> {
+    /// Constructs all callback storage before stream activation.
+    #[must_use]
+    pub fn new(sink: S, telemetry: CaptureTelemetry) -> Self {
+        Self {
+            sink,
+            scratch: [0.0; MAX_CALLBACK_FRAMES],
+            meter: Meter::new(),
+            counters: CaptureCounters::default(),
+            telemetry,
+        }
+    }
+
+    /// Validates, decodes, sanitizes, meters, and delivers one mapped chunk.
+    ///
+    /// # Errors
+    ///
+    /// Returns a compact error for malformed or oversized metadata. The sink is
+    /// not called on errors or empty chunks.
+    pub fn process_mapped(
+        &mut self,
+        mapped: Option<&[u8]>,
+        metadata: ChunkMetadata,
+    ) -> Result<CaptureReport, CaptureBufferError> {
+        self.counters.callbacks = self.counters.callbacks.saturating_add(1);
+        if metadata.size_bytes == 0 {
+            self.counters.empty_buffers = self.counters.empty_buffers.saturating_add(1);
+            self.telemetry.publish(self.counters, &[]);
+            return Ok(CaptureReport::default());
+        }
+        if metadata.corrupted
+            || !matches!(metadata.stride_bytes, 0 | 4)
+            || !metadata.size_bytes.is_multiple_of(F32_BYTES_U32)
+        {
+            return self.reject(CaptureBufferError::MalformedChunk);
+        }
+        let Some(mapped) = mapped else {
+            return self.reject(CaptureBufferError::MalformedChunk);
+        };
+        let Ok(offset) = usize::try_from(metadata.offset_bytes) else {
+            return self.reject(CaptureBufferError::MalformedChunk);
+        };
+        let Ok(size) = usize::try_from(metadata.size_bytes) else {
+            return self.reject(CaptureBufferError::MalformedChunk);
+        };
+        let Some(end) = offset.checked_add(size) else {
+            return self.reject(CaptureBufferError::MalformedChunk);
+        };
+        let Some(bytes) = mapped.get(offset..end) else {
+            return self.reject(CaptureBufferError::MalformedChunk);
+        };
+        let frames = bytes.len() / F32_BYTES;
+        if frames > MAX_CALLBACK_FRAMES {
+            return self.reject(CaptureBufferError::QuantumTooLarge);
+        }
+
+        for (bytes, sample) in bytes
+            .chunks_exact(F32_BYTES)
+            .zip(self.scratch[..frames].iter_mut())
+        {
+            let array = <[u8; F32_BYTES]>::try_from(bytes)
+                .map_err(|_| CaptureBufferError::MalformedChunk)?;
+            *sample = f32::from_ne_bytes(array);
+        }
+        let samples = &mut self.scratch[..frames];
+        let sanitized = sanitize_buffer(samples);
+        self.meter.observe(samples);
+        self.sink.write(samples);
+        self.counters.frames = self
+            .counters
+            .frames
+            .saturating_add(u64::try_from(frames).unwrap_or(u64::MAX));
+        self.counters.non_finite_samples = self
+            .counters
+            .non_finite_samples
+            .saturating_add(sanitized.non_finite);
+        self.counters.subnormal_samples = self
+            .counters
+            .subnormal_samples
+            .saturating_add(sanitized.subnormal);
+        self.telemetry.publish(self.counters, samples);
+        Ok(CaptureReport {
+            frames: u16::try_from(frames).unwrap_or(u16::MAX),
+            sanitized,
+        })
+    }
+
+    /// Returns processor-local counters for deterministic tests.
+    #[must_use]
+    pub const fn counters(&self) -> CaptureCounters {
+        self.counters
+    }
+
+    /// Returns the current bounded meter window.
+    #[must_use]
+    pub fn meter_snapshot(&self) -> MeterSnapshot {
+        self.meter.snapshot()
+    }
+
+    /// Returns the sink for control-plane inspection after deactivation.
+    #[must_use]
+    pub const fn sink(&self) -> &S {
+        &self.sink
+    }
+
+    fn reject<T>(&mut self, error: CaptureBufferError) -> Result<T, CaptureBufferError> {
+        match error {
+            CaptureBufferError::MalformedChunk => {
+                self.counters.malformed_chunks = self.counters.malformed_chunks.saturating_add(1);
+            }
+            CaptureBufferError::QuantumTooLarge => {
+                self.counters.oversized_chunks = self.counters.oversized_chunks.saturating_add(1);
+            }
+        }
+        self.telemetry.publish(self.counters, &[]);
+        Err(error)
+    }
+}
+
+#[cfg(feature = "pipewire-backend")]
+mod native {
+    use std::{cell::RefCell, rc::Rc};
+
+    use libspa::{param::ParamType, pod::Pod, utils::Direction};
+    use pipewire::{
+        keys,
+        properties::properties,
+        stream::{self, StreamFlags, StreamRc, StreamState},
+    };
+
+    use super::{CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata};
+    use crate::{
+        CaptureFormat, NegotiatedFormatError, PipewireConnection, build_capture_format_pod,
+        parse_negotiated_format,
+    };
+
+    #[derive(Debug)]
+    struct DiscardSink;
+
+    impl CaptureSink for DiscardSink {
+        fn write(&mut self, _samples: &[f32]) {}
+    }
+
+    /// Stream lifecycle state copied for the control plane.
+    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+    pub enum CaptureStreamState {
+        /// Stream proxy is not connected.
+        #[default]
+        Unconnected,
+        /// Negotiation/connection is in progress.
+        Connecting,
+        /// Stream is connected but paused.
+        Paused,
+        /// Process callbacks are active.
+        Streaming,
+        /// `PipeWire` reported a stream error.
+        Error,
+    }
+
+    /// Negotiated format event retrieved and logged by the control plane.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub enum NegotiatedFormatEvent {
+        /// Canonical format was accepted.
+        Accepted(CaptureFormat),
+        /// Negotiation produced an unsupported or malformed format.
+        Rejected(NegotiatedFormatError),
+    }
+
+    #[derive(Debug, Default)]
+    struct ControlState {
+        stream_state: CaptureStreamState,
+        format_event: Option<NegotiatedFormatEvent>,
+    }
+
+    /// Construction/connect failure for the native capture stream.
+    #[derive(Debug)]
+    pub enum CaptureStreamError {
+        /// The fixed canonical SPA pod could not be serialized.
+        FormatPod,
+        /// The native `PipeWire` binding rejected stream creation/connection.
+        Native(pipewire::Error),
+    }
+
+    impl std::fmt::Display for CaptureStreamError {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Self::FormatPod => formatter.write_str("could not serialize capture format pod"),
+                Self::Native(error) => write!(formatter, "PipeWire capture stream error: {error}"),
+            }
+        }
+    }
+
+    impl std::error::Error for CaptureStreamError {}
+
+    impl From<pipewire::Error> for CaptureStreamError {
+        fn from(error: pipewire::Error) -> Self {
+            Self::Native(error)
+        }
+    }
+
+    /// Connected native capture stream with allocation-free process user data.
+    pub struct NativeCaptureStream {
+        _listener: stream::StreamListener<CaptureProcessor<DiscardSink>>,
+        stream: StreamRc,
+        control: Rc<RefCell<ControlState>>,
+        telemetry: CaptureTelemetry,
+    }
+
+    impl NativeCaptureStream {
+        /// Creates and connects an input stream targeting a stable node name.
+        ///
+        /// # Errors
+        ///
+        /// Returns a format serialization or native stream error.
+        pub fn connect(
+            connection: &PipewireConnection,
+            target_node_name: &str,
+        ) -> Result<Self, CaptureStreamError> {
+            let properties = properties! {
+                *keys::MEDIA_TYPE => "Audio",
+                *keys::MEDIA_CATEGORY => "Capture",
+                *keys::MEDIA_ROLE => "Communication",
+                "target.object" => target_node_name,
+                *keys::NODE_LATENCY => "128/48000",
+            };
+            let stream = StreamRc::new(connection.core_clone(), "noire-capture", properties)?;
+            let control = Rc::new(RefCell::new(ControlState::default()));
+            let telemetry = CaptureTelemetry::default();
+            let processor = CaptureProcessor::new(DiscardSink, telemetry.clone());
+            let state_control = Rc::clone(&control);
+            let format_control = Rc::clone(&control);
+            let listener = stream
+                .add_local_listener_with_user_data(processor)
+                .state_changed(move |_stream, _processor, _old, new| {
+                    state_control.borrow_mut().stream_state = map_stream_state(&new);
+                })
+                .param_changed(move |_stream, _processor, id, param| {
+                    if id != ParamType::Format.as_raw() {
+                        return;
+                    }
+                    let event = param.map_or(
+                        NegotiatedFormatEvent::Rejected(NegotiatedFormatError::Malformed),
+                        |param| match parse_negotiated_format(param) {
+                            Ok(format) => NegotiatedFormatEvent::Accepted(format),
+                            Err(error) => NegotiatedFormatEvent::Rejected(error),
+                        },
+                    );
+                    format_control.borrow_mut().format_event = Some(event);
+                })
+                .process(process_available_buffers)
+                .register()?;
+
+            let pod_bytes =
+                build_capture_format_pod().map_err(|_| CaptureStreamError::FormatPod)?;
+            let pod = Pod::from_bytes(&pod_bytes).ok_or(CaptureStreamError::FormatPod)?;
+            let mut params = [pod];
+            stream.connect(
+                Direction::Input,
+                None,
+                StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS,
+                &mut params,
+            )?;
+            Ok(Self {
+                _listener: listener,
+                stream,
+                control,
+                telemetry,
+            })
+        }
+
+        /// Returns current stream lifecycle state.
+        #[must_use]
+        pub fn state(&self) -> CaptureStreamState {
+            self.control.borrow().stream_state
+        }
+
+        /// Removes the latest format event for control-plane logging/policy.
+        #[must_use]
+        pub fn take_negotiated_format(&self) -> Option<NegotiatedFormatEvent> {
+            self.control.borrow_mut().format_event.take()
+        }
+
+        /// Returns a lock-free capture telemetry handle.
+        #[must_use]
+        pub fn telemetry(&self) -> CaptureTelemetry {
+            self.telemetry.clone()
+        }
+
+        /// Activates or pauses capture without destroying callback state.
+        ///
+        /// # Errors
+        ///
+        /// Returns the native stream error if the state change is rejected.
+        pub fn set_active(&self, active: bool) -> Result<(), pipewire::Error> {
+            self.stream.set_active(active)
+        }
+    }
+
+    fn process_available_buffers(
+        stream: &pipewire::stream::Stream,
+        processor: &mut CaptureProcessor<DiscardSink>,
+    ) {
+        while let Some(mut buffer) = stream.dequeue_buffer() {
+            let datas = buffer.datas_mut();
+            if datas.len() != 1 {
+                let _ = processor.process_mapped(
+                    None,
+                    ChunkMetadata {
+                        size_bytes: 1,
+                        ..ChunkMetadata::default()
+                    },
+                );
+                continue;
+            }
+            let data = &mut datas[0];
+            if data.as_raw().chunk.is_null() {
+                let _ = processor.process_mapped(
+                    None,
+                    ChunkMetadata {
+                        size_bytes: 1,
+                        ..ChunkMetadata::default()
+                    },
+                );
+                continue;
+            }
+            let chunk = data.chunk();
+            let metadata = ChunkMetadata {
+                offset_bytes: chunk.offset(),
+                size_bytes: chunk.size(),
+                stride_bytes: chunk.stride(),
+                corrupted: !chunk.flags().is_empty(),
+            };
+            let mapped = data.data().map(|bytes| &*bytes);
+            let _ = processor.process_mapped(mapped, metadata);
+        }
+    }
+
+    fn map_stream_state(state: &StreamState) -> CaptureStreamState {
+        match state {
+            StreamState::Unconnected => CaptureStreamState::Unconnected,
+            StreamState::Connecting => CaptureStreamState::Connecting,
+            StreamState::Paused => CaptureStreamState::Paused,
+            StreamState::Streaming => CaptureStreamState::Streaming,
+            StreamState::Error(_) => CaptureStreamState::Error,
+        }
+    }
+}
+
+#[cfg(feature = "pipewire-backend")]
+pub use native::{
+    CaptureStreamError, CaptureStreamState, NativeCaptureStream, NegotiatedFormatEvent,
+};
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::float_cmp)]
+
+    use super::{
+        CaptureBufferError, CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata,
+    };
+    use noire_dsp::MAX_CALLBACK_FRAMES;
+
+    #[derive(Debug)]
+    struct FixedSink {
+        samples: [f32; 8],
+        length: usize,
+    }
+
+    impl FixedSink {
+        const fn new() -> Self {
+            Self {
+                samples: [0.0; 8],
+                length: 0,
+            }
+        }
+    }
+
+    impl CaptureSink for FixedSink {
+        fn write(&mut self, samples: &[f32]) {
+            let remaining = self.samples.len().saturating_sub(self.length);
+            let count = samples.len().min(remaining);
+            let end = self.length + count;
+            self.samples[self.length..end].copy_from_slice(&samples[..count]);
+            self.length = end;
+        }
+    }
+
+    fn encoded(samples: &[f32]) -> Vec<u8> {
+        samples
+            .iter()
+            .flat_map(|sample| sample.to_ne_bytes())
+            .collect()
+    }
+
+    #[test]
+    fn validates_offset_decodes_sanitizes_and_meters() -> Result<(), CaptureBufferError> {
+        let mut bytes = vec![9, 9, 9, 9];
+        bytes.extend(encoded(&[0.25, f32::NAN, -0.5]));
+        bytes.extend([8, 8, 8, 8]);
+        let telemetry = CaptureTelemetry::default();
+        let mut processor = CaptureProcessor::new(FixedSink::new(), telemetry.clone());
+        let report = processor.process_mapped(
+            Some(&bytes),
+            ChunkMetadata {
+                offset_bytes: 4,
+                size_bytes: 12,
+                stride_bytes: 4,
+                corrupted: false,
+            },
+        )?;
+
+        assert_eq!(report.frames, 3);
+        assert_eq!(report.sanitized.non_finite, 1);
+        assert_eq!(processor.sink().samples[..3], [0.25, 0.0, -0.5]);
+        assert_eq!(processor.meter_snapshot().peak, 0.5);
+        assert_eq!(telemetry.snapshot().counters.frames, 3);
+        assert_eq!(telemetry.snapshot().peak, 0.5);
+        Ok(())
+    }
+
+    #[test]
+    fn empty_and_malformed_buffers_are_bounded_and_do_not_reach_sink() {
+        let telemetry = CaptureTelemetry::default();
+        let mut processor = CaptureProcessor::new(FixedSink::new(), telemetry);
+        assert_eq!(
+            processor.process_mapped(None, ChunkMetadata::default()),
+            Ok(super::CaptureReport::default())
+        );
+        assert_eq!(
+            processor.process_mapped(
+                Some(&[0; 4]),
+                ChunkMetadata {
+                    offset_bytes: 3,
+                    size_bytes: 4,
+                    stride_bytes: 4,
+                    corrupted: false,
+                },
+            ),
+            Err(CaptureBufferError::MalformedChunk)
+        );
+        assert_eq!(processor.sink().length, 0);
+        assert_eq!(processor.counters().empty_buffers, 1);
+        assert_eq!(processor.counters().malformed_chunks, 1);
+    }
+
+    #[test]
+    fn oversized_quantum_is_rejected_before_decoding() {
+        let mut processor = CaptureProcessor::new(FixedSink::new(), CaptureTelemetry::default());
+        let bytes = vec![0; (MAX_CALLBACK_FRAMES + 1) * size_of::<f32>()];
+        assert_eq!(
+            processor.process_mapped(
+                Some(&bytes),
+                ChunkMetadata {
+                    offset_bytes: 0,
+                    size_bytes: u32::try_from(bytes.len()).unwrap_or(u32::MAX),
+                    stride_bytes: 4,
+                    corrupted: false,
+                },
+            ),
+            Err(CaptureBufferError::QuantumTooLarge)
+        );
+        assert_eq!(processor.counters().oversized_chunks, 1);
+    }
+}

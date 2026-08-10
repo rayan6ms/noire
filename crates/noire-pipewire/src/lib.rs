@@ -2,11 +2,20 @@
 
 #![forbid(unsafe_code)]
 
+mod capture;
 #[cfg(feature = "pipewire-backend")]
 mod connection;
 mod format;
 mod registry;
 
+pub use capture::{
+    CaptureBufferError, CaptureCounters, CaptureProcessor, CaptureReport, CaptureSink,
+    CaptureTelemetry, CaptureTelemetrySnapshot, ChunkMetadata,
+};
+#[cfg(feature = "pipewire-backend")]
+pub use capture::{
+    CaptureStreamError, CaptureStreamState, NativeCaptureStream, NegotiatedFormatEvent,
+};
 #[cfg(feature = "pipewire-backend")]
 pub use connection::{CoreFailure, PipewireConnection};
 pub use format::{

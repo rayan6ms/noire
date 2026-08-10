@@ -178,6 +178,10 @@ impl PipewireConnection {
     pub fn registry_snapshot_now(&self) -> RegistrySnapshot {
         self.registry_monitor.borrow_mut().publish_now()
     }
+
+    pub(crate) fn core_clone(&self) -> CoreRc {
+        self.core.clone()
+    }
 }
 
 fn register_registry_listener(
