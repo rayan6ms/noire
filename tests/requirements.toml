@@ -25,7 +25,7 @@ evidence = ["AT-PIPEWIRE-REGISTRY", "AT-CONFIG-MIGRATION"]
 id = "FR-004"
 summary = "Capture and process mono audio internally at 48 kHz"
 priority = "must"
-evidence = ["AT-PIPEWIRE-AUDIO-IO", "AT-DSP-BYPASS"]
+evidence = ["AT-PIPEWIRE-AUDIO-IO", "AT-DSP-PRIMITIVES", "AT-DSP-BYPASS"]
 
 [[requirement]]
 id = "FR-005"
@@ -37,7 +37,7 @@ evidence = ["AT-PIPEWIRE-AUDIO-IO"]
 id = "FR-006"
 summary = "Provide RNNoise suppression and latency-matched bypass"
 priority = "must"
-evidence = ["AT-DSP-BYPASS", "AT-SUPPRESSION-QUALITY", "MX-SPEECH-PRESERVATION"]
+evidence = ["AT-DSP-PRIMITIVES", "AT-DSP-BYPASS", "AT-SUPPRESSION-QUALITY", "MX-SPEECH-PRESERVATION"]
 
 [[requirement]]
 id = "FR-007"
@@ -181,7 +181,7 @@ evidence = ["AT-PIPEWIRE-REGISTRY", "AT-PIPEWIRE-AUDIO-IO"]
 id = "QG-002"
 summary = "Preserve bypass signal gain, channels, finiteness, and headroom"
 priority = "release"
-evidence = ["AT-DSP-BYPASS"]
+evidence = ["AT-DSP-PRIMITIVES", "AT-DSP-BYPASS"]
 
 [[requirement]]
 id = "QG-003"

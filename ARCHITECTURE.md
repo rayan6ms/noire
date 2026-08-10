@@ -1,8 +1,9 @@
 # Noire architecture
 
-This document describes the target 1.0 boundaries. The repository is currently
-an engineering scaffold; feature-gated native adapters and most runtime
-behavior are not implemented yet.
+This document describes the target 1.0 boundaries. The repository contains the
+platform-independent domain scaffold and foundational DSP primitives;
+feature-gated native adapters and most composed runtime behavior are not
+implemented yet.
 
 ## System shape
 
@@ -67,6 +68,16 @@ virtual source consumes it. RNNoise runs inline in capture on exact mono,
 48-kHz, 480-sample frames. PipeWire is asked to provide 48 kHz; an in-process
 resampler is not part of 1.0 unless supported-system evidence and a new ADR
 justify one.
+
+`noire-dsp` defines that canonical domain and keeps its processors independent
+of PipeWire, the denoising model, and the UI. The implemented boundary utilities
+sanitize non-finite values and flush subnormals, prefer declared mono/front-
+center channels or use a headroom-preserving equal-contribution downmix, block
+DC near 20 Hz, assemble arbitrary bounded quanta into exact 480-sample frames,
+smooth wet/dry strength over at least 20 ms, accumulate bounded peak/RMS meter
+windows, and delay dry audio by an exact configured sample count. Processing is
+allocation-free after construction; only the fixed dry-delay storage is heap-
+allocated before activation.
 
 All callback capacities are fixed before stream activation. Process callbacks
 may use bounded slice operations, arithmetic, model inference with a measured

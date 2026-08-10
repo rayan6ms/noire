@@ -1,6 +1,21 @@
 schema_version = 1
 
 [[template]]
+id = "AT-DSP-PRIMITIVES"
+kind = "automated"
+status = "active"
+phase = 2
+owner = "rayan6ms"
+requirements = ["FR-004", "FR-006", "QG-002"]
+observable = "Pure bounded DSP tests establish canonical mono/48 kHz constants, explicit headroom-preserving mapping, finite sanitation, DC blocking, exact 480-sample assembly with sample conservation, endpoint-exact wet/dry mixing, bounded meters, and sample-exact dry delay across arbitrary chunks."
+test_ids = ["T-DSP-FOUNDATIONAL-PRIMITIVES"]
+commands = ["cargo test -p noire-dsp --all-features --locked"]
+fixtures = ["Generated finite edge values, every f32 bit class, constant DC, known RMS vectors, and deterministic/random callback chunks"]
+environments = ["Pinned Rust test environment; no PipeWire, model, UI, device, or network dependency"]
+result_artifacts = ["Cargo unit/property assertion results for finiteness, headroom, exact endpoints, frame size, sample conservation, and exact delay"]
+sources = ["crates/noire-dsp/src/channels.rs::fn fallback_mix_preserves_coherent_headroom", "crates/noire-dsp/src/frame.rs::fn randomized_chunks_conserve_every_sample", "crates/noire-dsp/src/delay.rs::fn arbitrary_chunking_matches_a_reference_delay", "crates/noire-dsp/src/sanitize.rs::fn every_bit_pattern_becomes_finite_and_normal_or_zero"]
+
+[[template]]
 id = "AT-DSP-BYPASS"
 kind = "automated"
 status = "planned"
