@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Format, lint, test, and docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal --component clippy,rustfmt --no-self-update
+
+      - name: Check formatting
+        run: cargo +1.97.0 fmt --all -- --check
+
+      - name: Check workspace with warnings denied
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo +1.97.0 check --workspace --all-targets --locked
+
+      - name: Run Clippy with warnings denied
+        run: cargo +1.97.0 clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Run unit and documentation tests
+        run: cargo +1.97.0 test --workspace --locked
+
+      - name: Build documentation with warnings denied
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo +1.97.0 doc --workspace --no-deps --locked
+
+  msrv:
+    name: MSRV 1.92
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install MSRV toolchain
+        run: rustup toolchain install 1.92.0 --profile minimal --no-self-update
+
+      - name: Check workspace on MSRV
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo +1.92.0 check --workspace --all-targets --locked
+
+  release:
+    name: Release build and binary smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.97.0 --profile minimal --no-self-update
+
+      - name: Build release workspace
+        run: cargo +1.97.0 build --workspace --release --locked
+
+      - name: Smoke-test binary interfaces
+        run: |
+          test "$(target/release/noired --version)" = "noired 0.1.0"
+          test "$(target/release/noire --version)" = "noire 0.1.0"
+          test "$(target/release/noirectl --version)" = "noirectl 0.1.0"
+          target/release/noired --help >/dev/null
+          target/release/noire --help >/dev/null
+          target/release/noirectl --help >/dev/null
