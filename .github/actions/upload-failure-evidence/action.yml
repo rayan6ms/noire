@@ -1,0 +1,99 @@
+name: Upload failure evidence
+description: Sanitize and upload bounded text diagnostics after a CI job fails
+
+inputs:
+  artifact-name:
+    description: Unique name for the failure artifact
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare sanitized evidence
+      id: prepare
+      shell: bash
+      env:
+        RAW_LOG_DIR: ${{ runner.temp }}/noire-ci-logs
+      run: |
+        python3 - <<'PY'
+        import os
+        import re
+        import tempfile
+        from pathlib import Path
+
+        raw_log_dir = Path(os.environ["RAW_LOG_DIR"])
+        evidence_dir = Path(tempfile.mkdtemp(
+            prefix="noire-ci-evidence-",
+            dir=os.environ["RUNNER_TEMP"],
+        ))
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+            output.write(f"evidence-path={evidence_dir}\n")
+
+        metadata = {
+            "schema_version": "1",
+            "job": os.environ["GITHUB_JOB"],
+            "commit": os.environ["GITHUB_SHA"],
+            "event": os.environ["GITHUB_EVENT_NAME"],
+            "run_id": os.environ["GITHUB_RUN_ID"],
+            "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+            "runner_os": os.environ["RUNNER_OS"],
+            "runner_arch": os.environ["RUNNER_ARCH"],
+        }
+        (evidence_dir / "metadata.txt").write_text(
+            "".join(f"{key}={value}\n" for key, value in metadata.items()),
+            encoding="utf-8",
+        )
+
+        replacements = []
+        for variable, label in (
+            ("GITHUB_WORKSPACE", "<workspace>"),
+            ("RUNNER_TEMP", "<runner-temp>"),
+            ("RUNNER_TOOL_CACHE", "<tool-cache>"),
+            ("HOME", "<runner-home>"),
+        ):
+            value = os.environ.get(variable)
+            if value:
+                replacements.append((value, label))
+        replacements.sort(key=lambda item: len(item[0]), reverse=True)
+
+        ansi_escape = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+        credential_url = re.compile(r"(https?://)[^/\s:@]+:[^/\s@]+@", re.IGNORECASE)
+        github_token = re.compile(
+            r"\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b"
+        )
+        bearer_token = re.compile(
+            r"\b(Bearer)\s+[A-Za-z0-9._~+/=-]{20,}",
+            re.IGNORECASE,
+        )
+        maximum_log_bytes = 1_048_576
+
+        if raw_log_dir.is_dir() and not raw_log_dir.is_symlink():
+            for source in sorted(raw_log_dir.glob("*.log")):
+                if source.is_symlink() or not source.is_file():
+                    continue
+                data = source.read_bytes()
+                truncated = len(data) > maximum_log_bytes
+                if truncated:
+                    data = data[-maximum_log_bytes:]
+                text = data.decode("utf-8", errors="replace")
+                text = ansi_escape.sub("", text)
+                text = credential_url.sub(r"\1<redacted>@", text)
+                text = github_token.sub("<redacted-token>", text)
+                text = bearer_token.sub(r"\1 <redacted>", text)
+                for path, label in replacements:
+                    text = text.replace(path, label)
+                if truncated:
+                    text = "[earlier output truncated]\n" + text
+                (evidence_dir / source.name).write_text(text, encoding="utf-8")
+        PY
+
+    - name: Upload diagnostics
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.prepare.outputs.evidence-path }}
+        if-no-files-found: error
+        retention-days: 5
+        compression-level: 9
+        overwrite: false
+        include-hidden-files: false
