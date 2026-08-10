@@ -45,6 +45,21 @@ result_artifacts = ["Cargo assertions for metadata validation, trait-object crea
 sources = ["crates/noire-model/src/lib.rs::fn reset_reproduces_new_instance_state", "crates/noire-model/src/lib.rs::fn malformed_frame_fails_closed_and_recovers_after_reset", "crates/noire-model/src/descriptor.rs::fn rejects_invalid_format_hop_and_delay", "crates/noire-model/src/frame.rs::fn finalize_rejects_non_finite_and_flushes_subnormal_output"]
 
 [[template]]
+id = "AT-RNNOISE-ADAPTER"
+kind = "automated"
+status = "active"
+phase = 2
+owner = "rayan6ms"
+requirements = ["FR-006"]
+observable = "The feature-gated embedded-default adapter matches Noire's mono 48 kHz/480-sample contract, preserves normalized/signed-16 endpoints, rejects malformed input as silence, emits finite bounded output and VAD, resets deterministically, and declares a one-frame delay confirmed by impulse response."
+test_ids = ["T-RNNOISE-DEFAULT-ADAPTER"]
+commands = ["cargo test -p noire-model-rnnoise --features rnnoise --locked"]
+fixtures = ["Silence, normalized endpoint values, deterministic 440 Hz frame, malformed/non-finite frames, and a centered impulse followed by silence"]
+environments = ["Pinned Rust environment with nnnoiseless 0.5.2 default features disabled and embedded default weights"]
+result_artifacts = ["Cargo assertions for descriptor/provenance, exact scaling, failure silence, finite output/VAD, reset equivalence, and 480-sample impulse delay"]
+sources = ["crates/noire-model-rnnoise/src/adapter.rs::fn normalized_scaling_honors_signed_sixteen_bit_endpoints", "crates/noire-model-rnnoise/src/adapter.rs::fn malformed_and_non_finite_frames_fail_closed", "crates/noire-model-rnnoise/src/adapter.rs::fn reset_reproduces_clean_default_state", "crates/noire-model-rnnoise/src/adapter.rs::fn impulse_response_confirms_one_frame_startup_delay"]
+
+[[template]]
 id = "AT-SUPPRESSION-QUALITY"
 kind = "automated"
 status = "planned"

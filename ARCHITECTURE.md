@@ -100,6 +100,15 @@ Descriptor access and steady-state frame processing are allocation-free. Reset
 is deterministic and synchronous but may rebuild adapter-owned state, so it runs
 only after processing is deactivated and never inside a callback.
 
+`noire-model-rnnoise` provides the sole 1.0 adapter behind its explicit
+`rnnoise` feature. It uses `nnnoiseless`'s embedded default weights, converts
+between normalized audio and the model's signed-16 numeric scale, reports VAD as
+telemetry, and declares the measured one-frame (480-sample) startup/history
+delay. Factory creation warms lazy model/FFT state and returns a clean instance;
+the daemon must create it on the eventual processing thread before activation.
+This implementation remains subject to the Phase-2 quality, provenance,
+allocation, and timing gates.
+
 D-Bus, configuration, lifecycle, retries, and metrics snapshots run in the
 non-real-time control plane. Scalar changes cross into audio through atomic
 snapshots; compound changes use a fixed-capacity command queue with a fixed

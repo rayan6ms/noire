@@ -1106,6 +1106,7 @@ name = "noire-model-rnnoise"
 version = "0.1.0"
 dependencies = [
  "nnnoiseless",
+ "noire-dsp",
  "noire-model",
 ]
 

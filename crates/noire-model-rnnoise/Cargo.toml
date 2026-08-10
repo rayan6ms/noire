@@ -11,6 +11,9 @@ repository.workspace = true
 nnnoiseless = { workspace = true, optional = true }
 noire-model.workspace = true
 
+[dev-dependencies]
+noire-dsp.workspace = true
+
 [features]
 default = []
 rnnoise = ["dep:nnnoiseless"]
