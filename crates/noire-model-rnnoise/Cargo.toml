@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+hound = { workspace = true, optional = true }
 nnnoiseless = { workspace = true, optional = true }
 noire-model.workspace = true
 
@@ -16,7 +17,13 @@ noire-dsp.workspace = true
 
 [features]
 default = []
+offline-wav = ["rnnoise", "dep:hound"]
 rnnoise = ["dep:nnnoiseless"]
+
+[[bin]]
+name = "noire-denoise-wav"
+path = "src/bin/noire-denoise-wav.rs"
+required-features = ["offline-wav"]
 
 [lints]
 workspace = true

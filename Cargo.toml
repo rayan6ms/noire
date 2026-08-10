@@ -28,6 +28,7 @@ anyhow = "=1.0.104"
 clap = { version = "=4.6.6", features = ["derive"] }
 criterion = "=0.8.2"
 gtk4 = { version = "=0.11.4", default-features = false, features = ["v4_10"] }
+hound = "=3.5.1"
 libspa = "=0.10.0"
 nnnoiseless = { version = "=0.5.2", default-features = false }
 noire-config = { version = "=0.1.0", path = "crates/noire-config" }

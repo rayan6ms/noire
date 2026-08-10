@@ -29,6 +29,17 @@ cargo run -p noirectl -- --help
 Most runtime behavior is still being implemented, so these binary invocations
 currently verify their command interfaces rather than an audio pipeline.
 
+The development-only offline adapter runner accepts mono 48 kHz signed 16-bit
+PCM or 32-bit float WAV input and writes latency-compensated 32-bit float WAV:
+
+```bash
+cargo run -p noire-model-rnnoise --features offline-wav \
+  --bin noire-denoise-wav -- input.wav output.wav
+```
+
+This feature is for deterministic offline testing only. WAV I/O is not linked
+into the daemon or exposed through the runtime model contract.
+
 ## Native development packages
 
 The `pipewire-backend` feature uses `pkg-config`, PipeWire and SPA development

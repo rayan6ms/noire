@@ -74,6 +74,21 @@ environments = ["Pinned offline quality environment"]
 result_artifacts = ["Machine-readable per-case and aggregate segmental-SNR report"]
 
 [[template]]
+id = "AT-OFFLINE-WAV"
+kind = "automated"
+status = "active"
+phase = 2
+owner = "rayan6ms"
+requirements = ["FR-006"]
+observable = "The explicit development-only WAV runner accepts supported mono 48 kHz PCM/float input, invokes the production adapter, removes its declared delay, conserves every input sample including a partial final frame, rejects invalid samples/formats, and writes finite float output without adding file I/O to the runtime model API."
+test_ids = ["T-RNNOISE-OFFLINE-WAV"]
+commands = ["cargo test -p noire-model-rnnoise --features offline-wav --locked"]
+fixtures = ["In-memory signed-16 endpoint WAV, wrong-rate WAV, empty input, non-finite input, and a partial final model frame"]
+environments = ["Pinned Rust environment; explicit offline-wav feature with no PipeWire, UI, device, or network dependency"]
+result_artifacts = ["Cargo assertions for WAV validation, endpoint normalization, delay-compensated sample conservation, finite output, and output format"]
+sources = ["crates/noire-model-rnnoise/src/offline.rs::fn partial_final_frame_conserves_finite_samples", "crates/noire-model-rnnoise/src/offline.rs::fn non_finite_input_is_rejected_before_processing", "crates/noire-model-rnnoise/src/bin/noire-denoise-wav.rs::fn reads_signed_pcm_endpoints_and_writes_float_output", "crates/noire-model-rnnoise/src/bin/noire-denoise-wav.rs::fn rejects_wrong_rate"]
+
+[[template]]
 id = "MX-SPEECH-PRESERVATION"
 kind = "mixed"
 status = "planned"
