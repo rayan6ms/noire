@@ -21,6 +21,7 @@ tracing-subscriber = { workspace = true, optional = true }
 
 [features]
 default = []
+pipewire-backend = ["noire-pipewire/pipewire-backend"]
 runtime = ["dep:anyhow", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "noire-ipc/dbus"]
 
 [lints]

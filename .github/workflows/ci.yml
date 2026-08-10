@@ -213,3 +213,135 @@ jobs:
         uses: ./.github/actions/upload-failure-evidence
         with:
           artifact-name: ci-failure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+  native-headless:
+    name: Native headless (PipeWire)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/noire-ci-logs"
+          rustup toolchain install 1.97.0 --profile minimal \
+            --component clippy --no-self-update \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
+
+      - name: Restore Cargo sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git/db
+          key: cargo-sources-v1-headless-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install PipeWire build requirements
+        run: |
+          {
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends --yes \
+              gcc pkg-config libclang-dev \
+              libpipewire-0.3-dev libspa-0.2-dev
+            pkg-config --modversion libpipewire-0.3
+            pkg-config --modversion libspa-0.2
+          } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-packages.log"
+
+      - name: Verify the headless dependency boundary
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.0
+        run: |
+          python3 .github/scripts/verify_headless_boundary.py \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/headless-boundary.log"
+
+      - name: Build and test without UI assets or a session
+        run: |
+          {
+            headless_source="$RUNNER_TEMP/noire-headless-source"
+            mkdir -p "$headless_source"
+            git archive --format=tar HEAD -- \
+              Cargo.toml Cargo.lock rust-toolchain.toml crates \
+              | tar -xf - -C "$headless_source"
+            cd "$headless_source"
+
+            env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE \
+              -u DBUS_SESSION_BUS_ADDRESS RUSTFLAGS="-D warnings" \
+              cargo +1.97.0 check --package noired --package noirectl \
+                --all-targets \
+                --features noired/runtime,noired/pipewire-backend \
+                --locked
+            env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE \
+              -u DBUS_SESSION_BUS_ADDRESS \
+              cargo +1.97.0 test --package noired --package noirectl \
+                --features noired/runtime,noired/pipewire-backend \
+                --locked
+          } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-headless.log"
+
+      - name: Upload failure evidence
+        if: ${{ failure() }}
+        uses: ./.github/actions/upload-failure-evidence
+        with:
+          artifact-name: ci-failure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+  native-ui:
+    name: Native workspace and GTK4 UI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/noire-ci-logs"
+          rustup toolchain install 1.97.0 --profile minimal \
+            --component clippy --no-self-update \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
+
+      - name: Restore Cargo sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git/db
+          key: cargo-sources-v1-native-ui-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Install complete native build requirements
+        run: |
+          {
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends --yes \
+              gcc pkg-config libclang-dev \
+              libpipewire-0.3-dev libspa-0.2-dev libgtk-4-dev
+            pkg-config --modversion libpipewire-0.3
+            pkg-config --modversion libspa-0.2
+            pkg-config --atleast-version=4.10 gtk4
+            pkg-config --modversion gtk4
+          } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-packages.log"
+
+      - name: Check the complete native workspace
+        env:
+          RUSTFLAGS: -D warnings
+        run: |
+          cargo +1.97.0 check --workspace --all-targets --all-features --locked \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-check.log"
+
+      - name: Run native Clippy with warnings denied
+        run: |
+          cargo +1.97.0 clippy --workspace --all-targets --all-features --locked \
+            -- -D warnings \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-clippy.log"
+
+      - name: Test the complete workspace without a session
+        run: |
+          env -u DISPLAY -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE \
+            -u DBUS_SESSION_BUS_ADDRESS \
+            cargo +1.97.0 test --workspace --all-features --locked \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-test.log"
+
+      - name: Upload failure evidence
+        if: ${{ failure() }}
+        uses: ./.github/actions/upload-failure-evidence
+        with:
+          artifact-name: ci-failure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
