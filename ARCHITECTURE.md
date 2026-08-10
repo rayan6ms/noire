@@ -86,6 +86,16 @@ I/O, call control-plane APIs, wait, or run work proportional to untrusted input.
 The model instance and owned buffers are created and destroyed outside callback
 execution.
 
+`noire-model` is the dependency-free boundary between that pipeline and a
+concrete inference adapter. It validates immutable sample-rate/channel/frame/hop,
+lookahead/delay, identity/version, and SPDX license metadata. Model instances are
+`Send` trait objects with synchronous descriptor, reset, and exact-frame process
+operations; factories are control-plane objects whose `create` operation may
+allocate. Processing failures use fieldless copyable enums, require silent
+output, and require reset before reuse. Shared boundary helpers clear output
+before inference, reject malformed/non-finite input, reject non-finite output,
+and flush output subnormals without allocation.
+
 D-Bus, configuration, lifecycle, retries, and metrics snapshots run in the
 non-real-time control plane. Scalar changes cross into audio through atomic
 snapshots; compound changes use a fixed-capacity command queue with a fixed

@@ -30,6 +30,21 @@ environments = ["Pinned Rust test environment"]
 result_artifacts = ["Machine-readable gain, delay, clipping, finiteness, and sample-count assertions"]
 
 [[template]]
+id = "AT-MODEL-CONTRACT"
+kind = "automated"
+status = "active"
+phase = 2
+owner = "rayan6ms"
+requirements = ["FR-006"]
+observable = "Dependency-free contract tests establish validated immutable model metadata, object-safe control-plane creation, exact finite frame boundaries, bounded VAD statistics and errors, fail-closed malformed-frame behavior, and reset equivalence to a new instance."
+test_ids = ["T-MODEL-CONTRACT-RESET"]
+commands = ["cargo test -p noire-model --all-features --locked"]
+fixtures = ["Deterministic stateful fake denoiser/factory, malformed frame shapes, non-finite samples, subnormal output, and invalid descriptors/statistics"]
+environments = ["Pinned Rust test environment; no concrete model, PipeWire, UI, file, or network dependency"]
+result_artifacts = ["Cargo assertions for metadata validation, trait-object creation, exact frame checks, silent errors, bounded error layout, and deterministic reset"]
+sources = ["crates/noire-model/src/lib.rs::fn reset_reproduces_new_instance_state", "crates/noire-model/src/lib.rs::fn malformed_frame_fails_closed_and_recovers_after_reset", "crates/noire-model/src/descriptor.rs::fn rejects_invalid_format_hop_and_delay", "crates/noire-model/src/frame.rs::fn finalize_rejects_non_finite_and_flushes_subnormal_output"]
+
+[[template]]
 id = "AT-SUPPRESSION-QUALITY"
 kind = "automated"
 status = "planned"
