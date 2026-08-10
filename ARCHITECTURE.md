@@ -107,7 +107,9 @@ telemetry, and declares the measured one-frame (480-sample) startup/history
 delay. Factory creation warms lazy model/FFT state and returns a clean instance;
 the daemon must create it on the eventual processing thread before activation.
 This implementation remains subject to the Phase-2 quality, provenance,
-allocation, and timing gates.
+allocation, and timing gates. Its P2-06 automated selection evidence passes the
+frozen-corpus objective thresholds and the pinned C-reference comparison; the
+independent QG-004 listening result remains explicitly outstanding.
 
 D-Bus, configuration, lifecycle, retries, and metrics snapshots run in the
 non-real-time control plane. Scalar changes cross into audio through atomic

@@ -1,0 +1,66 @@
+schema_version = 1
+task = "P2-06"
+run_date = "2026-08-10"
+adapter_commit = "f8109d8"
+offline_runner_commit = "f02e34d"
+chunking_commit = "0f383b4"
+adapter_decision = "accepted"
+phase_2_accepted = false
+phase_2_blocker = "QG-004 requires three independent blinded listening records; tracked by GitHub issue #1"
+
+[environment]
+identifier = "noire-reference-x86_64-2026-08-10"
+os = "Fedora Linux 44"
+architecture = "x86_64"
+cpu = "Intel Xeon E5-2697 v3"
+rust = "1.97.1"
+profile = "release"
+
+[corpus]
+id = "noire-phase0-multilingual-v1"
+speakers = 20
+languages = ["en", "pt-BR", "cmn-Hans-CN"]
+noise_families = ["fan", "hvac", "hum", "DEMAND washing", "DEMAND office", "DEMAND car"]
+snr_db = [0.0, 5.0]
+noisy_cases = 240
+production_report_sha256 = "b5078a845e390c9531ef7f19ce44b9f4b152815dfc14d144601676a5eecaf22b"
+phase0_reference_report_sha256 = "df8e83fbf6d59c50db1238f5fbdb5601afeab0bbc2a4e41a69505a0ad2d2ef1d"
+
+[quality]
+median_segmental_snr_improvement_db = 7.225930997192
+median_segmental_snr_threshold_db = 6.0
+p25_segmental_snr_improvement_db = 5.839658388789823
+p25_segmental_snr_threshold_db = 3.0
+minimum_case_improvement_db = 1.7298344793380362
+median_clean_stoi_decrease = 0.0057197166748024775
+median_clean_stoi_decrease_threshold = 0.02
+p95_clean_stoi_decrease = 0.04618028787582353
+p95_clean_stoi_decrease_threshold = 0.05
+newly_clipped_samples = 0
+qg003_pass = true
+qg004_objective_metrics_pass = true
+qg004_listening_pass = false
+
+[phase0_comparison]
+maximum_per_case_metric_delta = 0.0024287609503490515
+maximum_clean_stoi_delta = 0.0001326411603288502
+threshold_outcomes_unchanged = true
+
+[upstream_reference]
+source = "jneem/nnnoiseless v0.5.2 checked-in C RNNoise reference vector"
+tag_commit = "924a2dd143ccad7bce9e5bda061b60ca32911a67"
+testing_raw_sha256 = "9468a3e815f9c8e2c123eed3a8001bcaddb5f678548226a54a9a8fd4e2ed6e31"
+reference_output_sha256 = "184694ee14159c342f9b058a23550faeac49983643e5f18d24e2c46b19f2513a"
+compared_samples = 47520
+normalized_squared_error = 0.0000016623822789836185
+normalized_squared_error_threshold = 0.0001
+pass = true
+
+[provenance_and_safety]
+crate = "nnnoiseless 0.5.2"
+crate_default_features = false
+embedded_weights_sha256 = "e6de5fbfadf7ec91d1b24d6a6ccfd0290cb4d8bf555c5eab3ce41506f67a58b1"
+adapter_license = "BSD-3-Clause"
+noire_adapter_unsafe_blocks = 0
+dependency_unsafe_review = "nnnoiseless uses one byte-slice cast; easyfft/realfft/rustfft contain reviewed FFT/SIMD unsafe internals. The optional nnnoiseless C API is not enabled."
+cargo_deny = "advisories, bans, licenses, and sources passed"

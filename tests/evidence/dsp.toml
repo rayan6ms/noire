@@ -57,21 +57,22 @@ commands = ["cargo test -p noire-model-rnnoise --features rnnoise --locked"]
 fixtures = ["Silence, normalized endpoint values, deterministic 440 Hz frame, malformed/non-finite frames, and a centered impulse followed by silence"]
 environments = ["Pinned Rust environment with nnnoiseless 0.5.2 default features disabled and embedded default weights"]
 result_artifacts = ["Cargo assertions for descriptor/provenance, exact scaling, failure silence, finite output/VAD, reset equivalence, and 480-sample impulse delay"]
-sources = ["crates/noire-model-rnnoise/src/adapter.rs::fn normalized_scaling_honors_signed_sixteen_bit_endpoints", "crates/noire-model-rnnoise/src/adapter.rs::fn malformed_and_non_finite_frames_fail_closed", "crates/noire-model-rnnoise/src/adapter.rs::fn reset_reproduces_clean_default_state", "crates/noire-model-rnnoise/src/adapter.rs::fn impulse_response_confirms_one_frame_startup_delay"]
+sources = ["crates/noire-model-rnnoise/src/adapter.rs::fn normalized_scaling_honors_signed_sixteen_bit_endpoints", "crates/noire-model-rnnoise/src/adapter.rs::fn malformed_and_non_finite_frames_fail_closed", "crates/noire-model-rnnoise/src/adapter.rs::fn reset_reproduces_clean_default_state", "crates/noire-model-rnnoise/src/adapter.rs::fn impulse_response_confirms_one_frame_startup_delay", "crates/noire-model-rnnoise/src/adapter.rs::fn adapter_output_and_vad_match_direct_default_model"]
 
 [[template]]
 id = "AT-SUPPRESSION-QUALITY"
 kind = "automated"
-status = "planned"
+status = "active"
 phase = 2
 owner = "rayan6ms"
 requirements = ["FR-006", "QG-003"]
-observable = "The approved adapter meets frozen-corpus segmental-SNR thresholds at strength 1.0 against latency-matched bypass."
+observable = "The production adapter matches the pinned C RNNoise reference-vector tolerance, preserves direct-default-model output/VAD behavior, and meets the frozen 240-case multilingual/real-noise segmental-SNR thresholds at strength 1.0 without clipping or changing the Phase-0 threshold outcomes."
 test_ids = ["T-DSP-SUPPRESSION-QUALITY"]
-commands = ["Run the pinned offline quality harness over the frozen corpus"]
+commands = ["cargo build -p noire-model-rnnoise --features offline-wav --release --locked", "Run the pinned offline quality harness over the frozen corpus with target/release/noire-denoise-wav"]
 fixtures = ["Frozen multilingual speech and stationary/recorded noise corpus"]
 environments = ["Pinned offline quality environment"]
-result_artifacts = ["Machine-readable per-case and aggregate segmental-SNR report"]
+result_artifacts = ["tests/quality/phase2-adapter-evidence.toml plus the digest-pinned ignored full per-case JSON report"]
+sources = ["crates/noire-model-rnnoise/src/adapter.rs::fn adapter_output_and_vad_match_direct_default_model", "tests/quality/phase2-adapter-evidence.toml::qg003_pass = true", "tests/quality/phase2-adapter-evidence.toml::normalized_squared_error"]
 
 [[template]]
 id = "AT-RNNOISE-CHUNKING"

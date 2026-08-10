@@ -141,10 +141,11 @@ fn model_to_normalized_scale(sample: f32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::float_cmp)]
+    #![allow(clippy::cast_precision_loss, clippy::float_cmp)]
 
     use std::error::Error;
 
+    use nnnoiseless::DenoiseState;
     use noire_model::{DenoiserFactory, ProcessError};
 
     use super::{
@@ -235,6 +236,30 @@ mod tests {
     }
 
     #[test]
+    fn adapter_output_and_vad_match_direct_default_model() -> Result<(), Box<dyn Error>> {
+        let factory = RnnoiseFactory::new()?;
+        let mut adapter = factory.create()?;
+        let mut direct = DenoiseState::new();
+        let mut adapter_output = [0.0; RNNOISE_FRAME_SAMPLES];
+        let mut direct_input = [0.0; RNNOISE_FRAME_SAMPLES];
+        let mut direct_output = [0.0; RNNOISE_FRAME_SAMPLES];
+
+        for frame_index in 0..8 {
+            let input = deterministic_frame(frame_index);
+            let stats = adapter.process_frame(&input, &mut adapter_output)?;
+            for (source, destination) in input.iter().zip(direct_input.iter_mut()) {
+                *destination = normalized_to_model_scale(*source);
+            }
+            let direct_vad = direct.process_frame(&mut direct_output, &direct_input);
+            assert_eq!(stats.vad_probability(), direct_vad);
+            for (adapter_sample, direct_sample) in adapter_output.iter().zip(direct_output.iter()) {
+                assert_eq!(*adapter_sample, model_to_normalized_scale(*direct_sample));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn reset_reproduces_clean_default_state() -> Result<(), Box<dyn Error>> {
         let factory = RnnoiseFactory::new()?;
         let mut model = factory.create()?;
@@ -288,11 +313,21 @@ mod tests {
     }
 
     fn deterministic_signal() -> [f32; RNNOISE_FRAME_SAMPLES] {
+        deterministic_frame(0)
+    }
+
+    fn deterministic_frame(frame_index: usize) -> [f32; RNNOISE_FRAME_SAMPLES] {
         let mut signal = [0.0; RNNOISE_FRAME_SAMPLES];
-        let mut phase = 0.0_f32;
+        let mut phase = frame_index as f32 * 0.37;
         let phase_step = 2.0 * core::f32::consts::PI * 440.0 / 48_000.0;
-        for sample in &mut signal {
-            *sample = phase.sin() * 0.25;
+        for (sample_index, sample) in signal.iter_mut().enumerate() {
+            let pseudo_noise = ((frame_index * RNNOISE_FRAME_SAMPLES + sample_index)
+                .wrapping_mul(1_103_515_245)
+                .wrapping_add(12_345)
+                >> 16)
+                & 0x7fff;
+            let pseudo_noise = pseudo_noise as f32 / 32_767.0 * 0.04 - 0.02;
+            *sample = phase.sin() * 0.25 + pseudo_noise;
             phase += phase_step;
         }
         signal
