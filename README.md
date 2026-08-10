@@ -17,8 +17,11 @@ plain GTK4 interface.
 The initial workspace can be checked with:
 
 ```bash
-cargo check --workspace --all-targets
+cargo check --workspace --all-targets --locked
 ```
+
+Engineering setup and boundaries are documented in [DEVELOPMENT.md](DEVELOPMENT.md),
+[ARCHITECTURE.md](ARCHITECTURE.md), and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Noire does not modify global PipeWire or WirePlumber configuration, upload audio,
 or require a graphical session for daemon and CLI use.
