@@ -7,6 +7,9 @@ pub const RESERVED_NODE_NAME: &str = "io.github.rayan6ms.Noire.Microphone";
 
 const MEDIA_CLASS_SOURCE: &str = "Audio/Source";
 
+/// Control-thread registry debounce required by the architecture contract.
+pub const REGISTRY_COALESCE_MILLIS: u64 = 50;
+
 /// Availability reported for a capture node.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum DeviceAvailability {
@@ -209,6 +212,117 @@ pub struct RegistrySnapshot {
     candidates: Arc<[NodeDescriptor]>,
 }
 
+/// Explicit policy for resolving one immutable registry snapshot.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SelectionPolicy {
+    /// Persisted stable selector, when the user chose a specific input.
+    pub selector: Option<DeviceSelector>,
+    /// Follow the session-manager default when no specific selector exists.
+    pub follow_default: bool,
+    /// Permit default fallback when a persisted specific selector is missing.
+    pub fallback_to_default: bool,
+}
+
+/// Visible reason no capture node could be selected.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputUnavailable {
+    /// The persisted input is absent and fallback was not authorized.
+    SelectedInputMissing,
+    /// Default-following was requested but no eligible default exists.
+    DefaultInputMissing,
+    /// No selector/default policy was configured.
+    NotConfigured,
+}
+
+/// Result of applying stable selection policy to one registry snapshot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InputResolution {
+    /// An eligible node was resolved.
+    Selected(Box<NodeDescriptor>),
+    /// No node was resolved, with a public control-plane reason.
+    Unavailable(InputUnavailable),
+}
+
+/// Mutable control-thread registry builder with a fixed 50 ms publish debounce.
+///
+/// Process callbacks never access this collection. Consumers receive cloned,
+/// immutable [`RegistrySnapshot`] values only after the coalescing boundary.
+#[derive(Debug, Default)]
+pub struct RegistryMonitor {
+    nodes: BTreeMap<u32, NodeDescriptor>,
+    default_node_name: Option<String>,
+    dirty_since_millis: Option<u64>,
+    revision: u64,
+}
+
+impl RegistryMonitor {
+    /// Creates an empty monitor.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            nodes: BTreeMap::new(),
+            default_node_name: None,
+            dirty_since_millis: None,
+            revision: 0,
+        }
+    }
+
+    /// Adds or replaces one node and starts the debounce window if it changed.
+    pub fn upsert(&mut self, node: NodeDescriptor, now_millis: u64) {
+        let changed = self.nodes.get(&node.global_id) != Some(&node);
+        if changed {
+            self.nodes.insert(node.global_id, node);
+            self.mark_dirty(now_millis);
+        }
+    }
+
+    /// Removes a transient global ID and starts the debounce window if present.
+    pub fn remove(&mut self, global_id: u32, now_millis: u64) {
+        if self.nodes.remove(&global_id).is_some() {
+            self.mark_dirty(now_millis);
+        }
+    }
+
+    /// Updates the session-manager default by stable node name.
+    pub fn set_default_node_name(&mut self, node_name: Option<String>, now_millis: u64) {
+        if self.default_node_name != node_name {
+            self.default_node_name = node_name;
+            self.mark_dirty(now_millis);
+        }
+    }
+
+    /// Publishes a new immutable snapshot once the 50 ms window has elapsed.
+    pub fn publish_if_due(&mut self, now_millis: u64) -> Option<RegistrySnapshot> {
+        let dirty_since = self.dirty_since_millis?;
+        if now_millis.saturating_sub(dirty_since) < REGISTRY_COALESCE_MILLIS {
+            return None;
+        }
+        Some(self.publish_now())
+    }
+
+    /// Publishes immediately, used at the initial `PipeWire` round-trip boundary.
+    #[must_use]
+    pub fn publish_now(&mut self) -> RegistrySnapshot {
+        self.dirty_since_millis = None;
+        self.revision = self.revision.saturating_add(1);
+        let mut nodes: Vec<_> = self.nodes.values().cloned().collect();
+        for node in &mut nodes {
+            node.is_default = self.default_node_name.as_deref() == Some(&node.node_name);
+        }
+        RegistrySnapshot::new(self.revision, nodes)
+    }
+
+    /// Returns the number of raw node globals currently retained.
+    #[must_use]
+    pub fn raw_node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    fn mark_dirty(&mut self, now_millis: u64) {
+        self.dirty_since_millis.get_or_insert(now_millis);
+    }
+}
+
 impl RegistrySnapshot {
     /// Filters, sorts, and stably deduplicates labels for one registry view.
     #[must_use]
@@ -240,6 +354,34 @@ impl RegistrySnapshot {
     #[must_use]
     pub fn candidates(&self) -> &[NodeDescriptor] {
         &self.candidates
+    }
+
+    /// Applies explicit selector/default policy without using global IDs.
+    #[must_use]
+    pub fn resolve(&self, policy: &SelectionPolicy) -> InputResolution {
+        if let Some(selector) = policy.selector.as_ref() {
+            if let Some(candidate) = self
+                .candidates
+                .iter()
+                .find(|candidate| selector.matches(candidate))
+            {
+                return InputResolution::Selected(Box::new(candidate.clone()));
+            }
+            if !policy.fallback_to_default {
+                return InputResolution::Unavailable(InputUnavailable::SelectedInputMissing);
+            }
+        } else if !policy.follow_default {
+            return InputResolution::Unavailable(InputUnavailable::NotConfigured);
+        }
+
+        self.candidates
+            .iter()
+            .find(|candidate| candidate.is_default)
+            .cloned()
+            .map_or(
+                InputResolution::Unavailable(InputUnavailable::DefaultInputMissing),
+                |candidate| InputResolution::Selected(Box::new(candidate)),
+            )
     }
 }
 
@@ -277,6 +419,16 @@ fn parse_positions(value: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(any(feature = "pipewire-backend", test))]
+pub(crate) fn parse_default_node_name(value: &str) -> Option<String> {
+    let name_key = value.find("\"name\"")?;
+    let after_key = value.get(name_key + "\"name\"".len()..)?;
+    let after_colon = after_key.split_once(':')?.1.trim_start();
+    let quoted = after_colon.strip_prefix('"')?;
+    let end = quoted.find('"')?;
+    nonempty(quoted.get(..end)).map(str::to_owned)
+}
+
 fn is_monitor_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.ends_with(".monitor") || lower.contains(".monitor.")
@@ -301,7 +453,9 @@ fn deduplicate_labels(candidates: &mut [NodeDescriptor]) {
 #[cfg(test)]
 mod tests {
     use super::{
-        DeviceAvailability, NodeDescriptor, NodeProperties, RESERVED_NODE_NAME, RegistrySnapshot,
+        DeviceAvailability, InputResolution, InputUnavailable, NodeDescriptor, NodeProperties,
+        REGISTRY_COALESCE_MILLIS, RESERVED_NODE_NAME, RegistryMonitor, RegistrySnapshot,
+        SelectionPolicy,
     };
 
     fn physical(global_id: u32, name: &str, description: &str) -> Option<NodeDescriptor> {
@@ -406,5 +560,84 @@ mod tests {
         assert!(descriptor.formats.is_empty());
         assert_eq!(descriptor.availability, DeviceAvailability::Unknown);
         Ok(())
+    }
+
+    #[test]
+    fn coalesces_add_change_remove_and_default_updates() -> Result<(), &'static str> {
+        let mut monitor = RegistryMonitor::new();
+        monitor.upsert(
+            physical(10, "alsa_input.first", "First").ok_or("missing fixture")?,
+            1_000,
+        );
+        monitor.upsert(
+            physical(11, "alsa_input.second", "Second").ok_or("missing fixture")?,
+            1_010,
+        );
+        monitor.set_default_node_name(Some("alsa_input.second".to_owned()), 1_020);
+        monitor.remove(10, 1_030);
+
+        assert!(monitor.publish_if_due(1_049).is_none());
+        let snapshot = monitor
+            .publish_if_due(1_000 + REGISTRY_COALESCE_MILLIS)
+            .ok_or("snapshot should be due")?;
+        assert_eq!(snapshot.revision(), 1);
+        assert_eq!(snapshot.candidates().len(), 1);
+        assert!(snapshot.candidates()[0].is_default);
+        assert!(monitor.publish_if_due(2_000).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn stable_selection_never_falls_back_without_permission() -> Result<(), &'static str> {
+        let selected = physical(1, "alsa_input.selected", "Selected").ok_or("missing fixture")?;
+        let selector = selected.selector();
+        let mut default = physical(2, "alsa_input.default", "Default").ok_or("missing fixture")?;
+        default.is_default = true;
+        let snapshot = RegistrySnapshot::new(1, [default.clone()]);
+
+        assert_eq!(
+            snapshot.resolve(&SelectionPolicy {
+                selector: Some(selector.clone()),
+                follow_default: false,
+                fallback_to_default: false,
+            }),
+            InputResolution::Unavailable(InputUnavailable::SelectedInputMissing)
+        );
+        assert_eq!(
+            snapshot.resolve(&SelectionPolicy {
+                selector: Some(selector),
+                follow_default: false,
+                fallback_to_default: true,
+            }),
+            InputResolution::Selected(Box::new(default))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reidentified_selected_node_resolves_by_stable_selector() -> Result<(), &'static str> {
+        let original = physical(7, "alsa_input.usb", "USB").ok_or("missing fixture")?;
+        let reidentified = physical(700, "alsa_input.usb", "USB").ok_or("missing fixture")?;
+        let snapshot = RegistrySnapshot::new(2, [reidentified.clone()]);
+
+        assert_eq!(
+            snapshot.resolve(&SelectionPolicy {
+                selector: Some(original.selector()),
+                follow_default: false,
+                fallback_to_default: false,
+            }),
+            InputResolution::Selected(Box::new(reidentified))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parses_default_metadata_without_accepting_malformed_values() {
+        assert_eq!(
+            super::parse_default_node_name("{ \"name\": \"alsa_input.usb\" }"),
+            Some("alsa_input.usb".to_owned())
+        );
+        assert_eq!(super::parse_default_node_name("{ \"name\": \"\" }"), None);
+        assert_eq!(super::parse_default_node_name("not-json"), None);
     }
 }

@@ -9,6 +9,7 @@ mod registry;
 #[cfg(feature = "pipewire-backend")]
 pub use connection::{CoreFailure, PipewireConnection};
 pub use registry::{
-    AdvertisedFormat, DeviceAvailability, DeviceSelector, NodeDescriptor, NodeProperties,
-    RESERVED_NODE_NAME, RegistrySnapshot,
+    AdvertisedFormat, DeviceAvailability, DeviceSelector, InputResolution, InputUnavailable,
+    NodeDescriptor, NodeProperties, REGISTRY_COALESCE_MILLIS, RESERVED_NODE_NAME, RegistryMonitor,
+    RegistrySnapshot, SelectionPolicy,
 };
