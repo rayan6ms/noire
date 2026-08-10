@@ -17,4 +17,4 @@ pub use adapter::{
 };
 
 #[cfg(feature = "offline-wav")]
-pub use offline::{OfflineError, denoise_latency_compensated};
+pub use offline::{OfflineDenoiser, OfflineError, denoise_latency_compensated};

@@ -74,6 +74,21 @@ environments = ["Pinned offline quality environment"]
 result_artifacts = ["Machine-readable per-case and aggregate segmental-SNR report"]
 
 [[template]]
+id = "AT-RNNOISE-CHUNKING"
+kind = "automated"
+status = "active"
+phase = 2
+owner = "rayan6ms"
+requirements = ["FR-006"]
+observable = "The production frame assembler and RNNoise adapter produce the same latency-compensated finite stream independent of bounded callback partitioning, conserve partial final frames, match tolerance-based golden checkpoints, and remain sample-exact for fixed 64/128/256/480/512 and randomized schedules."
+test_ids = ["T-RNNOISE-GOLDEN-CHUNKING"]
+commands = ["cargo test -p noire-model-rnnoise --features offline-wav --locked"]
+fixtures = ["Procedural 731 Hz plus deterministic-dither golden signal, a partial final frame, fixed callback schedule, and randomized 1..4096-sample schedules"]
+environments = ["Pinned Rust environment with production FrameAssembler and embedded-default RNNoise adapter; no PipeWire, UI, device, file, or network dependency"]
+result_artifacts = ["Cargo golden-tolerance, exact cross-schedule equality, finite output, and input/output sample-count assertions"]
+sources = ["crates/noire-model-rnnoise/src/offline.rs::fn fixed_callback_sizes_match_single_chunk_golden", "crates/noire-model-rnnoise/src/offline.rs::fn deterministic_golden_checkpoints_stay_within_tolerance", "crates/noire-model-rnnoise/src/offline.rs::fn randomized_callback_schedules_are_sample_exact"]
+
+[[template]]
 id = "AT-OFFLINE-WAV"
 kind = "automated"
 status = "active"

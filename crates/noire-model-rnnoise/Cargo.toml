@@ -10,14 +10,16 @@ repository.workspace = true
 [dependencies]
 hound = { workspace = true, optional = true }
 nnnoiseless = { workspace = true, optional = true }
+noire-dsp = { workspace = true, optional = true }
 noire-model.workspace = true
 
 [dev-dependencies]
 noire-dsp.workspace = true
+proptest.workspace = true
 
 [features]
 default = []
-offline-wav = ["rnnoise", "dep:hound"]
+offline-wav = ["rnnoise", "dep:hound", "dep:noire-dsp"]
 rnnoise = ["dep:nnnoiseless"]
 
 [[bin]]

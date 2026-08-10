@@ -1115,6 +1115,7 @@ dependencies = [
  "nnnoiseless",
  "noire-dsp",
  "noire-model",
+ "proptest",
 ]
 
 [[package]]

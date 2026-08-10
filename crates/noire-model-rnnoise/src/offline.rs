@@ -2,7 +2,8 @@
 
 use core::fmt;
 
-use noire_model::{CreateError, DenoiserFactory, ProcessError};
+use noire_dsp::{FrameAssembler, FrameAssemblerError, MODEL_FRAME_SAMPLES, ModelFrame};
+use noire_model::{CreateError, Denoiser, DenoiserFactory, ProcessError};
 
 use crate::RnnoiseFactory;
 
@@ -15,6 +16,8 @@ pub enum OfflineError {
     NonFiniteInput,
     /// The production adapter rejected a frame.
     Process(ProcessError),
+    /// One offline input chunk exceeded the production callback bound.
+    Chunk(FrameAssemblerError),
     /// Descriptor arithmetic exceeded the platform's addressable range.
     LengthOverflow,
     /// The output length differed from the input length.
@@ -27,6 +30,7 @@ impl fmt::Display for OfflineError {
             Self::Create(_) => "RNNoise adapter creation failed",
             Self::NonFiniteInput => "offline input contains a non-finite sample",
             Self::Process(_) => "RNNoise frame processing failed",
+            Self::Chunk(_) => "offline input chunk exceeds the frame-assembly boundary",
             Self::LengthOverflow => "offline sample length overflowed",
             Self::SampleConservation => "offline processing did not conserve samples",
         })
@@ -34,6 +38,115 @@ impl fmt::Display for OfflineError {
 }
 
 impl std::error::Error for OfflineError {}
+
+/// A development-only chunked runner around production framing and inference.
+///
+/// This type deliberately allocates output storage and is available only with
+/// `offline-wav`; it must never be used from an audio callback.
+pub struct OfflineDenoiser {
+    assembler: FrameAssembler,
+    denoiser: Box<dyn Denoiser>,
+    model_output: ModelFrame,
+    raw_output: Vec<f32>,
+    accepted_samples: usize,
+    delay_samples: usize,
+}
+
+impl OfflineDenoiser {
+    /// Creates an empty offline stream using the production default adapter.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OfflineError::Create`] if adapter initialization fails.
+    pub fn new() -> Result<Self, OfflineError> {
+        let factory = RnnoiseFactory::new().map_err(OfflineError::Create)?;
+        let delay_samples = factory.descriptor().delay_samples();
+        let denoiser = factory.create().map_err(OfflineError::Create)?;
+        Ok(Self {
+            assembler: FrameAssembler::new(),
+            denoiser,
+            model_output: [0.0; MODEL_FRAME_SAMPLES],
+            raw_output: Vec::new(),
+            accepted_samples: 0,
+            delay_samples,
+        })
+    }
+
+    /// Accepts one bounded normalized mono chunk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for non-finite input, an oversized chunk, length
+    /// overflow, or a production adapter processing failure.
+    pub fn push_chunk(&mut self, input: &[f32]) -> Result<(), OfflineError> {
+        if input.iter().any(|sample| !sample.is_finite()) {
+            return Err(OfflineError::NonFiniteInput);
+        }
+        self.accepted_samples = self
+            .accepted_samples
+            .checked_add(input.len())
+            .ok_or(OfflineError::LengthOverflow)?;
+        self.process_chunk(input)
+    }
+
+    /// Flushes the partial frame and declared delay, returning aligned output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for adapter failure, arithmetic overflow, or a sample-
+    /// conservation violation.
+    pub fn finish(mut self) -> Result<Vec<f32>, OfflineError> {
+        let pending = self.assembler.pending_samples();
+        if pending != 0 {
+            let padding = [0.0; MODEL_FRAME_SAMPLES];
+            self.process_chunk(&padding[..MODEL_FRAME_SAMPLES - pending])?;
+        }
+
+        let mut remaining_delay = self.delay_samples;
+        let silence = [0.0; MODEL_FRAME_SAMPLES];
+        while remaining_delay != 0 {
+            let pushed = remaining_delay.min(MODEL_FRAME_SAMPLES);
+            self.process_chunk(&silence[..pushed])?;
+            remaining_delay -= pushed;
+        }
+        let pending = self.assembler.pending_samples();
+        if pending != 0 {
+            self.process_chunk(&silence[..MODEL_FRAME_SAMPLES - pending])?;
+        }
+
+        let output_end = self
+            .delay_samples
+            .checked_add(self.accepted_samples)
+            .ok_or(OfflineError::LengthOverflow)?;
+        let aligned = self
+            .raw_output
+            .get(self.delay_samples..output_end)
+            .ok_or(OfflineError::SampleConservation)?;
+        if aligned.len() != self.accepted_samples {
+            return Err(OfflineError::SampleConservation);
+        }
+        Ok(aligned.to_vec())
+    }
+
+    fn process_chunk(&mut self, input: &[f32]) -> Result<(), OfflineError> {
+        let denoiser = &mut self.denoiser;
+        let model_output = &mut self.model_output;
+        let raw_output = &mut self.raw_output;
+        let mut process_error = None;
+        self.assembler
+            .push(input, |frame| {
+                if process_error.is_some() {
+                    return;
+                }
+                match denoiser.process_frame(frame, model_output) {
+                    Ok(_) => raw_output.extend_from_slice(model_output),
+                    Err(error) => process_error = Some(error),
+                }
+            })
+            .map_err(OfflineError::Chunk)?;
+        process_error.map_or(Ok(()), |error| Err(OfflineError::Process(error)))
+    }
+}
 
 /// Processes normalized mono samples through the production adapter.
 ///
@@ -47,61 +160,18 @@ impl std::error::Error for OfflineError {}
 /// Returns an error for non-finite input, adapter creation/processing failures,
 /// arithmetic overflow, or an internal sample-conservation violation.
 pub fn denoise_latency_compensated(input: &[f32]) -> Result<Vec<f32>, OfflineError> {
-    if input.iter().any(|sample| !sample.is_finite()) {
-        return Err(OfflineError::NonFiniteInput);
+    let mut runner = OfflineDenoiser::new()?;
+    for chunk in input.chunks(noire_dsp::MAX_CALLBACK_FRAMES) {
+        runner.push_chunk(chunk)?;
     }
-
-    let factory = RnnoiseFactory::new().map_err(OfflineError::Create)?;
-    let descriptor = *factory.descriptor();
-    let frame_samples = descriptor.frame_buffer_samples();
-    let delay_samples = descriptor.delay_samples();
-    let required_output = input
-        .len()
-        .checked_add(delay_samples)
-        .ok_or(OfflineError::LengthOverflow)?;
-    let frame_count = required_output
-        .checked_add(frame_samples - 1)
-        .ok_or(OfflineError::LengthOverflow)?
-        / frame_samples;
-
-    let mut denoiser = factory.create().map_err(OfflineError::Create)?;
-    let mut input_frame = vec![0.0; frame_samples];
-    let mut output_frame = vec![0.0; frame_samples];
-    let mut output = Vec::with_capacity(input.len());
-
-    for frame_index in 0..frame_count {
-        let frame_start = frame_index
-            .checked_mul(frame_samples)
-            .ok_or(OfflineError::LengthOverflow)?;
-        input_frame.fill(0.0);
-        if frame_start < input.len() {
-            let copied = frame_samples.min(input.len() - frame_start);
-            input_frame[..copied].copy_from_slice(&input[frame_start..frame_start + copied]);
-        }
-
-        denoiser
-            .process_frame(&input_frame, &mut output_frame)
-            .map_err(OfflineError::Process)?;
-
-        for (offset, sample) in output_frame.iter().enumerate() {
-            let absolute = frame_start
-                .checked_add(offset)
-                .ok_or(OfflineError::LengthOverflow)?;
-            if absolute >= delay_samples && output.len() < input.len() {
-                output.push(*sample);
-            }
-        }
-    }
-
-    if output.len() != input.len() {
-        return Err(OfflineError::SampleConservation);
-    }
-    Ok(output)
+    runner.finish()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{OfflineError, denoise_latency_compensated};
+    use proptest::prelude::*;
+
+    use super::{OfflineDenoiser, OfflineError, denoise_latency_compensated};
     use crate::RNNOISE_FRAME_SAMPLES;
 
     #[test]
@@ -126,5 +196,77 @@ mod tests {
             denoise_latency_compensated(&[f32::NAN]),
             Err(OfflineError::NonFiniteInput)
         );
+    }
+
+    #[test]
+    fn fixed_callback_sizes_match_single_chunk_golden() -> Result<(), OfflineError> {
+        let input = deterministic_signal(4_937);
+        let expected = denoise_latency_compensated(&input)?;
+        let actual = run_schedule(&input, &[64, 128, 256, 480, 512])?;
+        assert_eq!(actual.len(), input.len());
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn deterministic_golden_checkpoints_stay_within_tolerance() -> Result<(), OfflineError> {
+        let input = deterministic_signal(1_440);
+        let output = denoise_latency_compensated(&input)?;
+        let checkpoints = [120, 479, 480, 719, 959, 1_200];
+        let expected = [
+            -0.142_987_03,
+            0.198_347_66,
+            0.191_082_84,
+            -0.050_481_93,
+            -0.136_548_94,
+            0.213_196_29,
+        ];
+        for (index, expected) in checkpoints.into_iter().zip(expected) {
+            assert!((output[index] - expected).abs() <= 1.0e-6);
+        }
+        Ok(())
+    }
+
+    proptest! {
+        #[test]
+        fn randomized_callback_schedules_are_sample_exact(
+            sizes in prop::collection::vec(1usize..=4_096, 1..48),
+        ) {
+            let input = deterministic_signal(1_913);
+            let expected = denoise_latency_compensated(&input)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
+            let actual = run_schedule(&input, &sizes)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
+            prop_assert_eq!(actual.len(), input.len());
+            prop_assert_eq!(actual, expected);
+        }
+    }
+
+    fn run_schedule(input: &[f32], sizes: &[usize]) -> Result<Vec<f32>, OfflineError> {
+        let mut runner = OfflineDenoiser::new()?;
+        let mut offset = 0;
+        let mut schedule = sizes.iter().copied().cycle();
+        while offset < input.len() {
+            let size = schedule.next().unwrap_or(1).min(input.len() - offset);
+            runner.push_chunk(&input[offset..offset + size])?;
+            offset += size;
+        }
+        runner.finish()
+    }
+
+    #[allow(clippy::cast_precision_loss)]
+    fn deterministic_signal(samples: usize) -> Vec<f32> {
+        (0..samples)
+            .map(|index| {
+                let time = index as f32 / 48_000.0;
+                let tone = (2.0 * core::f32::consts::PI * 731.0 * time).sin() * 0.22;
+                let dither = ((index.wrapping_mul(1_103_515_245).wrapping_add(12_345) >> 16)
+                    & 0x7fff) as f32
+                    / 32_767.0
+                    * 0.02
+                    - 0.01;
+                tone + dither
+            })
+            .collect()
     }
 }
