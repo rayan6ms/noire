@@ -1,0 +1,88 @@
+name: Release blocker
+description: Report a defect or unmet gate that can block a milestone or release.
+title: "[Release blocker] "
+labels:
+  - release-blocker
+assignees:
+  - rayan6ms
+body:
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: Choose the highest applicable severity from the project plan.
+      options:
+        - P0 — immediate stop
+        - P1 — release blocker
+        - P2 — blocks 1.0 unless explicitly waived
+        - P3 — minor; normally not a release blocker
+    validations:
+      required: true
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Owning phase
+      options:
+        - Phase 0
+        - Phase 1
+        - Phase 2
+        - Phase 3
+        - Phase 4
+        - Phase 5
+        - Phase 6
+        - Phase 7
+        - Phase 8
+        - Phase 9
+        - Phase 10
+    validations:
+      required: true
+
+  - type: input
+    id: requirement
+    attributes:
+      label: Affected requirement or gate
+      description: For example NFR-005, QG-005, or P4-03.
+      placeholder: QG-005
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: User and release impact
+      description: State what fails, who is affected, and why release must stop.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide minimal deterministic steps and relevant environment details. Never attach private audio.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Include sanitized logs, counters, test output, or report hashes.
+    validations:
+      required: true
+
+  - type: textarea
+    id: resolution
+    attributes:
+      label: Required resolution or waiver owner
+      description: Define the evidence needed to close this blocker. Only the project owner may approve a waiver.
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, private audio, device identifiers, and other sensitive data.
+          required: true
