@@ -1,0 +1,21 @@
+[package]
+name = "noire-test-support"
+description = "Shared fakes, fixtures, and test harnesses for Noire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+noire-core = { path = "../noire-core" }
+proptest = { workspace = true, optional = true }
+
+[features]
+default = []
+properties = ["dep:proptest"]
+
+[lints]
+workspace = true
+

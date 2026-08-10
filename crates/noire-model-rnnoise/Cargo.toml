@@ -1,0 +1,20 @@
+[package]
+name = "noire-model-rnnoise"
+description = "RNNoise model adapter for Noire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nnnoiseless = { workspace = true, optional = true }
+noire-model = { path = "../noire-model" }
+
+[features]
+default = []
+rnnoise = ["dep:nnnoiseless"]
+
+[lints]
+workspace = true
+

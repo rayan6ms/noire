@@ -1,0 +1,23 @@
+[package]
+name = "noire-ipc"
+description = "Shared D-Bus types and adapters for Noire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+noire-core = { path = "../noire-core" }
+serde = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+zbus = { workspace = true, optional = true }
+
+[features]
+dbus = ["dep:serde", "dep:thiserror", "dep:tokio", "dep:zbus"]
+default = []
+
+[lints]
+workspace = true
+

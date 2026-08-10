@@ -1,0 +1,23 @@
+[package]
+name = "noire-pipewire"
+description = "PipeWire registry, stream, and graph adapter for Noire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+libspa = { workspace = true, optional = true }
+noire-core = { path = "../noire-core" }
+noire-dsp = { path = "../noire-dsp" }
+pipewire = { workspace = true, optional = true }
+rtrb = { workspace = true, optional = true }
+
+[features]
+default = []
+pipewire-backend = ["dep:libspa", "dep:pipewire", "dep:rtrb"]
+
+[lints]
+workspace = true
+

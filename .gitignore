@@ -1,2 +1,5 @@
 # Agent-only planning and working notes
 docs/
+
+# Rust build output
+/target/

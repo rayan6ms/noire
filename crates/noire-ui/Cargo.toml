@@ -1,0 +1,26 @@
+[package]
+name = "noire-ui"
+description = "Optional GTK4 user interface for Noire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "noire"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+gtk4 = { workspace = true, optional = true }
+noire-core = { path = "../noire-core" }
+noire-ipc = { path = "../noire-ipc" }
+
+[features]
+default = []
+gtk-ui = ["dep:gtk4"]
+
+[lints]
+workspace = true
+

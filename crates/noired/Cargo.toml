@@ -1,0 +1,28 @@
+[package]
+name = "noired"
+description = "Noire per-user noise-reduction daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, optional = true }
+clap.workspace = true
+noire-config = { path = "../noire-config" }
+noire-core = { path = "../noire-core" }
+noire-ipc = { path = "../noire-ipc" }
+noire-model = { path = "../noire-model" }
+noire-pipewire = { path = "../noire-pipewire" }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+[features]
+default = []
+runtime = ["dep:anyhow", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "noire-ipc/dbus"]
+
+[lints]
+workspace = true
+
