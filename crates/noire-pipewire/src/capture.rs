@@ -13,6 +13,33 @@ use noire_dsp::{MAX_CALLBACK_FRAMES, Meter, MeterSnapshot, SanitizeReport, sanit
 const F32_BYTES: usize = size_of::<f32>();
 const F32_BYTES_U32: u32 = 4;
 
+/// Monotonic identity for samples produced by one selected input lifecycle.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct InputGeneration(u64);
+
+impl InputGeneration {
+    /// First generation assigned when capture state is constructed.
+    pub const INITIAL: Self = Self(1);
+
+    /// Returns the next generation, saturating only at the numeric limit.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+
+    /// Returns the stable numeric value used by atomic telemetry.
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+impl Default for InputGeneration {
+    fn default() -> Self {
+        Self::INITIAL
+    }
+}
+
 /// Trusted copy of one SPA chunk's metadata.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ChunkMetadata {
@@ -63,11 +90,15 @@ pub struct CaptureCounters {
     pub non_finite_samples: u64,
     /// Subnormal samples flushed to silence.
     pub subnormal_samples: u64,
+    /// Input changes that cleared all generation-local state.
+    pub input_generation_resets: u64,
 }
 
 /// One successful bounded capture call.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CaptureReport {
+    /// Input lifecycle that owns the delivered frames.
+    pub generation: InputGeneration,
     /// Canonical frames delivered to the sink.
     pub frames: u16,
     /// Invalid values sanitized at the boundary.
@@ -76,8 +107,11 @@ pub struct CaptureReport {
 
 /// Allocation-free destination called with validated canonical samples.
 pub trait CaptureSink {
+    /// Clears queued/stateful data before samples from a new input arrive.
+    fn reset(&mut self, _generation: InputGeneration) {}
+
     /// Accepts one finite mono callback slice.
-    fn write(&mut self, samples: &[f32]);
+    fn write(&mut self, generation: InputGeneration, samples: &[f32]);
 }
 
 /// Lock-free callback telemetry readable by the control plane.
@@ -86,8 +120,9 @@ pub struct CaptureTelemetry {
     inner: Arc<CaptureTelemetryInner>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct CaptureTelemetryInner {
+    generation: AtomicU64,
     callbacks: AtomicU64,
     frames: AtomicU64,
     empty_buffers: AtomicU64,
@@ -95,12 +130,32 @@ struct CaptureTelemetryInner {
     oversized_chunks: AtomicU64,
     non_finite_samples: AtomicU64,
     subnormal_samples: AtomicU64,
+    input_generation_resets: AtomicU64,
     peak_bits: AtomicU32,
+}
+
+impl Default for CaptureTelemetryInner {
+    fn default() -> Self {
+        Self {
+            generation: AtomicU64::new(InputGeneration::INITIAL.get()),
+            callbacks: AtomicU64::new(0),
+            frames: AtomicU64::new(0),
+            empty_buffers: AtomicU64::new(0),
+            malformed_chunks: AtomicU64::new(0),
+            oversized_chunks: AtomicU64::new(0),
+            non_finite_samples: AtomicU64::new(0),
+            subnormal_samples: AtomicU64::new(0),
+            input_generation_resets: AtomicU64::new(0),
+            peak_bits: AtomicU32::new(0),
+        }
+    }
 }
 
 /// Immutable control-plane snapshot of capture telemetry.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CaptureTelemetrySnapshot {
+    /// Input lifecycle represented by meter and callback state.
+    pub generation: InputGeneration,
     /// Current callback counters.
     pub counters: CaptureCounters,
     /// Largest absolute finite sample observed since construction.
@@ -113,6 +168,7 @@ impl CaptureTelemetry {
     pub fn snapshot(&self) -> CaptureTelemetrySnapshot {
         let load = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
         CaptureTelemetrySnapshot {
+            generation: InputGeneration(load(&self.inner.generation)),
             counters: CaptureCounters {
                 callbacks: load(&self.inner.callbacks),
                 frames: load(&self.inner.frames),
@@ -121,12 +177,16 @@ impl CaptureTelemetry {
                 oversized_chunks: load(&self.inner.oversized_chunks),
                 non_finite_samples: load(&self.inner.non_finite_samples),
                 subnormal_samples: load(&self.inner.subnormal_samples),
+                input_generation_resets: load(&self.inner.input_generation_resets),
             },
             peak: f32::from_bits(self.inner.peak_bits.load(Ordering::Relaxed)),
         }
     }
 
-    fn publish(&self, counters: CaptureCounters, samples: &[f32]) {
+    fn publish(&self, counters: CaptureCounters, generation: InputGeneration, samples: &[f32]) {
+        self.inner
+            .generation
+            .store(generation.get(), Ordering::Relaxed);
         self.inner
             .callbacks
             .store(counters.callbacks, Ordering::Relaxed);
@@ -146,12 +206,20 @@ impl CaptureTelemetry {
         self.inner
             .subnormal_samples
             .store(counters.subnormal_samples, Ordering::Relaxed);
+        self.inner
+            .input_generation_resets
+            .store(counters.input_generation_resets, Ordering::Relaxed);
         let peak = samples
             .iter()
             .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
         self.inner
             .peak_bits
             .fetch_max(peak.to_bits(), Ordering::Relaxed);
+    }
+
+    fn reset_generation(&self, counters: CaptureCounters, generation: InputGeneration) {
+        self.inner.peak_bits.store(0, Ordering::Relaxed);
+        self.publish(counters, generation, &[]);
     }
 }
 
@@ -163,18 +231,34 @@ pub struct CaptureProcessor<S> {
     meter: Meter,
     counters: CaptureCounters,
     telemetry: CaptureTelemetry,
+    generation: InputGeneration,
+    generation_command: Arc<AtomicU64>,
 }
 
 impl<S: CaptureSink> CaptureProcessor<S> {
     /// Constructs all callback storage before stream activation.
     #[must_use]
     pub fn new(sink: S, telemetry: CaptureTelemetry) -> Self {
+        Self::with_generation_command(
+            sink,
+            telemetry,
+            Arc::new(AtomicU64::new(InputGeneration::INITIAL.get())),
+        )
+    }
+
+    fn with_generation_command(
+        sink: S,
+        telemetry: CaptureTelemetry,
+        generation_command: Arc<AtomicU64>,
+    ) -> Self {
         Self {
             sink,
             scratch: [0.0; MAX_CALLBACK_FRAMES],
             meter: Meter::new(),
             counters: CaptureCounters::default(),
             telemetry,
+            generation: InputGeneration::INITIAL,
+            generation_command,
         }
     }
 
@@ -189,11 +273,15 @@ impl<S: CaptureSink> CaptureProcessor<S> {
         mapped: Option<&[u8]>,
         metadata: ChunkMetadata,
     ) -> Result<CaptureReport, CaptureBufferError> {
+        self.synchronize_generation();
         self.counters.callbacks = self.counters.callbacks.saturating_add(1);
         if metadata.size_bytes == 0 {
             self.counters.empty_buffers = self.counters.empty_buffers.saturating_add(1);
-            self.telemetry.publish(self.counters, &[]);
-            return Ok(CaptureReport::default());
+            self.telemetry.publish(self.counters, self.generation, &[]);
+            return Ok(CaptureReport {
+                generation: self.generation,
+                ..CaptureReport::default()
+            });
         }
         if metadata.corrupted
             || !matches!(metadata.stride_bytes, 0 | 4)
@@ -232,7 +320,7 @@ impl<S: CaptureSink> CaptureProcessor<S> {
         let samples = &mut self.scratch[..frames];
         let sanitized = sanitize_buffer(samples);
         self.meter.observe(samples);
-        self.sink.write(samples);
+        self.sink.write(self.generation, samples);
         self.counters.frames = self
             .counters
             .frames
@@ -245,8 +333,10 @@ impl<S: CaptureSink> CaptureProcessor<S> {
             .counters
             .subnormal_samples
             .saturating_add(sanitized.subnormal);
-        self.telemetry.publish(self.counters, samples);
+        self.telemetry
+            .publish(self.counters, self.generation, samples);
         Ok(CaptureReport {
+            generation: self.generation,
             frames: u16::try_from(frames).unwrap_or(u16::MAX),
             sanitized,
         })
@@ -256,6 +346,19 @@ impl<S: CaptureSink> CaptureProcessor<S> {
     #[must_use]
     pub const fn counters(&self) -> CaptureCounters {
         self.counters
+    }
+
+    /// Clears state before accepting samples from `generation`.
+    pub fn reset_input_generation(&mut self, generation: InputGeneration) {
+        self.generation_command
+            .store(generation.get(), Ordering::Release);
+        self.apply_generation(generation);
+    }
+
+    /// Returns the input lifecycle currently accepted by this processor.
+    #[must_use]
+    pub const fn input_generation(&self) -> InputGeneration {
+        self.generation
     }
 
     /// Returns the current bounded meter window.
@@ -279,14 +382,40 @@ impl<S: CaptureSink> CaptureProcessor<S> {
                 self.counters.oversized_chunks = self.counters.oversized_chunks.saturating_add(1);
             }
         }
-        self.telemetry.publish(self.counters, &[]);
+        self.telemetry.publish(self.counters, self.generation, &[]);
         Err(error)
+    }
+
+    fn synchronize_generation(&mut self) {
+        let requested = InputGeneration(self.generation_command.load(Ordering::Acquire));
+        self.apply_generation(requested);
+    }
+
+    fn apply_generation(&mut self, generation: InputGeneration) {
+        if generation == self.generation {
+            return;
+        }
+        self.scratch.fill(0.0);
+        self.meter = Meter::new();
+        self.sink.reset(generation);
+        self.generation = generation;
+        self.counters.input_generation_resets =
+            self.counters.input_generation_resets.saturating_add(1);
+        self.telemetry
+            .reset_generation(self.counters, self.generation);
     }
 }
 
 #[cfg(feature = "pipewire-backend")]
 mod native {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        cell::RefCell,
+        rc::Rc,
+        sync::{
+            Arc,
+            atomic::{AtomicU64, Ordering},
+        },
+    };
 
     use libspa::{param::ParamType, pod::Pod, utils::Direction};
     use pipewire::{
@@ -295,7 +424,7 @@ mod native {
         stream::{self, StreamFlags, StreamRc, StreamState},
     };
 
-    use super::{CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata};
+    use super::{CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata, InputGeneration};
     use crate::{
         CaptureFormat, NegotiatedFormatError, PipewireConnection, build_capture_format_pod,
         parse_negotiated_format,
@@ -305,7 +434,7 @@ mod native {
     struct DiscardSink;
 
     impl CaptureSink for DiscardSink {
-        fn write(&mut self, _samples: &[f32]) {}
+        fn write(&mut self, _generation: InputGeneration, _samples: &[f32]) {}
     }
 
     /// Stream lifecycle state copied for the control plane.
@@ -371,6 +500,7 @@ mod native {
         stream: StreamRc,
         control: Rc<RefCell<ControlState>>,
         telemetry: CaptureTelemetry,
+        generation_command: Arc<AtomicU64>,
     }
 
     impl NativeCaptureStream {
@@ -393,7 +523,12 @@ mod native {
             let stream = StreamRc::new(connection.core_clone(), "noire-capture", properties)?;
             let control = Rc::new(RefCell::new(ControlState::default()));
             let telemetry = CaptureTelemetry::default();
-            let processor = CaptureProcessor::new(DiscardSink, telemetry.clone());
+            let generation_command = Arc::new(AtomicU64::new(InputGeneration::INITIAL.get()));
+            let processor = CaptureProcessor::with_generation_command(
+                DiscardSink,
+                telemetry.clone(),
+                Arc::clone(&generation_command),
+            );
             let state_control = Rc::clone(&control);
             let format_control = Rc::clone(&control);
             let listener = stream
@@ -432,6 +567,7 @@ mod native {
                 stream,
                 control,
                 telemetry,
+                generation_command,
             })
         }
 
@@ -451,6 +587,24 @@ mod native {
         #[must_use]
         pub fn telemetry(&self) -> CaptureTelemetry {
             self.telemetry.clone()
+        }
+
+        /// Advances the input lifecycle and schedules callback-state reset.
+        #[must_use]
+        pub fn advance_input_generation(&self) -> InputGeneration {
+            let mut current = self.generation_command.load(Ordering::Acquire);
+            loop {
+                let next = current.saturating_add(1);
+                match self.generation_command.compare_exchange_weak(
+                    current,
+                    next,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                ) {
+                    Ok(_) => return InputGeneration(next),
+                    Err(actual) => current = actual,
+                }
+            }
         }
 
         /// Activates or pauses capture without destroying callback state.
@@ -524,6 +678,7 @@ mod tests {
 
     use super::{
         CaptureBufferError, CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata,
+        InputGeneration,
     };
     use noire_dsp::MAX_CALLBACK_FRAMES;
 
@@ -531,6 +686,8 @@ mod tests {
     struct FixedSink {
         samples: [f32; 8],
         length: usize,
+        resets: u64,
+        generation: InputGeneration,
     }
 
     impl FixedSink {
@@ -538,12 +695,22 @@ mod tests {
             Self {
                 samples: [0.0; 8],
                 length: 0,
+                resets: 0,
+                generation: InputGeneration::INITIAL,
             }
         }
     }
 
     impl CaptureSink for FixedSink {
-        fn write(&mut self, samples: &[f32]) {
+        fn reset(&mut self, generation: InputGeneration) {
+            self.samples.fill(0.0);
+            self.length = 0;
+            self.resets = self.resets.saturating_add(1);
+            self.generation = generation;
+        }
+
+        fn write(&mut self, generation: InputGeneration, samples: &[f32]) {
+            assert_eq!(generation, self.generation);
             let remaining = self.samples.len().saturating_sub(self.length);
             let count = samples.len().min(remaining);
             let end = self.length + count;
@@ -577,6 +744,7 @@ mod tests {
         )?;
 
         assert_eq!(report.frames, 3);
+        assert_eq!(report.generation, InputGeneration::INITIAL);
         assert_eq!(report.sanitized.non_finite, 1);
         assert_eq!(processor.sink().samples[..3], [0.25, 0.0, -0.5]);
         assert_eq!(processor.meter_snapshot().peak, 0.5);
@@ -627,5 +795,52 @@ mod tests {
             Err(CaptureBufferError::QuantumTooLarge)
         );
         assert_eq!(processor.counters().oversized_chunks, 1);
+    }
+
+    #[test]
+    fn generation_reset_clears_all_input_local_state_before_new_samples() {
+        let telemetry = CaptureTelemetry::default();
+        let mut processor = CaptureProcessor::new(FixedSink::new(), telemetry.clone());
+        let first = encoded(&[0.75]);
+        assert!(
+            processor
+                .process_mapped(
+                    Some(&first),
+                    ChunkMetadata {
+                        size_bytes: 4,
+                        stride_bytes: 4,
+                        ..ChunkMetadata::default()
+                    },
+                )
+                .is_ok()
+        );
+
+        let second_generation = InputGeneration::INITIAL.next();
+        processor.reset_input_generation(second_generation);
+        assert_eq!(processor.input_generation(), second_generation);
+        assert_eq!(processor.sink().length, 0);
+        assert_eq!(processor.sink().resets, 1);
+        assert_eq!(processor.meter_snapshot().samples, 0);
+        assert_eq!(telemetry.snapshot().generation, second_generation);
+        assert_eq!(telemetry.snapshot().peak, 0.0);
+
+        let second = encoded(&[0.25]);
+        let report = processor
+            .process_mapped(
+                Some(&second),
+                ChunkMetadata {
+                    size_bytes: 4,
+                    stride_bytes: 4,
+                    ..ChunkMetadata::default()
+                },
+            )
+            .ok();
+        assert_eq!(
+            report.map(|report| report.generation),
+            Some(second_generation)
+        );
+        assert_eq!(processor.sink().samples[0], 0.25);
+        assert_eq!(telemetry.snapshot().peak, 0.25);
+        assert_eq!(telemetry.snapshot().counters.input_generation_resets, 1);
     }
 }

@@ -49,9 +49,14 @@ fn captures_deterministic_44100_source_as_canonical_48000() -> Result<(), Box<dy
     let duration = soak_duration();
     let steady_rss_kib = resident_set_kib().unwrap_or_default();
     let mut peak_rss_kib = steady_rss_kib;
-    let deadline = Instant::now() + duration;
+    let started = Instant::now();
+    let deadline = started + duration;
+    let mut requested_generation = None;
     while Instant::now() < deadline {
         let _ = connection.dispatch_once(Duration::from_millis(10));
+        if requested_generation.is_none() && started.elapsed() >= duration / 2 {
+            requested_generation = Some(capture.advance_input_generation());
+        }
         if let Some(rss_kib) = resident_set_kib() {
             peak_rss_kib = peak_rss_kib.max(rss_kib);
         }
@@ -74,6 +79,11 @@ fn captures_deterministic_44100_source_as_canonical_48000() -> Result<(), Box<dy
     assert_eq!(capture_snapshot.counters.oversized_chunks, 0);
     assert_eq!(capture_snapshot.counters.non_finite_samples, 0);
     assert_eq!(capture_snapshot.counters.subnormal_samples, 0);
+    assert_eq!(
+        capture_snapshot.generation,
+        requested_generation.unwrap_or_default()
+    );
+    assert_eq!(capture_snapshot.counters.input_generation_resets, 1);
     assert!(capture_snapshot.peak > 0.05);
     assert!(capture_snapshot.peak < 0.25);
     assert!(source_snapshot.callbacks() > 0);
@@ -83,10 +93,12 @@ fn captures_deterministic_44100_source_as_canonical_48000() -> Result<(), Box<dy
     assert!(rss_growth_kib <= RSS_GROWTH_LIMIT_KIB);
 
     println!(
-        "NOIRE_PIPEWIRE_RESULT duration_ms={} source_rate={} capture_rate={} callbacks={} frames={} empty={} malformed={} oversized={} peak={:.6} rss_growth_kib={}",
+        "NOIRE_PIPEWIRE_RESULT duration_ms={} source_rate={} capture_rate={} generation={} generation_resets={} callbacks={} frames={} empty={} malformed={} oversized={} peak={:.6} rss_growth_kib={}",
         duration.as_millis(),
         SYNTHETIC_SOURCE_RATE,
         CANONICAL_CAPTURE_FORMAT.sample_rate,
+        capture_snapshot.generation.get(),
+        capture_snapshot.counters.input_generation_resets,
         capture_snapshot.counters.callbacks,
         capture_snapshot.counters.frames,
         capture_snapshot.counters.empty_buffers,
@@ -94,6 +106,61 @@ fn captures_deterministic_44100_source_as_canonical_48000() -> Result<(), Box<dy
         capture_snapshot.counters.oversized_chunks,
         capture_snapshot.peak,
         rss_growth_kib,
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires a disposable native PipeWire session"]
+fn fifty_native_hotplug_cycles_preserve_selector_and_empty_registry() -> Result<(), Box<dyn Error>>
+{
+    let connection = PipewireConnection::connect_default()?;
+    let mut expected_selector = None;
+
+    for _cycle in 0..50 {
+        let source = SyntheticSource::connect(&connection, "noire.integration.hotplug")?;
+        wait_until(&connection, SESSION_TIMEOUT, || {
+            connection
+                .registry_snapshot_now()
+                .candidates()
+                .iter()
+                .any(|candidate| candidate.node_name == source.node_name())
+        })?;
+        let snapshot = connection.registry_snapshot_now();
+        let selector = snapshot
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.node_name == source.node_name())
+            .map(noire_pipewire::NodeDescriptor::selector)
+            .ok_or("hotplug source disappeared")?;
+        if let Some(expected) = expected_selector.as_ref() {
+            assert_eq!(&selector, expected);
+        } else {
+            expected_selector = Some(selector);
+        }
+
+        drop(source);
+        wait_until(&connection, SESSION_TIMEOUT, || {
+            connection
+                .registry_snapshot_now()
+                .candidates()
+                .iter()
+                .all(|candidate| candidate.node_name != "noire.integration.hotplug")
+        })?;
+        assert!(connection.take_failure().is_none());
+    }
+
+    let final_snapshot = connection.registry_snapshot_now();
+    assert!(
+        final_snapshot
+            .candidates()
+            .iter()
+            .all(|candidate| candidate.node_name != "noire.integration.hotplug")
+    );
+    println!(
+        "NOIRE_PIPEWIRE_HOTPLUG_RESULT cycles=50 final_candidates={} revision={}",
+        final_snapshot.candidates().len(),
+        final_snapshot.revision()
     );
     Ok(())
 }

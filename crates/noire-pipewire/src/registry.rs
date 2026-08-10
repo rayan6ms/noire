@@ -640,4 +640,39 @@ mod tests {
         assert_eq!(super::parse_default_node_name("{ \"name\": \"\" }"), None);
         assert_eq!(super::parse_default_node_name("not-json"), None);
     }
+
+    #[test]
+    fn fifty_reidentified_hotplug_cycles_leave_registry_empty_and_selector_stable()
+    -> Result<(), &'static str> {
+        let mut monitor = RegistryMonitor::new();
+        let mut expected_selector = None;
+
+        for cycle in 0_u32..50 {
+            let global_id = cycle.saturating_add(100);
+            let now = u64::from(cycle).saturating_mul(200);
+            let node = physical(global_id, "alsa_input.hotplug", "Hotplug Microphone")
+                .ok_or("missing fixture")?;
+            let selector = node.selector();
+            if let Some(expected) = expected_selector.as_ref() {
+                assert_eq!(&selector, expected);
+            } else {
+                expected_selector = Some(selector);
+            }
+            monitor.upsert(node, now);
+            let added = monitor
+                .publish_if_due(now.saturating_add(REGISTRY_COALESCE_MILLIS))
+                .ok_or("add did not publish")?;
+            assert_eq!(added.candidates().len(), 1);
+
+            monitor.remove(global_id, now.saturating_add(REGISTRY_COALESCE_MILLIS + 1));
+            let removed = monitor
+                .publish_if_due(now.saturating_add((REGISTRY_COALESCE_MILLIS * 2) + 1))
+                .ok_or("remove did not publish")?;
+            assert!(removed.candidates().is_empty());
+            assert_eq!(monitor.raw_node_count(), 0);
+        }
+
+        assert_eq!(monitor.publish_now().revision(), 101);
+        Ok(())
+    }
 }

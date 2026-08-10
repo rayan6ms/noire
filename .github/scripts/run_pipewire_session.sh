@@ -32,7 +32,7 @@ done
 test -S "$runtime_dir/pipewire-0"
 
 cargo test --package noire-pipewire --features native-test \
-    --test native_session --locked -- --ignored --nocapture \
+    --test native_session --locked -- --ignored --nocapture --test-threads=1 \
     2>&1 | tee "$log_dir/native-session.log"
 
 if grep -Eiq '(^|[^[:alpha:]])(xrun|underrun|overrun)([^[:alpha:]]|$)' \

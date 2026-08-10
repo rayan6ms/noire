@@ -12,7 +12,7 @@ mod synthetic;
 
 pub use capture::{
     CaptureBufferError, CaptureCounters, CaptureProcessor, CaptureReport, CaptureSink,
-    CaptureTelemetry, CaptureTelemetrySnapshot, ChunkMetadata,
+    CaptureTelemetry, CaptureTelemetrySnapshot, ChunkMetadata, InputGeneration,
 };
 #[cfg(feature = "pipewire-backend")]
 pub use capture::{
