@@ -1,8 +1,8 @@
 //! Real-time denoising model contracts for Noire.
 //!
-//! Model construction is a control-plane operation. Exact-frame processing,
-//! descriptor access, and reset are synchronous and allocation-free contracts
-//! suitable for Noire's audio callback.
+//! Model construction and reset are deactivated/control-plane operations.
+//! Exact-frame processing and descriptor access are synchronous and
+//! allocation-free contracts suitable for Noire's audio callback.
 
 #![forbid(unsafe_code)]
 
@@ -17,7 +17,7 @@ pub use frame::{FrameStats, finalize_process_output, prepare_process_frame};
 /// A synchronous exact-frame denoising model.
 ///
 /// Implementations must not allocate, lock, wait, perform I/O, or log from
-/// [`Self::descriptor`], [`Self::reset`], or [`Self::process_frame`].
+/// [`Self::descriptor`] or [`Self::process_frame`].
 pub trait Denoiser: Send {
     /// Returns immutable metadata for this instance.
     ///
@@ -26,8 +26,10 @@ pub trait Denoiser: Send {
 
     /// Restores recurrent state to the state of a newly created instance.
     ///
-    /// Configuration and the descriptor remain unchanged. Reset is synchronous,
-    /// allocation-free, and safe to call after any processing error.
+    /// Configuration and the descriptor remain unchanged. Reset is synchronous
+    /// and safe to call after any processing error, but an adapter may rebuild
+    /// owned model state. Callers must invoke it only while frame processing is
+    /// deactivated and outside the audio callback.
     fn reset(&mut self);
 
     /// Processes exactly one frame into a distinct output buffer.

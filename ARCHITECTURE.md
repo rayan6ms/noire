@@ -96,6 +96,10 @@ output, and require reset before reuse. Shared boundary helpers clear output
 before inference, reject malformed/non-finite input, reject non-finite output,
 and flush output subnormals without allocation.
 
+Descriptor access and steady-state frame processing are allocation-free. Reset
+is deterministic and synchronous but may rebuild adapter-owned state, so it runs
+only after processing is deactivated and never inside a callback.
+
 D-Bus, configuration, lifecycle, retries, and metrics snapshots run in the
 non-real-time control plane. Scalar changes cross into audio through atomic
 snapshots; compound changes use a fixed-capacity command queue with a fixed
