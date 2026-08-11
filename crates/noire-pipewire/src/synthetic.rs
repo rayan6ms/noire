@@ -25,7 +25,39 @@ const BYTES_PER_SAMPLE: usize = size_of::<f32>();
 const TONE_HERTZ: f32 = 997.0;
 const TONE_AMPLITUDE: f32 = 0.18;
 const NOISE_AMPLITUDE: f32 = 0.015;
-const SYNTHETIC_SOURCE_RATE_F32: f32 = 44_100.0;
+
+/// Deterministic signal and graph format for a native test source.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SyntheticSourceSpec {
+    /// Graph-facing sample rate.
+    pub sample_rate: u32,
+    /// Sinusoid frequency in hertz.
+    pub tone_hertz: f32,
+    /// Sinusoid peak amplitude.
+    pub tone_amplitude: f32,
+    /// Maximum-length binary-sequence amplitude used for correlation.
+    pub sequence_amplitude: f32,
+    /// Optional periodic impulse spacing; zero disables impulses.
+    pub impulse_period_frames: u64,
+    /// Peak value added at each known impulse index.
+    pub impulse_amplitude: f32,
+    /// Nonzero seed for the deterministic 16-bit LFSR.
+    pub sequence_seed: u16,
+}
+
+impl Default for SyntheticSourceSpec {
+    fn default() -> Self {
+        Self {
+            sample_rate: SYNTHETIC_SOURCE_RATE,
+            tone_hertz: TONE_HERTZ,
+            tone_amplitude: TONE_AMPLITUDE,
+            sequence_amplitude: NOISE_AMPLITUDE,
+            impulse_period_frames: 0,
+            impulse_amplitude: 0.0,
+            sequence_seed: 0xace1,
+        }
+    }
+}
 
 /// Construction/connect failure for a synthetic native source.
 #[derive(Debug)]
@@ -91,18 +123,23 @@ struct SignalGenerator {
     previous: f32,
     current: f32,
     recurrence: f32,
-    noise_state: u32,
+    sequence_state: u16,
+    frame_index: u64,
+    spec: SyntheticSourceSpec,
     telemetry: SyntheticSourceTelemetry,
 }
 
 impl SignalGenerator {
-    fn new(telemetry: SyntheticSourceTelemetry) -> Self {
-        let radians = std::f32::consts::TAU * TONE_HERTZ / SYNTHETIC_SOURCE_RATE_F32;
+    fn new(telemetry: SyntheticSourceTelemetry, spec: SyntheticSourceSpec) -> Self {
+        let sample_rate = f32::from(u16::try_from(spec.sample_rate).unwrap_or(u16::MAX));
+        let radians = std::f32::consts::TAU * spec.tone_hertz / sample_rate;
         Self {
             previous: 0.0,
             current: radians.sin(),
             recurrence: 2.0 * radians.cos(),
-            noise_state: 0x6d2b_79f5,
+            sequence_state: spec.sequence_seed.max(1),
+            frame_index: 0,
+            spec,
             telemetry,
         }
     }
@@ -112,13 +149,31 @@ impl SignalGenerator {
         let next = self.recurrence.mul_add(self.current, -self.previous);
         self.previous = self.current;
         self.current = next;
-        self.noise_state = self
-            .noise_state
-            .wrapping_mul(1_664_525)
-            .wrapping_add(1_013_904_223);
-        let upper = u16::try_from(self.noise_state >> 16).unwrap_or(u16::MAX);
-        let noise = (f32::from(upper) / 32_768.0) - 1.0;
-        TONE_AMPLITUDE.mul_add(tone, NOISE_AMPLITUDE * noise)
+        let sequence = if self.sequence_state & 1 == 0 {
+            -1.0
+        } else {
+            1.0
+        };
+        let feedback = (self.sequence_state
+            ^ (self.sequence_state >> 2)
+            ^ (self.sequence_state >> 3)
+            ^ (self.sequence_state >> 5))
+            & 1;
+        self.sequence_state = (self.sequence_state >> 1) | (feedback << 15);
+        let impulse = if self.spec.impulse_period_frames > 0
+            && self
+                .frame_index
+                .is_multiple_of(self.spec.impulse_period_frames)
+        {
+            self.spec.impulse_amplitude
+        } else {
+            0.0
+        };
+        self.frame_index = self.frame_index.saturating_add(1);
+        self.spec.tone_amplitude.mul_add(
+            tone,
+            self.spec.sequence_amplitude.mul_add(sequence, impulse),
+        )
     }
 }
 
@@ -129,6 +184,7 @@ pub struct SyntheticSource {
     telemetry: SyntheticSourceTelemetry,
     node_name: String,
     stream_error: Rc<RefCell<Option<String>>>,
+    sample_rate: u32,
 }
 
 impl SyntheticSource {
@@ -141,7 +197,21 @@ impl SyntheticSource {
         connection: &PipewireConnection,
         node_name: impl Into<String>,
     ) -> Result<Self, SyntheticSourceError> {
+        Self::connect_with_spec(connection, node_name, SyntheticSourceSpec::default())
+    }
+
+    /// Creates a source with an explicit deterministic test signal and rate.
+    ///
+    /// # Errors
+    ///
+    /// Returns format serialization or native stream errors.
+    pub fn connect_with_spec(
+        connection: &PipewireConnection,
+        node_name: impl Into<String>,
+        spec: SyntheticSourceSpec,
+    ) -> Result<Self, SyntheticSourceError> {
         let node_name = node_name.into();
+        let sample_rate = spec.sample_rate.to_string();
         let properties = properties! {
             *keys::MEDIA_TYPE => "Audio",
             *keys::MEDIA_CATEGORY => "Capture",
@@ -154,7 +224,7 @@ impl SyntheticSource {
             "device.serial" => "noire-integration-44100",
             "device.name" => "noire-integration-device",
             "device.api" => "test",
-            "audio.rate" => "44100",
+            "audio.rate" => sample_rate.as_str(),
             "audio.channels" => "1",
             "audio.position" => "[ MONO ]",
         };
@@ -167,7 +237,7 @@ impl SyntheticSource {
         let stream_error = Rc::new(RefCell::new(None));
         let error_slot = Rc::clone(&stream_error);
         let listener = stream
-            .add_local_listener_with_user_data(SignalGenerator::new(telemetry.clone()))
+            .add_local_listener_with_user_data(SignalGenerator::new(telemetry.clone(), spec))
             .state_changed(move |_stream, _generator, _old, new| {
                 if let stream::StreamState::Error(message) = new {
                     *error_slot.borrow_mut() = Some(message);
@@ -176,7 +246,7 @@ impl SyntheticSource {
             .process(fill_available_buffers)
             .register()?;
 
-        let pod_bytes = build_raw_audio_format_pod(SYNTHETIC_SOURCE_RATE)
+        let pod_bytes = build_raw_audio_format_pod(spec.sample_rate)
             .map_err(|_| SyntheticSourceError::FormatPod)?;
         let pod = Pod::from_bytes(&pod_bytes).ok_or(SyntheticSourceError::FormatPod)?;
         let mut params = [pod];
@@ -192,6 +262,7 @@ impl SyntheticSource {
             telemetry,
             node_name,
             stream_error,
+            sample_rate: spec.sample_rate,
         })
     }
 
@@ -204,7 +275,7 @@ impl SyntheticSource {
     /// Returns the fixed graph-facing fixture rate.
     #[must_use]
     pub const fn sample_rate(&self) -> u32 {
-        SYNTHETIC_SOURCE_RATE
+        self.sample_rate
     }
 
     /// Returns lock-free source callback counters.
@@ -280,8 +351,14 @@ mod tests {
 
     #[test]
     fn deterministic_signal_has_stable_finite_prefix() {
-        let mut first = SignalGenerator::new(SyntheticSourceTelemetry::default());
-        let mut second = SignalGenerator::new(SyntheticSourceTelemetry::default());
+        let mut first = SignalGenerator::new(
+            SyntheticSourceTelemetry::default(),
+            super::SyntheticSourceSpec::default(),
+        );
+        let mut second = SignalGenerator::new(
+            SyntheticSourceTelemetry::default(),
+            super::SyntheticSourceSpec::default(),
+        );
         for _ in 0..512 {
             let left = first.next();
             let right = second.next();

@@ -437,6 +437,26 @@ mod native {
         fn write(&mut self, _generation: InputGeneration, _samples: &[f32]) {}
     }
 
+    struct ErasedSink(Box<dyn CaptureSink>);
+
+    impl std::fmt::Debug for ErasedSink {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("ErasedSink(..)")
+        }
+    }
+
+    impl CaptureSink for ErasedSink {
+        fn reset(&mut self, generation: InputGeneration) {
+            self.0.reset(generation);
+        }
+
+        fn write(&mut self, generation: InputGeneration, samples: &[f32]) {
+            self.0.write(generation, samples);
+        }
+    }
+
+    type SharedProcessor = Rc<RefCell<CaptureProcessor<ErasedSink>>>;
+
     /// Stream lifecycle state copied for the control plane.
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
     pub enum CaptureStreamState {
@@ -496,11 +516,12 @@ mod native {
 
     /// Connected native capture stream with allocation-free process user data.
     pub struct NativeCaptureStream {
-        _listener: stream::StreamListener<CaptureProcessor<DiscardSink>>,
+        _listener: stream::StreamListener<SharedProcessor>,
         stream: StreamRc,
         control: Rc<RefCell<ControlState>>,
         telemetry: CaptureTelemetry,
         generation_command: Arc<AtomicU64>,
+        processor: SharedProcessor,
     }
 
     impl NativeCaptureStream {
@@ -513,6 +534,49 @@ mod native {
             connection: &PipewireConnection,
             target_node_name: &str,
         ) -> Result<Self, CaptureStreamError> {
+            Self::connect_with_sink(connection, target_node_name, DiscardSink, true)
+        }
+
+        /// Creates a capture stream with a caller-owned allocation-free sink.
+        ///
+        /// `initially_active = false` publishes the stream without consuming the
+        /// selected microphone until demand activates it.
+        ///
+        /// # Errors
+        ///
+        /// Returns a format serialization or native stream error.
+        pub fn connect_with_sink<S: CaptureSink + 'static>(
+            connection: &PipewireConnection,
+            target_node_name: &str,
+            sink: S,
+            initially_active: bool,
+        ) -> Result<Self, CaptureStreamError> {
+            Self::connect_with_sink_at(connection, target_node_name, None, sink, initially_active)
+        }
+
+        pub(crate) fn connect_with_sink_to_id<S: CaptureSink + 'static>(
+            connection: &PipewireConnection,
+            target_node_name: &str,
+            target_node_id: u32,
+            sink: S,
+            initially_active: bool,
+        ) -> Result<Self, CaptureStreamError> {
+            Self::connect_with_sink_at(
+                connection,
+                target_node_name,
+                Some(target_node_id),
+                sink,
+                initially_active,
+            )
+        }
+
+        fn connect_with_sink_at<S: CaptureSink + 'static>(
+            connection: &PipewireConnection,
+            target_node_name: &str,
+            target_node_id: Option<u32>,
+            sink: S,
+            initially_active: bool,
+        ) -> Result<Self, CaptureStreamError> {
             let properties = properties! {
                 *keys::MEDIA_TYPE => "Audio",
                 *keys::MEDIA_CATEGORY => "Capture",
@@ -524,15 +588,15 @@ mod native {
             let control = Rc::new(RefCell::new(ControlState::default()));
             let telemetry = CaptureTelemetry::default();
             let generation_command = Arc::new(AtomicU64::new(InputGeneration::INITIAL.get()));
-            let processor = CaptureProcessor::with_generation_command(
-                DiscardSink,
+            let processor = Rc::new(RefCell::new(CaptureProcessor::with_generation_command(
+                ErasedSink(Box::new(sink)),
                 telemetry.clone(),
                 Arc::clone(&generation_command),
-            );
+            )));
             let state_control = Rc::clone(&control);
             let format_control = Rc::clone(&control);
             let listener = stream
-                .add_local_listener_with_user_data(processor)
+                .add_local_listener_with_user_data(Rc::clone(&processor))
                 .state_changed(move |_stream, _processor, _old, new| {
                     state_control.borrow_mut().stream_state = map_stream_state(&new);
                 })
@@ -556,18 +620,22 @@ mod native {
                 build_capture_format_pod().map_err(|_| CaptureStreamError::FormatPod)?;
             let pod = Pod::from_bytes(&pod_bytes).ok_or(CaptureStreamError::FormatPod)?;
             let mut params = [pod];
-            stream.connect(
-                Direction::Input,
-                None,
-                StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS,
-                &mut params,
-            )?;
+            let mut flags =
+                StreamFlags::AUTOCONNECT | StreamFlags::MAP_BUFFERS | StreamFlags::RT_PROCESS;
+            if target_node_id.is_some() {
+                flags |= StreamFlags::DONT_RECONNECT;
+            }
+            if !initially_active {
+                flags |= StreamFlags::INACTIVE;
+            }
+            stream.connect(Direction::Input, target_node_id, flags, &mut params)?;
             Ok(Self {
                 _listener: listener,
                 stream,
                 control,
                 telemetry,
                 generation_command,
+                processor,
             })
         }
 
@@ -601,7 +669,13 @@ mod native {
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 ) {
-                    Ok(_) => return InputGeneration(next),
+                    Ok(_) => {
+                        let generation = InputGeneration(next);
+                        self.processor
+                            .borrow_mut()
+                            .reset_input_generation(generation);
+                        return generation;
+                    }
                     Err(actual) => current = actual,
                 }
             }
@@ -619,8 +693,9 @@ mod native {
 
     fn process_available_buffers(
         stream: &pipewire::stream::Stream,
-        processor: &mut CaptureProcessor<DiscardSink>,
+        processor: &mut SharedProcessor,
     ) {
+        let mut processor = processor.borrow_mut();
         while let Some(mut buffer) = stream.dequeue_buffer() {
             let datas = buffer.datas_mut();
             if datas.len() != 1 {

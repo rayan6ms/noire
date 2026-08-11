@@ -2,13 +2,16 @@
 
 use std::alloc::System;
 
+use noire_dsp::MODEL_FRAME_SAMPLES;
 use noire_pipewire::{
-    CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata, InputGeneration,
+    BYPASS_STARTUP_QUANTA, CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata,
+    InputGeneration, create_bypass_channel,
 };
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
+const BYPASS_QUANTUM: usize = 128;
 
 #[derive(Debug, Default)]
 struct CountingSink {
@@ -31,7 +34,7 @@ impl CaptureSink for CountingSink {
 }
 
 #[test]
-fn warmed_capture_processing_has_zero_allocator_calls() {
+fn warmed_capture_and_bypass_callbacks_have_zero_allocator_calls() {
     let samples = [0.125_f32; 128];
     let bytes: Vec<u8> = samples
         .iter()
@@ -56,4 +59,26 @@ fn warmed_capture_processing_has_zero_allocator_calls() {
     assert_eq!(change.deallocations, 0);
     assert_eq!(processor.sink().samples, 128 * 1_025);
     assert!(processor.sink().checksum.is_finite());
+
+    let (mut producer, mut output, _control, telemetry) = create_bypass_channel();
+    let initial = [0.125_f32; MODEL_FRAME_SAMPLES + BYPASS_STARTUP_QUANTA * BYPASS_QUANTUM];
+    let refill = [0.125_f32; BYPASS_QUANTUM];
+    let mut destination = [0.0_f32; BYPASS_QUANTUM];
+
+    producer.write(InputGeneration::INITIAL, &initial);
+    assert!(output.fill(&mut destination).is_ok());
+
+    let region = Region::new(GLOBAL);
+    for _ in 0..1_024 {
+        producer.write(InputGeneration::INITIAL, &refill);
+        assert!(output.fill(&mut destination).is_ok());
+    }
+    let change = region.change();
+
+    assert_eq!(change.allocations, 0);
+    assert_eq!(change.reallocations, 0);
+    assert_eq!(change.deallocations, 0);
+    assert_eq!(telemetry.snapshot().underflows, 0);
+    assert_eq!(telemetry.snapshot().overflows, 0);
+    assert!(destination.iter().all(|sample| sample.is_finite()));
 }

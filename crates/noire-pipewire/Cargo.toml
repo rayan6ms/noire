@@ -11,8 +11,8 @@ repository.workspace = true
 libspa = { workspace = true, optional = true }
 noire-core.workspace = true
 noire-dsp.workspace = true
-pipewire = { workspace = true, optional = true }
-rtrb = { workspace = true, optional = true }
+pipewire = { workspace = true, optional = true, features = ["v0_3_49"] }
+rtrb.workspace = true
 
 [dev-dependencies]
 stats_alloc.workspace = true
@@ -20,7 +20,7 @@ stats_alloc.workspace = true
 [features]
 default = []
 native-test = ["pipewire-backend"]
-pipewire-backend = ["dep:libspa", "dep:pipewire", "dep:rtrb"]
+pipewire-backend = ["dep:libspa", "dep:pipewire"]
 
 [lints]
 workspace = true
