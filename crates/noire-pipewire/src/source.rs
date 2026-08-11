@@ -391,16 +391,14 @@ fn process_available_buffers(stream: &pipewire::stream::Stream, processor: &mut 
         let mut audio = processor.audio.borrow_mut();
         let SourceAudio { output, scratch } = &mut *audio;
         let samples = &mut scratch[..frame_count];
-        if output.fill(samples).is_err() {
-            samples.fill(0.0);
-        }
-        for (sample, destination) in samples
+        let published_frames = fill_output(output, samples);
+        for (sample, destination) in samples[..published_frames]
             .iter()
-            .zip(bytes[..frame_count * BYTES_PER_SAMPLE].chunks_exact_mut(BYTES_PER_SAMPLE))
+            .zip(bytes[..published_frames * BYTES_PER_SAMPLE].chunks_exact_mut(BYTES_PER_SAMPLE))
         {
             destination.copy_from_slice(&sample.to_ne_bytes());
         }
-        let byte_count = frame_count.saturating_mul(BYTES_PER_SAMPLE);
+        let byte_count = published_frames.saturating_mul(BYTES_PER_SAMPLE);
         let chunk = data.chunk_mut();
         *chunk.offset_mut() = 0;
         *chunk.size_mut() = u32::try_from(byte_count).unwrap_or(u32::MAX);
@@ -412,6 +410,15 @@ fn process_available_buffers(stream: &pipewire::stream::Stream, processor: &mut 
             .counters
             .empty_dequeues
             .fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn fill_output(output: &mut BypassOutput, samples: &mut [f32]) -> usize {
+    if let Ok(report) = output.fill(samples) {
+        usize::from(report.frames)
+    } else {
+        samples.fill(0.0);
+        0
     }
 }
 

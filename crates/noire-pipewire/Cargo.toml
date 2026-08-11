@@ -11,10 +11,12 @@ repository.workspace = true
 libspa = { workspace = true, optional = true }
 noire-core.workspace = true
 noire-dsp.workspace = true
+noire-model.workspace = true
 pipewire = { workspace = true, optional = true, features = ["v0_3_49"] }
 rtrb.workspace = true
 
 [dev-dependencies]
+noire-model-rnnoise = { workspace = true, features = ["rnnoise"] }
 stats_alloc.workspace = true
 
 [features]

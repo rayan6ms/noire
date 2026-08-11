@@ -7,15 +7,19 @@ use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
+use noire_dsp::{DcBlocker, MAX_CALLBACK_FRAMES};
 use noire_model_rnnoise::{RNNOISE_SAMPLE_RATE_HZ, denoise_latency_compensated};
 
 fn main() -> Result<(), Box<dyn Error>> {
-    let (input_path, output_path) = parse_paths(std::env::args_os().skip(1))?;
+    let (live_preprocessing, input_path, output_path) = parse_paths(std::env::args_os().skip(1))?;
     if input_path == output_path {
         return Err("input and output WAV paths must differ".into());
     }
 
-    let input = read_wav(File::open(&input_path)?)?;
+    let mut input = read_wav(File::open(&input_path)?)?;
+    if live_preprocessing {
+        apply_live_preprocessing(&mut input);
+    }
     let output = denoise_latency_compensated(&input)?;
     write_wav(File::create(&output_path)?, &output)?;
     Ok(())
@@ -23,13 +27,29 @@ fn main() -> Result<(), Box<dyn Error>> {
 
 fn parse_paths(
     mut arguments: impl Iterator<Item = OsString>,
-) -> Result<(PathBuf, PathBuf), Box<dyn Error>> {
-    let input = arguments.next().ok_or("missing input WAV path")?;
+) -> Result<(bool, PathBuf, PathBuf), Box<dyn Error>> {
+    let first = arguments.next().ok_or("missing input WAV path")?;
+    let (live_preprocessing, input) = if first == "--live" {
+        (true, arguments.next().ok_or("missing input WAV path")?)
+    } else {
+        (false, first)
+    };
     let output = arguments.next().ok_or("missing output WAV path")?;
     if arguments.next().is_some() {
-        return Err("usage: noire-denoise-wav <input.wav> <output.wav>".into());
+        return Err("usage: noire-denoise-wav [--live] <input.wav> <output.wav>".into());
     }
-    Ok((PathBuf::from(input), PathBuf::from(output)))
+    Ok((
+        live_preprocessing,
+        PathBuf::from(input),
+        PathBuf::from(output),
+    ))
+}
+
+fn apply_live_preprocessing(samples: &mut [f32]) {
+    let mut dc_blocker = DcBlocker::new();
+    for chunk in samples.chunks_mut(MAX_CALLBACK_FRAMES) {
+        let _ = dc_blocker.process(chunk);
+    }
 }
 
 fn read_wav(reader: impl Read) -> Result<Vec<f32>, Box<dyn Error>> {
@@ -99,7 +119,7 @@ mod tests {
 
     use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
 
-    use super::{read_wav, write_wav};
+    use super::{apply_live_preprocessing, parse_paths, read_wav, write_wav};
 
     #[test]
     fn reads_signed_pcm_endpoints_and_writes_float_output() -> Result<(), Box<dyn std::error::Error>>
@@ -148,6 +168,22 @@ mod tests {
             writer.finalize()?;
         }
         assert!(read_wav(Cursor::new(encoded.into_inner())).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn live_flag_is_explicit_and_applies_finite_dc_blocking()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let parsed = parse_paths(
+            ["--live", "input.wav", "output.wav"]
+                .into_iter()
+                .map(Into::into),
+        )?;
+        assert!(parsed.0);
+        let mut samples = vec![0.25; 4_800];
+        apply_live_preprocessing(&mut samples);
+        assert!(samples.iter().all(|sample| sample.is_finite()));
+        assert!(samples[4_799].abs() < 0.001);
         Ok(())
     }
 }

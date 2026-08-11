@@ -158,30 +158,19 @@ pub struct BypassCaptureSink {
     control: BypassControl,
 }
 
-impl CaptureSink for BypassCaptureSink {
-    fn reset(&mut self, _generation: InputGeneration) {
-        let _ = self.control.request_resync();
-    }
-
-    fn write(&mut self, _generation: InputGeneration, samples: &[f32]) {
+impl BypassCaptureSink {
+    /// Writes one complete processed block without allocating.
+    ///
+    /// Returns `false` after requesting a bounded generation resynchronization
+    /// when the block cannot fit atomically.
+    pub(crate) fn write_processed(&mut self, samples: &[f32]) -> bool {
         let generation = self.control.generation();
         if self.producer.slots() < samples.len() {
-            self.control
-                .shared
-                .overflows
-                .fetch_add(1, Ordering::Relaxed);
-            self.control.shared.dropped_frames.fetch_add(
-                u64::try_from(samples.len()).unwrap_or(u64::MAX),
-                Ordering::Relaxed,
-            );
-            let _ = self.control.request_resync();
-            return;
+            self.record_overflow(samples.len());
+            return false;
         }
 
         for sample in samples {
-            // The all-or-nothing capacity check above makes failure impossible for
-            // this single producer; retaining the branch keeps the overload policy
-            // safe if the underlying implementation changes.
             if self
                 .producer
                 .push(TaggedSample {
@@ -190,16 +179,8 @@ impl CaptureSink for BypassCaptureSink {
                 })
                 .is_err()
             {
-                self.control
-                    .shared
-                    .overflows
-                    .fetch_add(1, Ordering::Relaxed);
-                self.control.shared.dropped_frames.fetch_add(
-                    u64::try_from(samples.len()).unwrap_or(u64::MAX),
-                    Ordering::Relaxed,
-                );
-                let _ = self.control.request_resync();
-                return;
+                self.record_overflow(samples.len());
+                return false;
             }
         }
         self.control.shared.produced_frames.fetch_add(
@@ -211,6 +192,29 @@ impl CaptureSink for BypassCaptureSink {
                 .unwrap_or(u64::MAX),
             Ordering::Relaxed,
         );
+        true
+    }
+
+    fn record_overflow(&self, samples: usize) {
+        self.control
+            .shared
+            .overflows
+            .fetch_add(1, Ordering::Relaxed);
+        self.control.shared.dropped_frames.fetch_add(
+            u64::try_from(samples).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        let _ = self.control.request_resync();
+    }
+}
+
+impl CaptureSink for BypassCaptureSink {
+    fn reset(&mut self, _generation: InputGeneration) {
+        let _ = self.control.request_resync();
+    }
+
+    fn write(&mut self, _generation: InputGeneration, samples: &[f32]) {
+        let _ = self.write_processed(samples);
     }
 }
 
@@ -256,6 +260,10 @@ pub struct BypassOutput {
     startup_ready: bool,
     scratch: [f32; MAX_CALLBACK_FRAMES],
     ramp: FaultRamp,
+    startup_frame_samples: usize,
+    startup_quanta: usize,
+    empty_while_buffering: bool,
+    leading_silence_pending: bool,
 }
 
 impl BypassOutput {
@@ -289,10 +297,6 @@ impl BypassOutput {
             .shared
             .output_callbacks
             .fetch_add(1, Ordering::Relaxed);
-        self.control.shared.output_frames.fetch_add(
-            u64::try_from(output.len()).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
         if output.len() > MAX_CALLBACK_FRAMES {
             output.fill(0.0);
             self.ramp.reset_silent();
@@ -305,10 +309,36 @@ impl BypassOutput {
 
         self.synchronize_generation();
         self.discard_stale_prefix();
-        let startup_required =
-            MODEL_FRAME_SAMPLES.saturating_add(output.len().saturating_mul(BYPASS_STARTUP_QUANTA));
+        let startup_required = self
+            .startup_frame_samples
+            .saturating_add(output.len().saturating_mul(self.startup_quanta));
         if !self.startup_ready && self.consumer.slots() < startup_required {
             output.fill(0.0);
+            let published_frames = if self.empty_while_buffering {
+                0
+            } else {
+                output.len()
+            };
+            self.record_published_frames(published_frames);
+            self.control.shared.startup_silence_frames.fetch_add(
+                u64::try_from(published_frames).unwrap_or(u64::MAX),
+                Ordering::Relaxed,
+            );
+            return Ok(BypassOutputReport {
+                frames: u16::try_from(published_frames).unwrap_or(u16::MAX),
+                startup: true,
+                ramp_state: self.ramp.state(),
+                ..BypassOutputReport::default()
+            });
+        }
+        if !self.startup_ready {
+            self.startup_ready = true;
+            self.ramp.begin_recovery();
+        }
+        if self.empty_while_buffering && self.leading_silence_pending {
+            output.fill(0.0);
+            self.leading_silence_pending = false;
+            self.record_published_frames(output.len());
             self.control.shared.startup_silence_frames.fetch_add(
                 u64::try_from(output.len()).unwrap_or(u64::MAX),
                 Ordering::Relaxed,
@@ -319,10 +349,6 @@ impl BypassOutput {
                 ramp_state: self.ramp.state(),
                 ..BypassOutputReport::default()
             });
-        }
-        if !self.startup_ready {
-            self.startup_ready = true;
-            self.ramp.begin_recovery();
         }
 
         let mut complete = true;
@@ -348,6 +374,7 @@ impl BypassOutput {
                 .fetch_add(1, Ordering::Relaxed);
             let _ = self.control.request_resync();
             self.startup_ready = false;
+            self.leading_silence_pending = self.empty_while_buffering;
             self.ramp.process(None, output)
         }
         .map_err(BypassOutputError::FaultRamp)?;
@@ -362,6 +389,7 @@ impl BypassOutput {
                 .saturating_add(ramp_report.sanitized.subnormal),
             Ordering::Relaxed,
         );
+        self.record_published_frames(output.len());
         Ok(BypassOutputReport {
             frames: u16::try_from(output.len()).unwrap_or(u16::MAX),
             missing_frames: ramp_report.missing_samples,
@@ -391,6 +419,7 @@ impl BypassOutput {
         }
         self.scratch.fill(0.0);
         self.startup_ready = false;
+        self.leading_silence_pending = self.empty_while_buffering;
         self.ramp.reset_silent();
     }
 
@@ -399,6 +428,7 @@ impl BypassOutput {
         if requested != self.generation {
             self.generation = requested;
             self.startup_ready = false;
+            self.leading_silence_pending = self.empty_while_buffering;
             self.ramp.reset_silent();
             self.scratch.fill(0.0);
         }
@@ -417,11 +447,42 @@ impl BypassOutput {
                 .fetch_add(1, Ordering::Relaxed);
         }
     }
+
+    fn record_published_frames(&self, frames: usize) {
+        self.control
+            .shared
+            .output_frames
+            .fetch_add(u64::try_from(frames).unwrap_or(u64::MAX), Ordering::Relaxed);
+    }
 }
 
 /// Allocates the fixed ring before activation and returns its owned endpoints.
 #[must_use]
 pub fn create_bypass_channel() -> (
+    BypassCaptureSink,
+    BypassOutput,
+    BypassControl,
+    BypassTelemetry,
+) {
+    create_channel(MODEL_FRAME_SAMPLES, BYPASS_STARTUP_QUANTA, false)
+}
+
+pub(crate) fn create_processed_channel() -> (
+    BypassCaptureSink,
+    BypassOutput,
+    BypassControl,
+    BypassTelemetry,
+) {
+    // A complete processed frame is already a 10-ms scheduling reserve. Source
+    // callbacks emitted leading silence while that first frame was assembled.
+    create_channel(MODEL_FRAME_SAMPLES, 0, true)
+}
+
+fn create_channel(
+    startup_frame_samples: usize,
+    startup_quanta: usize,
+    empty_while_buffering: bool,
+) -> (
     BypassCaptureSink,
     BypassOutput,
     BypassControl,
@@ -448,6 +509,10 @@ pub fn create_bypass_channel() -> (
                 ramp.reset_silent();
                 ramp
             },
+            startup_frame_samples,
+            startup_quanta,
+            empty_while_buffering,
+            leading_silence_pending: empty_while_buffering,
         },
         control,
         BypassTelemetry { shared },

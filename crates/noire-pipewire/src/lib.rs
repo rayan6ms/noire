@@ -9,6 +9,7 @@ mod connection;
 mod format;
 #[cfg(feature = "pipewire-backend")]
 mod graph;
+mod live;
 mod registry;
 #[cfg(feature = "pipewire-backend")]
 mod source;
@@ -38,6 +39,12 @@ pub use format::{
 pub use format::{build_capture_format_pod, parse_negotiated_format};
 #[cfg(feature = "pipewire-backend")]
 pub use graph::{BypassGraph, BypassGraphError, BypassGraphService};
+#[cfg(feature = "pipewire-backend")]
+pub use graph::{LiveGraph, LiveGraphError};
+pub use live::{
+    DeadlinePolicy, FailMode, LiveCaptureSink, LiveControl, LivePipelineError, LiveState,
+    LiveTelemetry, LiveTelemetrySnapshot, TimingHistogramSnapshot, create_live_channel,
+};
 pub use registry::{
     AdvertisedFormat, DeviceAvailability, DeviceSelector, InputResolution, InputUnavailable,
     NodeDescriptor, NodeProperties, REGISTRY_COALESCE_MILLIS, RESERVED_NODE_NAME, RegistryMonitor,

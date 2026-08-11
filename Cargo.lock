@@ -1127,6 +1127,8 @@ dependencies = [
  "libspa",
  "noire-core",
  "noire-dsp",
+ "noire-model",
+ "noire-model-rnnoise",
  "pipewire",
  "rtrb",
  "stats_alloc",

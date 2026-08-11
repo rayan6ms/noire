@@ -36,6 +36,7 @@ noire-core = { version = "=0.1.0", path = "crates/noire-core" }
 noire-dsp = { version = "=0.1.0", path = "crates/noire-dsp" }
 noire-ipc = { version = "=0.1.0", path = "crates/noire-ipc" }
 noire-model = { version = "=0.1.0", path = "crates/noire-model" }
+noire-model-rnnoise = { version = "=0.1.0", path = "crates/noire-model-rnnoise" }
 noire-pipewire = { version = "=0.1.0", path = "crates/noire-pipewire" }
 pipewire = "=0.10.0"
 proptest = "=1.11.0"
