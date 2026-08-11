@@ -1,0 +1,121 @@
+schema_version = 1
+tasks = ["P4-01", "P4-02", "P4-03", "P4-04", "P4-05", "P4-06", "P4-07"]
+run_date = "2026-08-11"
+implementation_commit = "c055ed6b1b85ced87d4e2eb3361ee3272f64ec7b"
+pass = true
+
+[environment]
+identifier = "noire-phase4-ubuntu-24.04-pipewire-1.0.5"
+container_image = "docker.io/library/ubuntu:24.04"
+container_image_id = "045183670ef29ce21bc22a8d4f62511ce472679ca8fc9774f04181f7f383ca62"
+os = "Ubuntu 24.04"
+architecture = "x86_64"
+rust = "1.97.0"
+pipewire = "1.0.5"
+wireplumber = "0.4.17"
+session_bus = "isolated dbus-run-session"
+runtime_directory = "isolated disposable tmp directory"
+realtime_scheduling = false
+
+[fixture]
+selected_node = "noire.integration.phase4.selected"
+unselected_node = "noire.integration.phase4.unselected"
+virtual_node = "io.github.rayan6ms.Noire.Microphone"
+virtual_description = "Noire Microphone"
+sample_rate_hz = 48000
+channels = 1
+quantum_frames = 128
+signal = "1 kHz tone plus maximal-length sequence and periodic impulses"
+
+[latency]
+correlation_trials = 100
+minimum_samples = 896
+median_samples = 896
+p95_samples = 896
+p99_samples = 896
+maximum_samples = 896
+p95_milliseconds = 18.667
+limit_milliseconds = 20.0
+pass = true
+
+[integrity]
+gain_error_db = -0.002833
+gain_error_limit_db = 0.1
+aligned_impulses = 3
+all_samples_finite = true
+no_added_clipping = true
+selected_frames = 86835200
+unselected_frames = 0
+pass = true
+
+[soak]
+duration_seconds = 1800
+produced_frames = 86662272
+output_frames = 86662528
+startup_silence_frames = 896
+high_water_frames = 896
+generations = 3
+underflows = 0
+overflows = 0
+dropped_frames = 0
+missing_frames = 0
+oversized_requests = 0
+sanitized_samples = 0
+source_missing_buffers = 0
+source_malformed_buffers = 0
+pipewire_xrun_log_matches = 0
+wireplumber_xrun_log_matches = 0
+pipewire_pulse_xrun_log_matches = 0
+pass = true
+
+[demand]
+idle_windows = 20
+idle_cpu_p95_percent = 0.998
+idle_cpu_limit_percent = 1.0
+deactivation_debounce_milliseconds = 500
+capture_stopped_while_idle = true
+reconnect_clean_audio = true
+virtual_node_disappeared = true
+pass = true
+
+[compatibility]
+pactl_visible = true
+native_recorder_bytes = 385104
+pulse_recorder_bytes = 65536
+pass = true
+
+[applications.chrome]
+version = "151.0.7922.108"
+selected_label = "Noire Microphone"
+recorded_bytes = 31980
+peak = 0.20999786257743835
+pass = true
+
+[applications.electron]
+version = "32.3.3"
+selected_label = "Noire Microphone"
+recorded_bytes = 31930
+peak = 0.20996734499931335
+pass = true
+
+[applications.obs]
+version = "30.0.2.1"
+selected_node = "io.github.rayan6ms.Noire.Microphone"
+recorded_frames = 241200
+pass = true
+
+[allocation]
+warmup_callbacks = 1
+measured_callbacks = 1024
+capture_allocations = 0
+bypass_allocations = 0
+reallocations = 0
+deallocations = 0
+pass = true
+
+[commands]
+soak = "NOIRE_PHASE4_SOAK_SECONDS=1800 NOIRE_PHASE4_IDLE_WINDOWS=20 NOIRE_PIPEWIRE_TEST_SECONDS=5 dbus-run-session -- .github/scripts/run_pipewire_session.sh"
+applications = "NOIRE_PHASE4_APP_SMOKE=1 NOIRE_PHASE4_SOAK_SECONDS=5 dbus-run-session -- .github/scripts/run_pipewire_session.sh"
+portable = "cargo test -p noire-pipewire --locked"
+native_lint = "cargo clippy -p noire-pipewire --all-targets --features native-test --locked -- -D warnings"
+traceability = "python3 .github/scripts/validate_traceability.py --self-test"

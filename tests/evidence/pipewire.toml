@@ -28,21 +28,22 @@ commands = ["cargo test -p noire-pipewire --locked", "NOIRE_PIPEWIRE_TEST_SECOND
 fixtures = ["Seeded 997 Hz tone plus deterministic noise at mono F32/44.1 kHz", "Empty, malformed, oversized, non-finite, and generation-change buffer cases"]
 environments = ["Disposable Ubuntu 24.04 PipeWire 1.0.5 and WirePlumber 0.4.17 session"]
 result_artifacts = ["NOIRE_PIPEWIRE_RESULT callback/format/error/RSS counters", "tests/performance/phase3-capture.toml"]
-sources = ["crates/noire-pipewire/tests/native_session.rs::fn captures_deterministic_44100_source_as_canonical_48000", "crates/noire-pipewire/tests/native_session.rs::NOIRE_PIPEWIRE_TEST_SECONDS", "crates/noire-pipewire/tests/capture_allocation.rs::fn warmed_capture_processing_has_zero_allocator_calls", "crates/noire-pipewire/src/capture.rs::fn generation_reset_clears_all_input_local_state_before_new_samples"]
+sources = ["crates/noire-pipewire/tests/native_session.rs::fn captures_deterministic_44100_source_as_canonical_48000", "crates/noire-pipewire/tests/native_session.rs::NOIRE_PIPEWIRE_TEST_SECONDS", "crates/noire-pipewire/tests/capture_allocation.rs::fn warmed_capture_and_bypass_callbacks_have_zero_allocator_calls", "crates/noire-pipewire/src/capture.rs::fn generation_reset_clears_all_input_local_state_before_new_samples"]
 
 [[template]]
 id = "AT-PIPEWIRE-AUDIO-IO"
 kind = "automated"
-status = "planned"
+status = "active"
 phase = 4
 owner = "rayan6ms"
 requirements = ["FR-004", "FR-005", "QG-001"]
-observable = "Exactly one named virtual source publishes processed mono 48 kHz audio from only the selected capture source and disappears cleanly."
+observable = "Exactly one stable non-lingering Noire virtual source publishes finite processed mono 48 kHz audio from only the ID-pinned selected capture source, activates on consumer demand, and disappears cleanly."
 test_ids = ["T-PW-CAPTURE-PUBLISH-GRAPH"]
-commands = ["Run graph integration and pw-dump assertions while capturing deterministic audio"]
-fixtures = ["Selected and unselected physical-source signal fixtures"]
-environments = ["Disposable PipeWire integration session"]
-result_artifacts = ["pw-dump graph assertion and captured sample metadata"]
+commands = ["NOIRE_PHASE4_SOAK_SECONDS=1800 dbus-run-session -- .github/scripts/run_pipewire_session.sh"]
+fixtures = ["Selected 1 kHz/maximum-length-sequence/impulse source, high-level unselected source, native/Pulse recorders, Chrome WebRTC, Electron, and OBS"]
+environments = ["Disposable Ubuntu 24.04 PipeWire 1.0.5, WirePlumber 0.4.17, and pipewire-pulse session"]
+result_artifacts = ["NOIRE_PHASE4_RESULT, NOIRE_PHASE4_COMPAT_RESULT, NOIRE_PHASE4_APP_RESULT, and tests/performance/phase4-bypass.toml"]
+sources = ["crates/noire-pipewire/tests/phase4_session.rs::fn virtual_source_bypass_meets_phase4_acceptance", "crates/noire-pipewire/tests/phase4_session.rs::fn native_and_pulse_recorders_select_virtual_source", "crates/noire-pipewire/tests/phase4_session.rs::fn zz_application_clients_select_and_record_virtual_source", "crates/noire-pipewire/src/source.rs::pub struct VirtualSourceStream", "crates/noire-pipewire/src/graph.rs::pub struct BypassGraph"]
 
 [[template]]
 id = "AT-PIPEWIRE-RECOVERY"

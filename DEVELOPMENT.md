@@ -126,6 +126,20 @@ When native packages are available, repeat check, Clippy, and test with
 `--all-features`. Feature-specific integration, latency, quality, and soak tests
 are additional evidence; they are not replaced by the standard sequence.
 
+The disposable Phase-4 integration session additionally requires
+`pipewire-pulse` and `pulseaudio-utils` (`pactl`/`parec`). It runs every ignored
+native test serially and rejects PipeWire, WirePlumber, or compatibility-server
+xrun diagnostics:
+
+```bash
+NOIRE_PHASE4_SOAK_SECONDS=1800 \
+  dbus-run-session -- .github/scripts/run_pipewire_session.sh
+```
+
+Real Chrome, Electron, and OBS fixtures are an explicit local application smoke
+matrix, not a CI dependency; enable them only in the prepared disposable image
+with `NOIRE_PHASE4_APP_SMOKE=1`.
+
 Phase-2 offline allocation and timing checks use the release profile:
 
 ```bash

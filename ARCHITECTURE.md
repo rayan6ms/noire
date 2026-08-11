@@ -2,8 +2,9 @@
 
 This document describes the target 1.0 boundaries. The repository contains the
 platform-independent domain scaffold, foundational DSP/model pipeline, and the
-feature-gated native PipeWire registry/capture adapter. The virtual-source stream
-and most composed daemon behavior are not implemented yet.
+feature-gated native PipeWire capture, bounded bypass graph, and virtual-source
+adapter. The live RNNoise composition and most daemon behavior are not yet
+implemented.
 
 ## System shape
 
@@ -124,14 +125,35 @@ Add/change/remove/default events are coalesced for 50 ms before an immutable
 snapshot is published.
 
 The capture stream requests native-endian interleaved mono `f32` at 48 kHz and
-targets the resolved stable node name. Its process callback drains every available
-mapped buffer, validates chunk flags/stride/alignment/range/quantum, copies into
-fixed scratch storage, sanitizes and meters samples, and relies on the safe
-buffer guard to requeue on every exit path. It does not log. Negotiated formats,
-stream state, failures, and atomic counters are consumed by the control plane.
-Allocator instrumentation records zero calls in warmed portable callback
-processing; a disposable native session exercises the same boundary against a
+resolves the persisted stable node name to a transient global ID for each live
+graph. The graph pins that ID with reconnect disabled so session policy cannot
+retarget capture to the virtual source. Its process callback drains every
+available mapped buffer, validates chunk flags/stride/alignment/range/quantum,
+copies into fixed scratch storage, sanitizes and meters samples, and relies on
+the safe buffer guard to requeue on every exit path. It does not log. Negotiated
+formats, stream state, failures, and atomic counters are consumed by the control
+plane. Allocator instrumentation records zero calls in warmed capture and bypass
+callbacks; a disposable native session exercises the same boundary against a
 deterministic 44.1 kHz source and verifies PipeWire presents canonical 48 kHz.
+
+The Phase-4 bypass uses one generation-tagged 9,152-sample SPSC ring. Capture
+writes only complete callback blocks; overload drops the new block, advances the
+generation, and forces bounded resynchronization. The source holds deliberate
+silence until it has exactly one 480-sample model-frame lead plus three current
+graph quanta, then applies the shared 5 ms recovery ramp. At a 128-frame quantum
+the observed 896-sample (18.667 ms) delay remains inside NFR-001 while absorbing
+independent-stream scheduling jitter. Unexpected shortages
+advance generation and fade to silence without replaying stale samples. Queue,
+fault, boundary, and high-water counters are atomic snapshots outside callbacks.
+
+`VirtualSourceStream` publishes exactly one non-lingering `Audio/Source` named
+`io.github.rayan6ms.Noire.Microphone`, described as **Noire Microphone**, in
+native-endian mono `f32` at 48 kHz. The source stream's running state is the
+consumer-demand signal: first demand activates pinned physical capture and a
+fresh generation; last-consumer loss keeps capture warm for a 500 ms debounce
+while securely draining pending ring audio, then pauses capture and clears all
+source-owned storage. Chrome WebRTC, Electron, OBS, native PipeWire, and
+pipewire-pulse fixtures exercise selection and recording in an isolated session.
 
 Every selected-input lifecycle has a monotonic `InputGeneration`. A generation
 advance is an atomic callback command; before the next sample is delivered, the
