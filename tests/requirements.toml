@@ -25,7 +25,7 @@ evidence = ["AT-PIPEWIRE-REGISTRY", "AT-CONFIG-MIGRATION"]
 id = "FR-004"
 summary = "Capture and process mono audio internally at 48 kHz"
 priority = "must"
-evidence = ["AT-PIPEWIRE-AUDIO-IO", "AT-DSP-PRIMITIVES", "AT-DSP-BYPASS"]
+evidence = ["AT-PIPEWIRE-CAPTURE", "AT-PIPEWIRE-AUDIO-IO", "AT-DSP-PRIMITIVES", "AT-DSP-BYPASS"]
 
 [[requirement]]
 id = "FR-005"
@@ -127,7 +127,7 @@ evidence = ["AT-IDLE-RESOURCE", "AT-RECOVERY-SOAK"]
 id = "NFR-005"
 summary = "Keep audio callbacks allocation-free, nonblocking, and bounded"
 priority = "release"
-evidence = ["AT-MODEL-PERFORMANCE", "AT-FAULT-TRANSITIONS", "AT-REALTIME-PERFORMANCE"]
+evidence = ["AT-PIPEWIRE-CAPTURE", "AT-MODEL-PERFORMANCE", "AT-FAULT-TRANSITIONS", "AT-REALTIME-PERFORMANCE"]
 
 [[requirement]]
 id = "NFR-006"

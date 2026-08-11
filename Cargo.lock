@@ -1129,6 +1129,7 @@ dependencies = [
  "noire-dsp",
  "pipewire",
  "rtrb",
+ "stats_alloc",
 ]
 
 [[package]]

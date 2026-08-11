@@ -1,9 +1,9 @@
 # Noire architecture
 
 This document describes the target 1.0 boundaries. The repository contains the
-platform-independent domain scaffold and foundational DSP primitives;
-feature-gated native adapters and most composed runtime behavior are not
-implemented yet.
+platform-independent domain scaffold, foundational DSP/model pipeline, and the
+feature-gated native PipeWire registry/capture adapter. The virtual-source stream
+and most composed daemon behavior are not implemented yet.
 
 ## System shape
 
@@ -113,6 +113,32 @@ independent QG-004 listening result remains explicitly outstanding.
 After same-thread warm-up, allocator instrumentation covers the production DSP
 stages and model call; P2-07 records zero steady-state allocation calls and a
 reference-host model p99 below the 0.75 ms gate.
+
+`noire-pipewire` owns all thread-affine native objects. `PipewireConnection`
+connects one main loop, context, core, and registry; copies core failures/runtime
+version into control-plane state; and binds node/default-metadata listeners.
+Registry globals become immutable owned descriptors. Candidate filtering rejects
+monitor, virtual, unavailable, non-source, and Noire-owned nodes; persisted
+selection uses stable device/node properties rather than transient global IDs.
+Add/change/remove/default events are coalesced for 50 ms before an immutable
+snapshot is published.
+
+The capture stream requests native-endian interleaved mono `f32` at 48 kHz and
+targets the resolved stable node name. Its process callback drains every available
+mapped buffer, validates chunk flags/stride/alignment/range/quantum, copies into
+fixed scratch storage, sanitizes and meters samples, and relies on the safe
+buffer guard to requeue on every exit path. It does not log. Negotiated formats,
+stream state, failures, and atomic counters are consumed by the control plane.
+Allocator instrumentation records zero calls in warmed portable callback
+processing; a disposable native session exercises the same boundary against a
+deterministic 44.1 kHz source and verifies PipeWire presents canonical 48 kHz.
+
+Every selected-input lifecycle has a monotonic `InputGeneration`. A generation
+advance is an atomic callback command; before the next sample is delivered, the
+processor clears scratch, meter, peak telemetry, and sink-owned queued state.
+This prevents samples accumulated for a removed device from entering the next
+device lifecycle. Registry and native-session tests exercise 50 reidentified
+add/remove cycles and require stable selectors plus an empty final registry.
 
 Overflow/underflow policy uses a fixed 5 ms equal-power gain transition. Missing
 processed input fades from only the last published scalar and then holds silence;

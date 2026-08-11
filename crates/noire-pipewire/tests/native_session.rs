@@ -31,6 +31,10 @@ fn captures_deterministic_44100_source_as_canonical_48000() -> Result<(), Box<dy
             .iter()
             .any(|candidate| candidate.node_name == SOURCE_NAME)
     })?;
+    let runtime_version = connection
+        .runtime_version()
+        .filter(|version| !version.is_empty())
+        .ok_or("PipeWire core did not publish its runtime version")?;
     assert_eq!(source.sample_rate(), SYNTHETIC_SOURCE_RATE);
 
     let capture = NativeCaptureStream::connect(&connection, source.node_name())?;
@@ -93,12 +97,16 @@ fn captures_deterministic_44100_source_as_canonical_48000() -> Result<(), Box<dy
     assert!(rss_growth_kib <= RSS_GROWTH_LIMIT_KIB);
 
     println!(
-        "NOIRE_PIPEWIRE_RESULT duration_ms={} source_rate={} capture_rate={} generation={} generation_resets={} callbacks={} frames={} empty={} malformed={} oversized={} peak={:.6} rss_growth_kib={}",
+        "NOIRE_PIPEWIRE_RESULT runtime={} duration_ms={} source_rate={} capture_rate={} generation={} generation_resets={} source_callbacks={} source_frames={} source_missing={} capture_callbacks={} capture_frames={} empty={} malformed={} oversized={} peak={:.6} rss_growth_kib={}",
+        runtime_version,
         duration.as_millis(),
         SYNTHETIC_SOURCE_RATE,
         CANONICAL_CAPTURE_FORMAT.sample_rate,
         capture_snapshot.generation.get(),
         capture_snapshot.counters.input_generation_resets,
+        source_snapshot.callbacks(),
+        source_snapshot.frames(),
+        source_snapshot.missing_data(),
         capture_snapshot.counters.callbacks,
         capture_snapshot.counters.frames,
         capture_snapshot.counters.empty_buffers,

@@ -1,0 +1,74 @@
+schema_version = 1
+tasks = ["P3-05", "P3-06", "P3-07"]
+run_date = "2026-08-10"
+implementation_commit = "d97cb3570941826ebcc36ab7a4792b2de53758de"
+pass = true
+
+[environment]
+identifier = "noire-phase3-ubuntu-24.04-pipewire-1.0.5"
+container_image = "docker.io/library/ubuntu:24.04"
+container_image_id = "045183670ef29ce21bc22a8d4f62511ce472679ca8fc9774f04181f7f383ca62"
+os = "Ubuntu 24.04.4 LTS"
+architecture = "x86_64"
+rust = "1.97.0"
+pipewire = "1.0.5"
+wireplumber = "0.4.17"
+source_mount = "read-only"
+runtime_directory = "isolated disposable tmp directory"
+session_bus = "isolated dbus-run-session"
+
+[fixture]
+node_name = "noire.integration.source.44100"
+signal = "997 Hz recurrence oscillator plus seeded deterministic noise"
+sample_format = "native-endian interleaved F32"
+source_rate_hz = 44100
+source_channels = 1
+capture_rate_hz = 48000
+capture_channels = 1
+
+[soak]
+duration_seconds = 3600
+wall_seconds = 3600.10
+capture_callbacks = 1349979
+capture_frames = 172797312
+average_capture_rate_hz = 47999.253333
+minimum_required_frames = 155520000
+empty_buffers = 0
+malformed_chunks = 0
+oversized_chunks = 0
+non_finite_samples = 0
+subnormal_samples = 0
+core_failures = 0
+source_stream_errors = 0
+capture_stream_errors = 0
+source_missing_data = 0
+input_generation = 2
+input_generation_resets = 1
+peak = 0.203777
+peak_rss_growth_kib = 64
+peak_rss_growth_limit_kib = 16384
+pipewire_xrun_log_matches = 0
+wireplumber_xrun_log_matches = 0
+pass = true
+
+[hotplug]
+cycles = 50
+stable_selector_preserved = true
+final_matching_candidates = 0
+final_revision = 303
+core_failures = 0
+pass = true
+
+[allocation]
+warmup_callbacks = 1
+measured_callbacks = 1024
+allocations = 0
+reallocations = 0
+deallocations = 0
+pass = true
+
+[commands]
+soak = "NOIRE_PIPEWIRE_TEST_SECONDS=3600 dbus-run-session -- .github/scripts/run_pipewire_session.sh"
+portable = "cargo test -p noire-pipewire --locked"
+native = "cargo test -p noire-pipewire --features native-test --locked"
+traceability = "python3 .github/scripts/validate_traceability.py --self-test"

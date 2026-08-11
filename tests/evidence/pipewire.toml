@@ -3,16 +3,32 @@ schema_version = 1
 [[template]]
 id = "AT-PIPEWIRE-REGISTRY"
 kind = "automated"
-status = "planned"
+status = "active"
 phase = 3
 owner = "rayan6ms"
 requirements = ["FR-001", "FR-002", "FR-003", "QG-001"]
 observable = "Registry snapshots expose only eligible physical inputs, retain stable selectors across graph IDs, and never select Noire or monitor nodes."
 test_ids = ["T-PW-REGISTRY-SELECTION"]
-commands = ["Run PipeWire registry integration tests against deterministic graph fixtures"]
+commands = ["cargo test -p noire-pipewire --locked", "dbus-run-session -- .github/scripts/run_pipewire_session.sh"]
 fixtures = ["Physical, monitor, virtual, Noire-owned, renamed, and re-ID graph fixtures"]
-environments = ["Disposable PipeWire integration session"]
-result_artifacts = ["Machine-readable selected-node and exclusion assertions"]
+environments = ["Pinned Rust unit-test environment", "Disposable Ubuntu 24.04 PipeWire integration session"]
+result_artifacts = ["Cargo selection/exclusion assertions and NOIRE_PIPEWIRE_HOTPLUG_RESULT"]
+sources = ["crates/noire-pipewire/src/registry.rs::fn fifty_reidentified_hotplug_cycles_leave_registry_empty_and_selector_stable", "crates/noire-pipewire/tests/native_session.rs::fn fifty_native_hotplug_cycles_preserve_selector_and_empty_registry"]
+
+[[template]]
+id = "AT-PIPEWIRE-CAPTURE"
+kind = "automated"
+status = "active"
+phase = 3
+owner = "rayan6ms"
+requirements = ["FR-004", "NFR-005"]
+observable = "A real native capture stream receives deterministic finite mono audio from a 44.1 kHz synthetic source as canonical F32/48 kHz, rejects malformed callback storage without panic, resets generation-local state at the callback boundary, and reports bounded counters without callback logging or allocation."
+test_ids = ["T-PW-CAPTURE-SESSION"]
+commands = ["cargo test -p noire-pipewire --locked", "NOIRE_PIPEWIRE_TEST_SECONDS=3600 dbus-run-session -- .github/scripts/run_pipewire_session.sh"]
+fixtures = ["Seeded 997 Hz tone plus deterministic noise at mono F32/44.1 kHz", "Empty, malformed, oversized, non-finite, and generation-change buffer cases"]
+environments = ["Disposable Ubuntu 24.04 PipeWire 1.0.5 and WirePlumber 0.4.17 session"]
+result_artifacts = ["NOIRE_PIPEWIRE_RESULT callback/format/error/RSS counters", "tests/performance/phase3-capture.toml"]
+sources = ["crates/noire-pipewire/tests/native_session.rs::fn captures_deterministic_44100_source_as_canonical_48000", "crates/noire-pipewire/tests/native_session.rs::NOIRE_PIPEWIRE_TEST_SECONDS", "crates/noire-pipewire/tests/capture_allocation.rs::fn warmed_capture_processing_has_zero_allocator_calls", "crates/noire-pipewire/src/capture.rs::fn generation_reset_clears_all_input_local_state_before_new_samples"]
 
 [[template]]
 id = "AT-PIPEWIRE-AUDIO-IO"
