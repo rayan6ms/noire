@@ -202,6 +202,19 @@ jobs:
       - name: Build release workspace
         run: cargo +1.97.0 build --workspace --release --locked 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/release-build.log"
 
+      - name: Prove live callback allocation and performance gates
+        run: |
+          {
+            cargo +1.97.0 test --release --package noire-pipewire \
+              --test capture_allocation \
+              ten_million_live_callback_invocations_have_zero_allocator_calls \
+              --locked -- --ignored --nocapture
+            cargo +1.97.0 test --release --package noire-pipewire \
+              --test phase5_pipeline \
+              live_rnnoise_meets_cpu_deadline_callback_and_rss_gates \
+              --locked -- --ignored --nocapture
+          } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/phase5-release.log"
+
       - name: Smoke-test binary interfaces
         run: |
           {

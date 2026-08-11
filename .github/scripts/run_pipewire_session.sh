@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && "${NOIRE_DBUS_SESSION_WRAPPED:-0}" != "1" ]]; then
+    exec env NOIRE_DBUS_SESSION_WRAPPED=1 dbus-run-session -- "$0" "$@"
+fi
+
 log_dir="${NOIRE_PIPEWIRE_LOG_DIR:-${RUNNER_TEMP:-/tmp}/noire-pipewire-logs}"
 mkdir -p "$log_dir"
 runtime_dir=$(mktemp -d "${RUNNER_TEMP:-/tmp}/noire-pipewire-runtime.XXXXXX")
@@ -45,8 +49,9 @@ for _attempt in $(seq 1 100); do
 done
 test -S "$runtime_dir/pulse/native"
 
-cargo test --package noire-pipewire --features native-test \
-    --tests --locked -- --ignored --nocapture --test-threads=1 \
+cargo test --release --package noire-pipewire --features native-test \
+    --test native_session --test phase4_session --test phase5_session \
+    --locked -- --ignored --nocapture --test-threads=1 \
     2>&1 | tee "$log_dir/native-session.log"
 
 if grep -Eiq '(^|[^[:alpha:]])(xrun|underrun|overrun)([^[:alpha:]]|$)' \

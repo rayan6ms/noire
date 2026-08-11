@@ -3,15 +3,61 @@
 use std::alloc::System;
 
 use noire_dsp::MODEL_FRAME_SAMPLES;
+use noire_model::{
+    Denoiser, FrameStats, ModelDescriptor, ModelDescriptorSpec, ProcessError,
+    finalize_process_output, prepare_process_frame,
+};
 use noire_pipewire::{
     BYPASS_STARTUP_QUANTA, CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata,
-    InputGeneration, create_bypass_channel,
+    InputGeneration, create_bypass_channel, create_live_channel,
 };
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 const BYPASS_QUANTUM: usize = 128;
+const PHASE5_CALLBACK_INVOCATIONS: usize = 10_000_000;
+
+struct AllocationModel {
+    descriptor: ModelDescriptor,
+}
+
+impl AllocationModel {
+    fn new() -> Result<Self, noire_model::DescriptorError> {
+        Ok(Self {
+            descriptor: ModelDescriptor::new(ModelDescriptorSpec {
+                id: "test.allocation.live",
+                name: "Allocation test model",
+                version: "1",
+                license: "MIT",
+                sample_rate_hz: 48_000,
+                channels: 1,
+                frame_samples: MODEL_FRAME_SAMPLES,
+                hop_samples: MODEL_FRAME_SAMPLES,
+                lookahead_samples: 0,
+                delay_samples: MODEL_FRAME_SAMPLES,
+            })?,
+        })
+    }
+}
+
+impl Denoiser for AllocationModel {
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
+    }
+
+    fn reset(&mut self) {}
+
+    fn process_frame(
+        &mut self,
+        input: &[f32],
+        output: &mut [f32],
+    ) -> Result<FrameStats, ProcessError> {
+        prepare_process_frame(&self.descriptor, input, output)?;
+        output.copy_from_slice(input);
+        finalize_process_output(output, FrameStats::silence())
+    }
+}
 
 #[derive(Debug, Default)]
 struct CountingSink {
@@ -81,4 +127,41 @@ fn warmed_capture_and_bypass_callbacks_have_zero_allocator_calls() {
     assert_eq!(telemetry.snapshot().underflows, 0);
     assert_eq!(telemetry.snapshot().overflows, 0);
     assert!(destination.iter().all(|sample| sample.is_finite()));
+}
+
+#[test]
+#[ignore = "10 million callback allocation acceptance; run explicitly in release mode"]
+fn ten_million_live_callback_invocations_have_zero_allocator_calls()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (mut sink, mut output, _control, telemetry) =
+        create_live_channel(Box::new(AllocationModel::new()?))?;
+    let input = [0.125_f32];
+    let mut rendered = [0.0_f32; MODEL_FRAME_SAMPLES];
+
+    for _ in 0..MODEL_FRAME_SAMPLES {
+        sink.write(InputGeneration::INITIAL, &input);
+    }
+    let _ = output.fill(&mut rendered)?;
+
+    let region = Region::new(GLOBAL);
+    for invocation in 0..PHASE5_CALLBACK_INVOCATIONS {
+        sink.write(InputGeneration::INITIAL, &input);
+        if (invocation + 1).is_multiple_of(MODEL_FRAME_SAMPLES) {
+            let _ = output.fill(&mut rendered)?;
+            std::hint::black_box(rendered[invocation % MODEL_FRAME_SAMPLES]);
+        }
+    }
+    let change = region.change();
+    assert_eq!(change.allocations, 0);
+    assert_eq!(change.reallocations, 0);
+    assert_eq!(change.deallocations, 0);
+    let snapshot = telemetry.snapshot();
+    assert_eq!(snapshot.model_errors, 0);
+    assert_eq!(snapshot.transport.underflows, 0);
+    assert_eq!(snapshot.transport.overflows, 0);
+    println!(
+        "NOIRE_PHASE5_ALLOCATION callbacks={PHASE5_CALLBACK_INVOCATIONS} model_frames={} allocations={} reallocations={} deallocations={}",
+        snapshot.model_frames, change.allocations, change.reallocations, change.deallocations
+    );
+    Ok(())
 }
