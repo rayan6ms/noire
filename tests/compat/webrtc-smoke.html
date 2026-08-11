@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>NOIRE_WEBRTC_PENDING</title>
+  </head>
+  <body>
+    <output id="result">pending</output>
+    <script>
+      "use strict";
+
+      async function report(result) {
+        const serialized = JSON.stringify(result);
+        document.querySelector("#result").textContent = serialized;
+        document.title = result.pass ? "NOIRE_WEBRTC_PASS" : "NOIRE_WEBRTC_FAIL";
+        await fetch("/result", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: serialized,
+        });
+      }
+
+      async function run() {
+        let stream;
+        let context;
+        let result;
+        try {
+          const permissionStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              autoGainControl: false,
+              echoCancellation: false,
+              noiseSuppression: false,
+            },
+            video: false,
+          });
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const inputs = devices.filter((device) => device.kind === "audioinput");
+          const labels = inputs.map((device) => device.label);
+          const noire = inputs.find((device) =>
+            device.label.includes("Noire Microphone"),
+          );
+          permissionStream.getTracks().forEach((track) => track.stop());
+          if (!noire) {
+            throw new Error(`Noire Microphone absent from ${labels.join(", ")}`);
+          }
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              deviceId: { exact: noire.deviceId },
+              autoGainControl: false,
+              echoCancellation: false,
+              noiseSuppression: false,
+            },
+            video: false,
+          });
+          const track = stream.getAudioTracks()[0];
+          const chunks = [];
+          const recorder = new MediaRecorder(stream);
+          recorder.addEventListener("dataavailable", (event) => {
+            if (event.data.size > 0) {
+              chunks.push(event.data);
+            }
+          });
+          const recordingStopped = new Promise((resolve) =>
+            recorder.addEventListener("stop", resolve, { once: true }),
+          );
+          recorder.start(100);
+
+          context = new AudioContext({ sampleRate: 48000 });
+          await context.resume();
+          const source = context.createMediaStreamSource(stream);
+          const analyser = context.createAnalyser();
+          analyser.fftSize = 2048;
+          source.connect(analyser);
+          const samples = new Float32Array(analyser.fftSize);
+          let peak = 0;
+          const deadline = performance.now() + 2000;
+          while (performance.now() < deadline) {
+            analyser.getFloatTimeDomainData(samples);
+            for (const sample of samples) {
+              peak = Math.max(peak, Math.abs(sample));
+            }
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          recorder.stop();
+          await recordingStopped;
+          const recordedBytes = chunks.reduce(
+            (total, chunk) => total + chunk.size,
+            0,
+          );
+
+          const label = track.label;
+          result = {
+            pass: label.includes("Noire Microphone") && recordedBytes > 0,
+            label,
+            labels,
+            peak,
+            recordedBytes,
+            sampleRate: context.sampleRate,
+          };
+        } catch (error) {
+          result = { pass: false, error: String(error) };
+        } finally {
+          stream?.getTracks().forEach((track) => track.stop());
+          await context?.close();
+        }
+        await report(result);
+        window.close();
+      }
+
+      void run();
+    </script>
+  </body>
+</html>
