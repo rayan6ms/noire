@@ -1,0 +1,126 @@
+schema_version = 1
+tasks = ["P6-01", "P6-02", "P6-03", "P6-04", "P6-05", "P6-06", "P6-07", "P6-08"]
+run_date = "2026-08-11"
+implementation_commit = "94fddbf9881164e8859a218a9068b4b22200890a"
+acceptance_commit = "48a4f9569911f1cb84ba2a0593eda012286cbab0"
+pass = true
+
+[control_environment]
+identifier = "noire-phase6-private-session-bus-2026-08-11"
+os = "Fedora Linux 44"
+architecture = "x86_64"
+rust = "1.97.0"
+session_bus = "isolated dbus-run-session"
+profile = "debug acceptance; filesystem durability enabled"
+
+[native_environment]
+identifier = "noire-phase6-ubuntu-24.04-pipewire-1.0.5"
+container_image = "docker.io/library/ubuntu:24.04"
+container_image_id = "045183670ef29ce21bc22a8d4f62511ce472679ca8fc9774f04181f7f383ca62"
+pipewire = "1.0.5"
+wireplumber = "0.4.17"
+session_bus = "isolated dbus-run-session"
+profile = "release native acceptance"
+
+[responsiveness]
+mutations = 100
+p95_microseconds = 1729
+maximum_microseconds = 1894
+p95_limit_microseconds = 500000
+every_reply_converged_to_get_snapshot = true
+pass = true
+
+[daemon_lifecycle]
+stable_input_discovered = true
+rnnoise_live_graph_started = true
+smooth_control_retained_graph = true
+virtual_source_consumed = true
+stop_removed_owned_graph = true
+client_disconnect_left_processing_active = true
+second_bus_owner_rejected_before_audio_state = true
+pass = true
+
+[configuration]
+schema_version = 1
+legacy_versions_migrated = [0]
+canonical_fixture = "data/config/config-v1.toml"
+mode_0600 = true
+same_directory_temporary = true
+file_and_directory_sync = true
+atomic_rename = true
+last_known_good_backup = true
+malformed_primary_byte_preserved = true
+invalid_candidate_byte_preserved = true
+interrupted_temporary_ignored = true
+newer_schema_byte_preserved_read_only = true
+restart_restored_intended_active_state = true
+pass = true
+
+[ipc]
+bus_name = "io.github.rayan6ms.Noire.Noire1"
+object_path = "/io/github/rayan6ms/Noire/Noire1"
+api_version = "1.0"
+typed_snapshot = true
+committed_introspection = "data/dbus-1/interfaces/io.github.rayan6ms.Noire.Noire1.xml"
+committed_json_snapshot = "data/contracts/noirectl-snapshot-v1.json"
+invalid_signature_rejected = true
+invalid_value_rejected = true
+two_client_stale_revision_conflict = true
+state_and_device_revision_properties = true
+state_device_error_signals = true
+pass = true
+
+[cli]
+commands = ["start", "stop", "status", "devices", "set input", "set enabled", "set strength", "set latency-profile", "set fail-mode", "set launch-at-login", "retry", "diagnostics"]
+json_schema_version = 1
+status_json_pass = true
+diagnostics_json_pass = true
+conflict_json_pass = true
+nonzero_rejection_exit = true
+gtk_or_display_required = false
+pass = true
+
+[errors_and_diagnostics]
+stable_catalog_entries = 9
+every_catalog_cause_nonempty = true
+every_catalog_recovery_nonempty = true
+repeated_event_interval_seconds = 5
+maximum_rate_limit_keys = 64
+structured_lifecycle_event = "daemon.ready"
+contains_audio = false
+contains_raw_device_properties = false
+contains_environment_dump = false
+automatic_upload = false
+network_io = false
+automated_daemon_cli_qg009_pass = true
+phase8_human_ui_wording_review_still_planned = true
+pass = true
+
+[systemd_manager]
+interface = "org.freedesktop.systemd1.Manager"
+unit = "noire.service"
+enable_method = "EnableUnitFiles"
+disable_method = "DisableUnitFiles"
+reload_after_change = true
+subprocess_calls = 0
+config_persisted_only_after_success = true
+persistence_failure_inverse_rollback = true
+packaged_user_unit_lifecycle_deferred_to_phase9 = true
+pass = true
+
+[retained_audio_gates]
+ten_million_callbacks_allocations = 0
+ten_million_callbacks_reallocations = 0
+ten_million_callbacks_deallocations = 0
+active_cpu_percent = 1.571
+model_p99_nanoseconds = 200000
+callback_p99_nanoseconds = 250000
+rss_growth_kib = 948
+native_phase3_phase4_phase5_pass = true
+pass = true
+
+[commands]
+control = "dbus-run-session -- .github/scripts/run_phase6_session.sh"
+native = "NOIRE_PIPEWIRE_TEST_SECONDS=1 dbus-run-session -- .github/scripts/run_pipewire_session.sh"
+standard = "Run traceability, fmt, warnings-denied check, Clippy, workspace tests/docs, Rust 1.92 MSRV, and release workspace build"
+policy = "cargo deny --locked check; callback panic-abort policy; hosted actionlint and cargo-audit"

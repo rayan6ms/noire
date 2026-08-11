@@ -3,21 +3,28 @@ schema_version = 1
 [[template]]
 id = "AT-IPC-CONTRACT"
 kind = "automated"
-status = "planned"
+status = "active"
 phase = 6
 owner = "rayan6ms"
-requirements = ["FR-007", "FR-009", "FR-012", "NFR-011"]
+requirements = ["FR-007", "FR-009", "FR-012", "NFR-011", "QG-006", "QG-009", "QG-010"]
 observable = "Versioned D-Bus and JSON CLI requests return complete typed state and accepted commands appear within the response deadline."
 test_ids = ["T-IPC-CLI-CONTRACT"]
 commands = ["Run daemon D-Bus contract fixtures and noirectl JSON assertions"]
 fixtures = ["Valid, invalid, stale-revision, unavailable, and latency-measured requests"]
 environments = ["Headless disposable session D-Bus environment"]
 result_artifacts = ["D-Bus replies, CLI JSON schema results, state timestamps, and exit codes"]
+sources = [
+  "crates/noired/tests/phase6_session.rs::same_user_contract_rejects_stale_invalid_and_malformed_requests",
+  "crates/noired/tests/phase6_native.rs::daemon_engine_creates_controls_and_removes_the_live_graph",
+  ".github/scripts/run_phase6_session.sh::NOIRE_PHASE6_SESSION",
+  "data/dbus-1/interfaces/io.github.rayan6ms.Noire.Noire1.xml::<interface name=\"io.github.rayan6ms.Noire.Noire1\">",
+  "data/contracts/noirectl-snapshot-v1.json::\"schema_version\": 1",
+]
 
 [[template]]
 id = "AT-CONFIG-MIGRATION"
 kind = "automated"
-status = "planned"
+status = "active"
 phase = 6
 owner = "rayan6ms"
 requirements = ["FR-003", "FR-010", "QG-010"]
@@ -27,6 +34,30 @@ commands = ["Run config contract fixtures across every supported schema transiti
 fixtures = ["Current, legacy, malformed, interrupted-write, and unknown-newer config files"]
 environments = ["Isolated temporary filesystem"]
 result_artifacts = ["Before/after bytes, parsed settings, file permissions, errors, and exit status"]
+sources = [
+  "crates/noire-config/src/lib.rs::fn atomic_save_retains_backup_and_mode",
+  "crates/noire-config/src/lib.rs::fn malformed_primary_recovers_backup_without_rewriting_primary",
+  "crates/noire-config/src/lib.rs::fn newer_schema_is_read_only_and_byte_preserved",
+  "data/config/config-v1.toml::schema_version = 1",
+]
+
+[[template]]
+id = "AT-SYSTEMD-MANAGER"
+kind = "automated"
+status = "active"
+phase = 6
+owner = "rayan6ms"
+requirements = ["FR-013"]
+observable = "Launch-at-login uses only the per-user systemd D-Bus manager, persists after manager success, and rolls manager state back after persistence failure."
+test_ids = ["T-SYSTEMD-MANAGER-TRANSACTION"]
+commands = ["Run noired launch-manager success, failure, rollback, and source-policy tests"]
+fixtures = ["Recording manager and a deterministic persistence failure"]
+environments = ["Headless unit-test environment without a running systemd manager"]
+result_artifacts = ["Ordered manager calls, persisted config bytes, daemon snapshot, and source scan"]
+sources = [
+  "crates/noired/src/control.rs::launch_at_login_rolls_systemd_back_when_persistence_fails",
+  "crates/noired/src/systemd.rs::adapter_never_spawns_systemctl_or_a_process",
+]
 
 [[template]]
 id = "AT-STATE-CONVERGENCE"

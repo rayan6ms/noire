@@ -79,7 +79,7 @@ evidence = ["AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE", "MX-ERROR-USABILITY"]
 id = "FR-013"
 summary = "Support launch at login as a systemd user service"
 priority = "must"
-evidence = ["AT-SYSTEMD-USER-SERVICE", "AT-PACKAGE-LIFECYCLE"]
+evidence = ["AT-SYSTEMD-MANAGER", "AT-SYSTEMD-USER-SERVICE", "AT-PACKAGE-LIFECYCLE"]
 
 [[requirement]]
 id = "FR-014"
@@ -205,7 +205,7 @@ evidence = ["AT-SAFE-FAILURE", "AT-LIVE-RNNOISE", "AT-PIPEWIRE-LIVE-MODEL"]
 id = "QG-006"
 summary = "Converge UI and CLI state to daemon truth"
 priority = "release"
-evidence = ["AT-STATE-CONVERGENCE"]
+evidence = ["AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE"]
 
 [[requirement]]
 id = "QG-007"
@@ -223,10 +223,10 @@ evidence = ["MX-APPLICATION-COMPAT"]
 id = "QG-009"
 summary = "Provide stable, actionable, usable error states"
 priority = "release"
-evidence = ["MX-ERROR-USABILITY"]
+evidence = ["AT-IPC-CONTRACT", "MX-ERROR-USABILITY"]
 
 [[requirement]]
 id = "QG-010"
 summary = "Preserve D-Bus and configuration compatibility"
 priority = "release"
-evidence = ["AT-CONFIG-MIGRATION"]
+evidence = ["AT-IPC-CONTRACT", "AT-CONFIG-MIGRATION"]
