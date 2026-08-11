@@ -38,6 +38,7 @@ struct SharedState {
     generation_resets: AtomicU64,
     oversized_requests: AtomicU64,
     sanitized_samples: AtomicU64,
+    current_frames: AtomicU64,
     high_water_frames: AtomicU64,
 }
 
@@ -57,6 +58,7 @@ impl Default for SharedState {
             generation_resets: AtomicU64::new(0),
             oversized_requests: AtomicU64::new(0),
             sanitized_samples: AtomicU64::new(0),
+            current_frames: AtomicU64::new(0),
             high_water_frames: AtomicU64::new(0),
         }
     }
@@ -97,6 +99,8 @@ pub struct BypassTelemetrySnapshot {
     pub oversized_requests: u64,
     /// Invalid/subnormal samples suppressed by the output boundary.
     pub sanitized_samples: u64,
+    /// Most recently observed queue occupancy.
+    pub current_frames: u64,
     /// Maximum observed queue occupancy.
     pub high_water_frames: u64,
 }
@@ -120,6 +124,7 @@ impl BypassTelemetry {
             generation_resets: load(&self.shared.generation_resets),
             oversized_requests: load(&self.shared.oversized_requests),
             sanitized_samples: load(&self.shared.sanitized_samples),
+            current_frames: load(&self.shared.current_frames),
             high_water_frames: load(&self.shared.high_water_frames),
         }
     }
@@ -187,11 +192,16 @@ impl BypassCaptureSink {
             u64::try_from(samples.len()).unwrap_or(u64::MAX),
             Ordering::Relaxed,
         );
-        self.control.shared.high_water_frames.fetch_max(
-            u64::try_from(self.producer.buffer().capacity() - self.producer.slots())
-                .unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
+        let current = u64::try_from(self.producer.buffer().capacity() - self.producer.slots())
+            .unwrap_or(u64::MAX);
+        self.control
+            .shared
+            .current_frames
+            .store(current, Ordering::Relaxed);
+        self.control
+            .shared
+            .high_water_frames
+            .fetch_max(current, Ordering::Relaxed);
         true
     }
 
@@ -421,6 +431,7 @@ impl BypassOutput {
         self.startup_ready = false;
         self.leading_silence_pending = self.empty_while_buffering;
         self.ramp.reset_silent();
+        self.publish_occupancy();
     }
 
     fn synchronize_generation(&mut self) {
@@ -453,6 +464,14 @@ impl BypassOutput {
             .shared
             .output_frames
             .fetch_add(u64::try_from(frames).unwrap_or(u64::MAX), Ordering::Relaxed);
+        self.publish_occupancy();
+    }
+
+    fn publish_occupancy(&self) {
+        self.control.shared.current_frames.store(
+            u64::try_from(self.consumer.slots()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
     }
 }
 

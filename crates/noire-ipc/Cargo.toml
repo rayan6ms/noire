@@ -9,13 +9,14 @@ repository.workspace = true
 
 [dependencies]
 noire-core.workspace = true
-serde = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
 thiserror = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 zbus = { workspace = true, optional = true }
 
 [features]
-dbus = ["dep:serde", "dep:thiserror", "dep:tokio", "dep:zbus"]
+dbus = ["dep:thiserror", "dep:tokio", "dep:zbus"]
 default = []
 
 [lints]

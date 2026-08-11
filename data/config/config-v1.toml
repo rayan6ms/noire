@@ -1,0 +1,21 @@
+schema_version = 1
+active = false
+launch_at_login = false
+
+[input]
+mode = "follow-default"
+stable_id = ""
+channel = "auto"
+fallback_to_default = false
+
+[output]
+latency_profile = "low"
+
+[suppression]
+enabled = true
+strength = 1.0
+fail_mode = "closed"
+
+[diagnostics]
+log_level = "info"
+metering = true

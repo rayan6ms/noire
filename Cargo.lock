@@ -1098,6 +1098,7 @@ version = "0.1.0"
 dependencies = [
  "noire-core",
  "serde",
+ "serde_json",
  "thiserror",
  "tokio",
  "zbus",
@@ -1156,9 +1157,14 @@ dependencies = [
 name = "noirectl"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "noire-core",
  "noire-ipc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zbus",
 ]
 
 [[package]]
@@ -1171,10 +1177,13 @@ dependencies = [
  "noire-core",
  "noire-ipc",
  "noire-model",
+ "noire-model-rnnoise",
  "noire-pipewire",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zbus",
 ]
 
 [[package]]
@@ -1685,9 +1694,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.151"
+version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14"
+checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
  "itoa",
  "memchr",

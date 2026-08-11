@@ -14,15 +14,19 @@ noire-config.workspace = true
 noire-core.workspace = true
 noire-ipc.workspace = true
 noire-model.workspace = true
+noire-model-rnnoise = { workspace = true, optional = true, features = ["rnnoise"] }
 noire-pipewire.workspace = true
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
+thiserror.workspace = true
+zbus = { workspace = true, optional = true }
 
 [features]
-default = []
-pipewire-backend = ["noire-pipewire/pipewire-backend"]
-runtime = ["dep:anyhow", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "noire-ipc/dbus"]
+default = ["runtime"]
+pipewire-backend = ["noire-pipewire/pipewire-backend", "dep:noire-model-rnnoise"]
+native-test = ["pipewire-backend", "noire-pipewire/native-test"]
+runtime = ["dep:anyhow", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:zbus", "noire-ipc/dbus"]
 
 [lints]
 workspace = true
