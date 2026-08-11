@@ -18,7 +18,7 @@ Commands run from the repository select 1.97.0 through
 on verification and release commands.
 
 The default workspace is deliberately headless and does not compile GTK or the
-PipeWire bindings:
+PipeWire bindings. It does compile the session D-Bus daemon and CLI:
 
 ```bash
 cargo check --workspace --all-targets --locked
@@ -26,8 +26,19 @@ cargo run -p noired -- --help
 cargo run -p noirectl -- --help
 ```
 
-Most runtime behavior is still being implemented, so these binary invocations
-currently verify their command interfaces rather than an audio pipeline.
+Run the control plane on a user session bus, then query it from another shell:
+
+```bash
+cargo run -p noired
+cargo run -p noirectl -- --json status
+cargo run -p noirectl -- devices
+cargo run -p noirectl -- set strength 0.75
+```
+
+The default daemon build remains controllable but reports an actionable error if
+asked to start audio. Add `--features pipewire-backend` for the native live graph.
+Configuration is owned by the daemon at `$XDG_CONFIG_HOME/noire/config.toml` or
+the standard home fallback; do not edit it concurrently with D-Bus mutations.
 
 The development-only offline adapter runner accepts mono 48 kHz signed 16-bit
 PCM or 32-bit float WAV input and writes latency-compensated 32-bit float WAV:
@@ -80,6 +91,7 @@ workspace:
 
 ```bash
 cargo check -p noire-pipewire --features pipewire-backend --locked
+cargo check -p noired --features pipewire-backend --locked
 cargo check -p noire-ui --features gtk-ui --locked
 cargo check --workspace --all-targets --all-features --locked
 ```
@@ -162,7 +174,14 @@ cargo test --release -p noire-pipewire --test phase5_pipeline \
 
 The native session itself also runs in release mode, starts an isolated session
 bus automatically when needed, and covers the live graph alongside retained
-Phase-3/4 acceptance tests.
+Phase-3/4 acceptance tests. Phase-6 D-Bus and CLI contracts run independently in
+a private session bus; the native runner also proves the daemon engine creates,
+controls, and removes the real live graph:
+
+```bash
+dbus-run-session -- .github/scripts/run_phase6_session.sh
+dbus-run-session -- .github/scripts/run_pipewire_session.sh
+```
 
 Phase-2 offline allocation and timing checks use the release profile:
 

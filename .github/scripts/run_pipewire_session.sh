@@ -54,6 +54,10 @@ cargo test --release --package noire-pipewire --features native-test \
     --locked -- --ignored --nocapture --test-threads=1 \
     2>&1 | tee "$log_dir/native-session.log"
 
+cargo test --release --package noired --features native-test \
+    --test phase6_native --locked -- --ignored --nocapture --test-threads=1 \
+    2>&1 | tee "$log_dir/phase6-native.log"
+
 if grep -Eiq '(^|[^[:alpha:]])(xrun|underrun|overrun)([^[:alpha:]]|$)' \
     "$log_dir/pipewire-server.log" "$log_dir/pipewire-pulse.log" \
     "$log_dir/wireplumber.log"; then

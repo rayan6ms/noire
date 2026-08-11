@@ -283,7 +283,9 @@ jobs:
             mkdir -p "$headless_source"
             git archive --format=tar HEAD -- \
               Cargo.toml Cargo.lock rust-toolchain.toml crates \
+              data \
               .github/scripts/run_pipewire_session.sh \
+              .github/scripts/run_phase6_session.sh \
               | tar -xf - -C "$headless_source"
             cd "$headless_source"
 
@@ -302,6 +304,7 @@ jobs:
             NOIRE_PIPEWIRE_LOG_DIR="$RUNNER_TEMP/noire-ci-logs" \
               NOIRE_PIPEWIRE_TEST_SECONDS=5 \
               dbus-run-session -- .github/scripts/run_pipewire_session.sh
+            dbus-run-session -- .github/scripts/run_phase6_session.sh
           } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-headless.log"
 
       - name: Upload failure evidence

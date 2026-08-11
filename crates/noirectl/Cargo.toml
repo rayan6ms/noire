@@ -8,9 +8,14 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 clap.workspace = true
 noire-core.workspace = true
-noire-ipc.workspace = true
+noire-ipc = { workspace = true, features = ["dbus"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+zbus.workspace = true
 
 [lints]
 workspace = true

@@ -1,10 +1,10 @@
 # Noire architecture
 
 This document describes the target 1.0 boundaries. The repository contains the
-platform-independent domain scaffold, foundational DSP/model pipeline, and the
-feature-gated native PipeWire capture, bounded bypass/live-model graphs, and
-virtual-source adapter. Daemon control-plane composition and later UI/package
-behavior are not yet implemented.
+platform-independent domain scaffold, foundational DSP/model pipeline, the
+feature-gated native PipeWire capture and live-model graph, and the daemon,
+configuration, session D-Bus, and CLI control plane. Later UI/package behavior
+is not yet implemented.
 
 ## System shape
 
@@ -193,11 +193,42 @@ it never replays a stale buffer. Recovery requires an explicit fresh-generation
 signal. Phase-2 tests set the transition click limit to 0.01 full scale above
 the source's own adjacent-sample step (approximately -40 dBFS).
 
-D-Bus, configuration, lifecycle, retries, and presentation of metrics snapshots
-will run in the non-real-time control plane. The live audio-side atomic scalar
-snapshot is implemented; Phase 6 owns compound command-queue and public API
-composition. Audio sends only atomic counters and bounded state back to control
-code.
+`noired` owns one authoritative state machine on a Tokio current-thread runtime.
+Every mutation carries an expected revision, validates a complete candidate,
+applies it through a fixed 16-entry daemon-to-audio queue, persists it, and only
+then advances the revision. Stale clients receive `Conflict`; failed persistence
+rolls the audio intent back. Strength, enable, and fail-mode mutations retain the
+live graph and use its Phase-5 atomics. Input and latency changes rebuild on the
+native owner thread. A failed rebuild attempts to restore the prior graph.
+
+Schema-v1 configuration lives at `$XDG_CONFIG_HOME/noire/config.toml` (or the
+standard home fallback). The daemon accepts a pure schema-v0 migration, rejects
+unknown fields and invalid full paths, writes mode-0600 same-directory temporary
+files, flushes and atomically renames them, synchronizes the directory, and
+retains one valid backup. A malformed primary is byte-preserved while a valid
+backup or safe defaults keep D-Bus usable. A newer schema is byte-preserved and
+read-only; even direct store saves refuse to downgrade it.
+
+The versioned `io.github.rayan6ms.Noire.Noire1` session service owns the path
+`/io/github/rayan6ms/Noire/Noire1`. Its committed introspection XML and shared
+Rust wire types cover complete snapshots, devices, lifecycle, settings, retry,
+launch-at-login, diagnostics, revision properties, and state/device/error
+signals. A second daemon requests the name without queueing or replacement and
+cannot touch audio state. `noirectl` is only a generated D-Bus proxy; omitted
+revisions are fetched immediately before mutation and explicit stale revisions
+remain observable to scripts through typed D-Bus errors and versioned JSON.
+
+Launch-at-login uses a fakeable asynchronous adapter for the per-user
+`org.freedesktop.systemd1.Manager`. It calls `EnableUnitFiles` or
+`DisableUnitFiles` plus `Reload`, never a subprocess. Configuration changes only
+after the manager succeeds; persistence failure triggers the inverse manager
+operation. Structured lifecycle logging is captured by journald under the user
+service. Repeated public errors are limited per stable event name. Diagnostics
+contain versions, stable IDs, state, error codes, and a journal command, but no
+audio, raw device-property dump, environment dump, network path, or upload.
+
+Audio sends only fixed atomics and bounded state back to control code. D-Bus,
+filesystem, logging, and systemd calls remain outside every process callback.
 
 ## Safety and failure policy
 
