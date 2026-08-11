@@ -2,9 +2,9 @@
 
 This document describes the target 1.0 boundaries. The repository contains the
 platform-independent domain scaffold, foundational DSP/model pipeline, and the
-feature-gated native PipeWire capture, bounded bypass graph, and virtual-source
-adapter. The live RNNoise composition and most daemon behavior are not yet
-implemented.
+feature-gated native PipeWire capture, bounded bypass/live-model graphs, and
+virtual-source adapter. Daemon control-plane composition and later UI/package
+behavior are not yet implemented.
 
 ## System shape
 
@@ -146,6 +146,31 @@ independent-stream scheduling jitter. Unexpected shortages
 advance generation and fade to silence without replaying stale samples. Queue,
 fault, boundary, and high-water counters are atomic snapshots outside callbacks.
 
+The Phase-5 live graph injects a preconstructed `Denoiser` trait object rather
+than importing the concrete RNNoise adapter into the PipeWire crate. Capture
+sanitizes and DC-blocks bounded chunks, assembles exact 480-sample frames, runs
+the model inline, aligns dry audio to the declared model delay, applies a
+minimum-20-ms equal-power strength ramp and transparent ceiling, meters output,
+and writes only complete processed frames to the same generation-tagged ring.
+Model creation, destruction, and reset remain deactivated control-plane work.
+
+Strength, enable, explicit fail mode, and diagnostic timing use a cache-line-
+aligned atomic epoch snapshot read only at frame boundaries. Default model
+failure is fail-closed: the producer stops, already-processed ring audio drains,
+and the source's bounded fault ramp reaches silence. Fail-open delayed dry audio
+requires an explicit control choice. Five sampled 0.75-ms model deadline misses
+inside ten seconds expose `DegradedPerformance`; suppression is never silently
+disabled. VAD, peak, RMS, model/callback timing histograms, deadline misses,
+hard-ceiling events, model errors/resets, and transport high water are fixed
+atomics read without locking the callback.
+
+Live startup does not advance the published timeline while the first processed
+frame is unavailable. Once ready, the source emits exactly one negotiated
+quantum of leading silence and begins draining. This retains RNNoise's complete
+frame reserve without adding another model frame. In the release native graph,
+100 correlation trials measured 608 samples (12.667 ms) p95 with zero transport
+faults. The Phase-4 raw-bypass startup policy remains unchanged.
+
 `VirtualSourceStream` publishes exactly one non-lingering `Audio/Source` named
 `io.github.rayan6ms.Noire.Microphone`, described as **Noire Microphone**, in
 native-endian mono `f32` at 48 kHz. The source stream's running state is the
@@ -168,11 +193,11 @@ it never replays a stale buffer. Recovery requires an explicit fresh-generation
 signal. Phase-2 tests set the transition click limit to 0.01 full scale above
 the source's own adjacent-sample step (approximately -40 dBFS).
 
-D-Bus, configuration, lifecycle, retries, and metrics snapshots run in the
-non-real-time control plane. Scalar changes cross into audio through atomic
-snapshots; compound changes use a fixed-capacity command queue with a fixed
-per-callback drain limit. Audio sends only atomic counters and bounded state
-back to control code.
+D-Bus, configuration, lifecycle, retries, and presentation of metrics snapshots
+will run in the non-real-time control plane. The live audio-side atomic scalar
+snapshot is implemented; Phase 6 owns compound command-queue and public API
+composition. Audio sends only atomic counters and bounded state back to control
+code.
 
 ## Safety and failure policy
 

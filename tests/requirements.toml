@@ -25,19 +25,19 @@ evidence = ["AT-PIPEWIRE-REGISTRY", "AT-CONFIG-MIGRATION"]
 id = "FR-004"
 summary = "Capture and process mono audio internally at 48 kHz"
 priority = "must"
-evidence = ["AT-PIPEWIRE-CAPTURE", "AT-PIPEWIRE-AUDIO-IO", "AT-DSP-PRIMITIVES", "AT-DSP-BYPASS"]
+evidence = ["AT-PIPEWIRE-CAPTURE", "AT-PIPEWIRE-AUDIO-IO", "AT-PIPEWIRE-LIVE-MODEL", "AT-DSP-PRIMITIVES", "AT-DSP-BYPASS"]
 
 [[requirement]]
 id = "FR-005"
 summary = "Publish one stable human-readable virtual audio source"
 priority = "must"
-evidence = ["AT-PIPEWIRE-AUDIO-IO"]
+evidence = ["AT-PIPEWIRE-AUDIO-IO", "AT-PIPEWIRE-LIVE-MODEL"]
 
 [[requirement]]
 id = "FR-006"
 summary = "Provide RNNoise suppression and latency-matched bypass"
 priority = "must"
-evidence = ["AT-DSP-PRIMITIVES", "AT-MODEL-CONTRACT", "AT-RNNOISE-ADAPTER", "AT-OFFLINE-WAV", "AT-RNNOISE-CHUNKING", "AT-MODEL-PERFORMANCE", "AT-DSP-BYPASS", "AT-SUPPRESSION-QUALITY", "MX-SPEECH-PRESERVATION"]
+evidence = ["AT-DSP-PRIMITIVES", "AT-MODEL-CONTRACT", "AT-RNNOISE-ADAPTER", "AT-OFFLINE-WAV", "AT-RNNOISE-CHUNKING", "AT-MODEL-PERFORMANCE", "AT-DSP-BYPASS", "AT-SUPPRESSION-QUALITY", "AT-LIVE-RNNOISE", "AT-PIPEWIRE-LIVE-MODEL", "MX-SPEECH-PRESERVATION"]
 
 [[requirement]]
 id = "FR-007"
@@ -103,13 +103,13 @@ evidence = ["ME-DEFERRED-SCOPE"]
 id = "NFR-001"
 summary = "Meet the software-latency thresholds"
 priority = "release"
-evidence = ["AT-REALTIME-PERFORMANCE"]
+evidence = ["AT-REALTIME-PERFORMANCE", "AT-PIPEWIRE-LIVE-MODEL"]
 
 [[requirement]]
 id = "NFR-002"
 summary = "Keep active RNNoise CPU below the release threshold"
 priority = "release"
-evidence = ["AT-REALTIME-PERFORMANCE"]
+evidence = ["AT-REALTIME-PERFORMANCE", "AT-PIPEWIRE-LIVE-MODEL"]
 
 [[requirement]]
 id = "NFR-003"
@@ -121,13 +121,13 @@ evidence = ["AT-IDLE-RESOURCE", "AT-RECOVERY-SOAK"]
 id = "NFR-004"
 summary = "Keep daemon and UI memory below release thresholds"
 priority = "release"
-evidence = ["AT-IDLE-RESOURCE", "AT-RECOVERY-SOAK"]
+evidence = ["AT-IDLE-RESOURCE", "AT-RECOVERY-SOAK", "AT-REALTIME-PERFORMANCE"]
 
 [[requirement]]
 id = "NFR-005"
 summary = "Keep audio callbacks allocation-free, nonblocking, and bounded"
 priority = "release"
-evidence = ["AT-PIPEWIRE-CAPTURE", "AT-MODEL-PERFORMANCE", "AT-FAULT-TRANSITIONS", "AT-REALTIME-PERFORMANCE"]
+evidence = ["AT-PIPEWIRE-CAPTURE", "AT-PIPEWIRE-LIVE-MODEL", "AT-MODEL-PERFORMANCE", "AT-FAULT-TRANSITIONS", "AT-REALTIME-PERFORMANCE"]
 
 [[requirement]]
 id = "NFR-006"
@@ -169,7 +169,7 @@ evidence = ["AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE"]
 id = "NFR-012"
 summary = "Provide no network, telemetry, audio persistence, or fail-open leak"
 priority = "release"
-evidence = ["AT-SAFE-FAILURE", "AT-PRIVACY-BOUNDARY"]
+evidence = ["AT-SAFE-FAILURE", "AT-LIVE-RNNOISE", "AT-PRIVACY-BOUNDARY"]
 
 [[requirement]]
 id = "QG-001"
@@ -187,19 +187,19 @@ evidence = ["AT-DSP-PRIMITIVES", "AT-DSP-BYPASS"]
 id = "QG-003"
 summary = "Meet frozen-corpus suppression quality thresholds"
 priority = "release"
-evidence = ["AT-SUPPRESSION-QUALITY"]
+evidence = ["AT-SUPPRESSION-QUALITY", "AT-LIVE-RNNOISE"]
 
 [[requirement]]
 id = "QG-004"
 summary = "Meet objective and listening-panel speech-preservation thresholds"
 priority = "release"
-evidence = ["MX-SPEECH-PRESERVATION"]
+evidence = ["AT-LIVE-RNNOISE", "MX-SPEECH-PRESERVATION"]
 
 [[requirement]]
 id = "QG-005"
 summary = "Emit processed audio then silence for injected unsafe failures"
 priority = "release"
-evidence = ["AT-SAFE-FAILURE"]
+evidence = ["AT-SAFE-FAILURE", "AT-LIVE-RNNOISE", "AT-PIPEWIRE-LIVE-MODEL"]
 
 [[requirement]]
 id = "QG-006"

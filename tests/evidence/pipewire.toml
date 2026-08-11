@@ -46,6 +46,21 @@ result_artifacts = ["NOIRE_PHASE4_RESULT, NOIRE_PHASE4_COMPAT_RESULT, NOIRE_PHAS
 sources = ["crates/noire-pipewire/tests/phase4_session.rs::fn virtual_source_bypass_meets_phase4_acceptance", "crates/noire-pipewire/tests/phase4_session.rs::fn native_and_pulse_recorders_select_virtual_source", "crates/noire-pipewire/tests/phase4_session.rs::fn zz_application_clients_select_and_record_virtual_source", "crates/noire-pipewire/src/source.rs::pub struct VirtualSourceStream", "crates/noire-pipewire/src/graph.rs::pub struct BypassGraph"]
 
 [[template]]
+id = "AT-PIPEWIRE-LIVE-MODEL"
+kind = "automated"
+status = "active"
+phase = 5
+owner = "rayan6ms"
+requirements = ["FR-004", "FR-005", "FR-006", "NFR-001", "NFR-002", "NFR-005", "QG-005"]
+observable = "A demand-driven release PipeWire graph runs the injected RNNoise contract inline at exact 480-sample boundaries, publishes one leading quantum only after processed startup is ready, and meets latency/timing gates with no underflow, overflow, model error, or stale/raw failure output."
+test_ids = ["T-PW-LIVE-RNNOISE-GRAPH"]
+commands = [".github/scripts/run_pipewire_session.sh"]
+fixtures = ["Selected deterministic tone/sequence/impulse source, latency-matched dry sweep, fully processed sweep, and recording consumer"]
+environments = ["Disposable Ubuntu 24.04 PipeWire 1.0.5 release session"]
+result_artifacts = ["NOIRE_PHASE5_NATIVE and tests/performance/phase5-live.toml"]
+sources = ["crates/noire-pipewire/tests/phase5_session.rs::fn live_rnnoise_graph_meets_latency_demand_and_transport_gates", "crates/noire-pipewire/src/graph.rs::pub struct LiveGraph", "crates/noire-pipewire/src/live.rs::pub struct LiveCaptureSink"]
+
+[[template]]
 id = "AT-PIPEWIRE-RECOVERY"
 kind = "automated"
 status = "planned"

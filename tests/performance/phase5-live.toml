@@ -1,0 +1,136 @@
+schema_version = 1
+tasks = ["P5-01", "P5-02", "P5-03", "P5-04", "P5-05", "P5-06", "P5-07"]
+run_date = "2026-08-11"
+implementation_commit = "d367ca16d05d8066c67a0ecc68715bc23607bd33"
+acceptance_commit = "e8381e9b56224b381b1f637ecbf5f98f1717d580"
+pass = true
+
+[reference_environment]
+identifier = "noire-reference-x86_64-2026-08-11"
+os = "Fedora Linux 44"
+architecture = "x86_64"
+cpu = "Intel Xeon E5-2697 v3"
+rust = "1.97.0"
+profile = "release"
+
+[native_environment]
+identifier = "noire-phase5-ubuntu-24.04-pipewire-1.0.5"
+container_image = "docker.io/library/ubuntu:24.04"
+container_image_id = "045183670ef29ce21bc22a8d4f62511ce472679ca8fc9774f04181f7f383ca62"
+pipewire = "1.0.5"
+wireplumber = "0.4.17"
+session_bus = "isolated dbus-run-session"
+realtime_scheduling = false
+
+[latency]
+quantum_frames = 128
+correlation_trials = 100
+p95_samples = 608
+p95_milliseconds = 12.667
+limit_milliseconds = 20.0
+underflows = 0
+overflows = 0
+dropped_frames = 0
+pass = true
+
+[performance]
+model_frames = 60000
+equivalent_audio_seconds = 600
+wall_milliseconds = 9426
+active_cpu_percent = 1.539
+active_cpu_limit_percent = 5.0
+model_p99_nanoseconds = 200000
+model_p99_limit_nanoseconds = 750000
+model_max_nanoseconds = 636196
+callback_p99_nanoseconds = 250000
+callback_max_nanoseconds = 649204
+deadline_misses = 0
+pass = true
+
+[memory]
+rss_before_kib = 3516
+rss_after_kib = 4660
+rss_growth_kib = 1144
+rss_limit_kib = 51200
+rss_growth_limit_kib = 5120
+pass = true
+
+[allocation]
+synthetic_callback_invocations = 10000000
+model_frames = 20834
+allocations = 0
+reallocations = 0
+deallocations = 0
+pass = true
+
+[controls_and_faults]
+atomic_epoch_snapshot = true
+minimum_wet_dry_ramp_milliseconds = 20
+strength_sweep_click_bounded = true
+enable_sweep_click_bounded = true
+model_reset_outside_callback = true
+default_fail_mode = "closed"
+explicit_fail_open_tested = true
+model_error_raw_correlation_matches = 0
+deadline_degradation_misses = 5
+deadline_degradation_window_seconds = 10
+overflow_underflow_latency_bounded = true
+pass = true
+
+[telemetry]
+vad_rate_limited_hz = 10
+peak_rate_limited_hz = 10
+rms_rate_limited_hz = 10
+model_timing_sample_interval_frames = 100
+native_model_frames = 833
+native_model_p99_nanoseconds = 300000
+native_model_max_nanoseconds = 308574
+native_callback_p99_nanoseconds = 300000
+native_callback_max_nanoseconds = 329613
+native_peak = 0.187620
+native_rms = 0.127514
+native_vad = 0.999516
+pass = true
+
+[fixture_matrix]
+fixtures = ["silence", "synthetic speech", "music", "keyboard impulses", "fan plus hum", "clipping", "NaN/Inf", "stereo interface downmix"]
+all_output_finite = true
+all_output_bounded = true
+model_errors = 0
+pass = true
+
+[quality]
+corpus_id = "noire-phase0-multilingual-v1"
+case_count = 240
+speaker_count = 20
+languages = ["en", "pt-BR", "cmn-Hans-CN"]
+noise_families = ["fan", "hvac", "hum", "DEMAND washing", "DEMAND office", "DEMAND car"]
+live_preprocessing = "production 20 Hz DC blocker plus exact nnnoiseless adapter at strength 1.0"
+report_sha256 = "6b70d32be91e48d204b15068c0fb67cee24237e08b281e43f8ef007b87bdc191"
+median_segmental_snr_improvement_db = 6.927388769843088
+median_segmental_snr_threshold_db = 6.0
+p25_segmental_snr_improvement_db = 5.513866678851106
+p25_segmental_snr_threshold_db = 3.0
+median_clean_stoi_decrease = 0.005063079577682317
+median_clean_stoi_decrease_threshold = 0.02
+p95_clean_stoi_decrease = 0.047334192847834994
+p95_clean_stoi_decrease_threshold = 0.05
+newly_clipped_samples = 0
+qg003_pass = true
+qg004_objective_metrics_pass = true
+qg004_listening_pass = false
+pass = true
+
+[release_policy]
+panic_strategy = "abort"
+unsafe_blocks_in_noire_callbacks = 0
+unwind_adapters_in_callback_sources = 0
+forbidden_lock_io_log_tokens_in_callback_sources = 0
+pass = true
+
+[commands]
+allocation = "cargo test --release -p noire-pipewire --test capture_allocation ten_million_live_callback_invocations_have_zero_allocator_calls --locked -- --ignored --nocapture"
+performance = "cargo test --release -p noire-pipewire --test phase5_pipeline live_rnnoise_meets_cpu_deadline_callback_and_rss_gates --locked -- --ignored --nocapture"
+native = "NOIRE_PHASE3_SOAK_SECONDS=5 NOIRE_PHASE4_SOAK_SECONDS=5 .github/scripts/run_pipewire_session.sh"
+quality = "Build noire-denoise-wav --release --features offline-wav; process every frozen clean/noisy item with --live; run docs/experiments/quality.py evaluate"
+release_boundary = "cargo test -p noire-pipewire --test release_policy --locked"

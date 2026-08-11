@@ -37,6 +37,14 @@ cargo run -p noire-model-rnnoise --features offline-wav \
   --bin noire-denoise-wav -- input.wav output.wav
 ```
 
+Pass `--live` before the input path to include the production live path's DC
+blocker. This is the runner used for Phase-5 frozen-corpus evidence:
+
+```bash
+cargo run --release -p noire-model-rnnoise --features offline-wav \
+  --bin noire-denoise-wav -- --live input.wav output.wav
+```
+
 This feature is for deterministic offline testing only. WAV I/O is not linked
 into the daemon or exposed through the runtime model contract.
 
@@ -126,7 +134,7 @@ When native packages are available, repeat check, Clippy, and test with
 `--all-features`. Feature-specific integration, latency, quality, and soak tests
 are additional evidence; they are not replaced by the standard sequence.
 
-The disposable Phase-4 integration session additionally requires
+The disposable Phase-4/5 integration session additionally requires
 `pipewire-pulse` and `pulseaudio-utils` (`pactl`/`parec`). It runs every ignored
 native test serially and rejects PipeWire, WirePlumber, or compatibility-server
 xrun diagnostics:
@@ -139,6 +147,22 @@ NOIRE_PHASE4_SOAK_SECONDS=1800 \
 Real Chrome, Electron, and OBS fixtures are an explicit local application smoke
 matrix, not a CI dependency; enable them only in the prepared disposable image
 with `NOIRE_PHASE4_APP_SMOKE=1`.
+
+Phase-5 release allocation and reference-host performance gates are explicit
+ignored tests because debug inference timing is not a release metric:
+
+```bash
+cargo test --release -p noire-pipewire --test capture_allocation \
+  ten_million_live_callback_invocations_have_zero_allocator_calls \
+  --locked -- --ignored --nocapture
+cargo test --release -p noire-pipewire --test phase5_pipeline \
+  live_rnnoise_meets_cpu_deadline_callback_and_rss_gates \
+  --locked -- --ignored --nocapture
+```
+
+The native session itself also runs in release mode, starts an isolated session
+bus automatically when needed, and covers the live graph alongside retained
+Phase-3/4 acceptance tests.
 
 Phase-2 offline allocation and timing checks use the release profile:
 

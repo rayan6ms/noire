@@ -139,13 +139,29 @@ manual_fields = ["reviewer identifier", "review date", "randomized answers", "mi
 [[template]]
 id = "AT-SAFE-FAILURE"
 kind = "automated"
-status = "planned"
-phase = 7
+status = "active"
+phase = 5
 owner = "rayan6ms"
 requirements = ["FR-008", "NFR-012", "QG-005"]
 observable = "Injected model, buffer, queue, and deadline failures emit only already-processed queued samples followed by ramped silence, never new raw capture."
 test_ids = ["T-DSP-FAIL-CLOSED-CORRELATION"]
-commands = ["Run deterministic fault-injection correlation tests"]
+commands = ["cargo test -p noire-pipewire --locked", "cargo test --release -p noire-pipewire --test capture_allocation ten_million_live_callback_invocations_have_zero_allocator_calls --locked -- --ignored"]
 fixtures = ["Tagged capture samples and every mandatory model/buffer/queue fault"]
 environments = ["Pinned Rust test environment and PipeWire integration runner"]
-result_artifacts = ["Input/output correlation, ramp, error-code, and counter assertions"]
+result_artifacts = ["Input/output correlation, ramp, error-code, counter assertions, and tests/performance/phase5-live.toml"]
+sources = ["crates/noire-pipewire/src/live.rs::fn model_failure_is_closed_by_default_and_explicitly_openable", "crates/noire-pipewire/src/live.rs::fn repeated_sampled_deadline_misses_enter_degraded_performance", "crates/noire-pipewire/src/bypass.rs::fn overflow_drops_new_audio_and_requests_bounded_resync", "crates/noire-pipewire/src/bypass.rs::fn steady_underflow_never_replays_stale_audio"]
+
+[[template]]
+id = "AT-LIVE-RNNOISE"
+kind = "automated"
+status = "active"
+phase = 5
+owner = "rayan6ms"
+requirements = ["FR-006", "NFR-012", "QG-003", "QG-004", "QG-005"]
+observable = "The exact live preprocessing/model/mix path processes every frozen corpus case and mandatory interface fixture, preserves objective speech thresholds, exposes bounded VAD/RMS/peak telemetry and atomic click-safe controls, and fails closed without raw correlation."
+test_ids = ["T-LIVE-RNNOISE-QUALITY-FAULTS"]
+commands = ["cargo test -p noire-pipewire --locked", "Build noire-denoise-wav with offline-wav and process the frozen corpus using --live", "docs/.venv-quality/bin/python docs/experiments/quality.py evaluate"]
+fixtures = ["240 frozen multilingual stationary/recorded-noise cases", "silence, speech, music, keyboard, fan, clipping, NaN/Inf, and stereo downmix"]
+environments = ["Pinned offline metric environment", "Rust portable live-path tests"]
+result_artifacts = ["tests/performance/phase5-live.toml and digest-pinned ignored full per-case JSON report"]
+sources = ["crates/noire-pipewire/tests/phase5_pipeline.rs::fn real_model_fixture_matrix_is_finite_bounded_and_metered", "crates/noire-model-rnnoise/src/bin/noire-denoise-wav.rs::fn live_flag_is_explicit_and_applies_finite_dc_blocking", "tests/performance/phase5-live.toml::qg003_pass = true", "tests/performance/phase5-live.toml::qg004_listening_pass = false"]
