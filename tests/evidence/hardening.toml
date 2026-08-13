@@ -1,0 +1,46 @@
+schema_version = 1
+
+[[template]]
+id = "AT-FUZZ-HARDENING"
+kind = "automated"
+status = "active"
+phase = 7
+owner = "rayan6ms"
+requirements = ["FR-006", "FR-008", "FR-010"]
+observable = "Generated arbitrary config/migration documents, model-manifest arithmetic, bounded audio chunks, and recovery event/clock sequences never panic, escape validation, lose samples, or violate capped scheduling invariants."
+test_ids = ["T-FUZZ-STATE-INPUTS"]
+commands = ["cargo test --release -p noire-config -p noire-model -p noire-dsp -p noired --lib --locked"]
+fixtures = ["4,096 cases each for arbitrary config strings/migrations, model descriptor tuples, audio chunks, and recovery event sequences containing up to 4,096 events"]
+environments = ["Pinned Rust release tests with deterministic proptest regression persistence"]
+result_artifacts = ["Generated case counts, minimized failures if any, and tests/performance/phase7-hardening.toml"]
+sources = ["crates/noire-config/src/lib.rs::fn arbitrary_config_documents_never_panic_or_escape_validation", "crates/noire-model/src/descriptor.rs::fn arbitrary_manifest_numbers_are_rejected_or_bounded", "crates/noire-dsp/src/frame.rs::fn randomized_chunks_conserve_every_sample", "crates/noired/src/recovery.rs::fn arbitrary_fault_and_clock_sequences_remain_bounded"]
+
+[[template]]
+id = "AT-MEMORY-SAFETY"
+kind = "automated"
+status = "active"
+phase = 7
+owner = "rayan6ms"
+requirements = ["NFR-005", "NFR-012"]
+observable = "Miri interprets the pure core/DSP/model crates, AddressSanitizer runs supported non-FFI config/control/audio tests, and the repository-wide unsafe audit remains empty."
+test_ids = ["T-MIRI-ASAN-UNSAFE"]
+commands = [".github/scripts/run_phase7_hardening.sh"]
+fixtures = ["Pure config, DSP, model, control, and recovery unit tests"]
+environments = ["Pinned nightly-2026-08-10 Miri and x86_64 AddressSanitizer on Ubuntu 24.04"]
+result_artifacts = ["NOIRE_PHASE7_HARDENING and hosted hardening job log"]
+sources = [".github/scripts/run_phase7_hardening.sh::nightly=", ".github/workflows/ci.yml::hardening:"]
+
+[[template]]
+id = "AT-X86-VENDOR-MATRIX"
+kind = "automated"
+status = "active"
+phase = 7
+owner = "rayan6ms"
+requirements = ["NFR-009"]
+observable = "The locked native recovery and retained audio matrix passes on each available x86_64 CPU vendor; unavailable vendors are explicitly recorded rather than inferred."
+test_ids = ["T-X86-VENDOR-MATRIX"]
+commands = ["Run the native-headless CI job and the disposable reference-host recovery matrix; record lscpu vendor/model"]
+fixtures = ["Locked source, native PipeWire recovery cycles, and retained release tests"]
+environments = ["Intel reference host", "GitHub-hosted x86_64 runner; AMD only when assigned and observed"]
+result_artifacts = ["NOIRE_PHASE7_PLATFORM lines and tests/performance/phase7-hardening.toml vendor table"]
+sources = [".github/workflows/ci.yml::Record native CPU environment", "crates/noired/tests/phase7_recovery.rs::NOIRE_PHASE7_RECOVERY"]

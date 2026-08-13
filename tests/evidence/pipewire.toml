@@ -63,13 +63,14 @@ sources = ["crates/noire-pipewire/tests/phase5_session.rs::fn live_rnnoise_graph
 [[template]]
 id = "AT-PIPEWIRE-RECOVERY"
 kind = "automated"
-status = "planned"
+status = "active"
 phase = 7
 owner = "rayan6ms"
 requirements = ["FR-008", "FR-009", "NFR-006", "NFR-007"]
 observable = "The daemon reports typed state and counters while recovering within thresholds from unplug, restart, stream error, and renegotiation."
 test_ids = ["T-PW-RECOVERY-CYCLES"]
-commands = ["Run 100 input hotplug cycles and 20 PipeWire restart cycles with deadline assertions"]
+commands = [".github/scripts/run_pipewire_session.sh"]
 fixtures = ["Scripted unplug, restart, stream-error, and format-change scenarios"]
 environments = ["Approved disposable PipeWire VM or purpose-built runner"]
-result_artifacts = ["Cycle-by-cycle state, counter, crash, and recovery-time results"]
+result_artifacts = ["NOIRE_PHASE7_RECOVERY and tests/performance/phase7-hardening.toml"]
+sources = ["crates/noired/src/recovery.rs::pub struct RecoveryController", "crates/noired/src/native.rs::fn service_native", "crates/noired/tests/phase7_recovery.rs::fn native_recovery_survives_hotplug_restarts_and_command_storms"]

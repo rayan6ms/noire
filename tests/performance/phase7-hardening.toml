@@ -1,0 +1,168 @@
+schema_version = 1
+tasks = ["P7-01", "P7-02", "P7-03", "P7-04", "P7-05", "P7-06", "P7-08"]
+run_date = "2026-08-12"
+implementation_commit = "98a2a604278223635b875a9956e320803b6ef56b"
+acceptance_commit = "46a1218a11a37a156180e21ba7d7978a3479dd89"
+pass = false
+pending = ["hosted CI", "independent real-time 8-hour pre-soak", "independent real-time 24-hour release soak"]
+
+[reference_environment]
+identifier = "noire-reference-x86_64-2026-08-12"
+os = "Fedora Linux 44"
+kernel = "7.1.8-200.fc44.x86_64"
+architecture = "x86_64"
+cpu_vendor = "GenuineIntel"
+cpu = "Intel Xeon E5-2697 v3"
+memory_gib = 15
+cpu_governor = "performance"
+rust = "1.97.0"
+profile = "release"
+
+[native_environment]
+identifier = "noire-phase7-ubuntu-24.04-pipewire-1.0.5"
+container_runtime = "rootless Podman"
+container_image = "docker.io/library/ubuntu:24.04"
+container_image_id = "045183670ef29ce21bc22a8d4f62511ce472679ca8fc9774f04181f7f383ca62"
+pipewire = "1.0.5"
+wireplumber = "0.4.17"
+session_bus = "isolated dbus-run-session"
+runtime_directory = "isolated disposable tmp directory"
+
+[native_recovery]
+hotplug_cycles = 100
+pipewire_restarts = 20
+default_changes = 2
+format_changes = 100
+command_mutations = 1000
+input_recovery_p95_microseconds = 39656
+input_recovery_limit_microseconds = 2000000
+core_recovery_p95_microseconds = 57843
+core_recovery_limit_microseconds = 3000000
+duplicate_virtual_sources = 0
+rss_growth_kib = 0
+rss_growth_limit_kib = 5120
+pass = true
+
+[release_performance]
+model_frames = 60000
+equivalent_audio_seconds = 600
+wall_milliseconds = 10681
+active_cpu_percent = 1.744
+active_cpu_limit_percent = 5.0
+model_p99_nanoseconds = 250000
+model_p99_limit_nanoseconds = 750000
+model_max_nanoseconds = 434715
+callback_p99_nanoseconds = 300000
+callback_max_nanoseconds = 448975
+rss_before_kib = 3688
+rss_after_kib = 4544
+rss_growth_kib = 856
+pass = true
+
+[accelerated_eight_hour_workload]
+pacing = "accelerated"
+equivalent_audio_hours = 8
+model_frames = 2880000
+wall_milliseconds = 502916
+generations = 8
+resets = 7
+discarded_frames = 3360
+startup_frames = 3840
+queue_high_water_frames = 960
+queue_capacity_frames = 9152
+model_errors = 0
+deadline_misses = 0
+transport_errors = 0
+sample_safety_errors = 0
+rss_before_kib = 3344
+peak_rss_kib = 4456
+rss_growth_kib = 1112
+workload_pass = true
+wall_clock_acceptance = false
+
+[accelerated_twenty_four_hour_workload]
+pacing = "accelerated"
+equivalent_audio_hours = 24
+model_frames = 8640000
+wall_milliseconds = 1521697
+generations = 24
+resets = 23
+discarded_frames = 11040
+startup_frames = 11520
+queue_high_water_frames = 960
+queue_capacity_frames = 9152
+model_errors = 0
+deadline_misses = 0
+transport_errors = 0
+sample_safety_errors = 0
+rss_before_kib = 3596
+peak_rss_kib = 4716
+rss_growth_kib = 1120
+workload_pass = true
+wall_clock_acceptance = false
+
+[realtime_mode_validation]
+pacing = "realtime"
+model_frames = 100
+expected_wall_milliseconds = 1000
+observed_wall_milliseconds = 1000
+model_errors = 0
+deadline_misses = 0
+transport_errors = 0
+sample_safety_errors = 0
+rss_growth_kib = 1112
+mode_pass = true
+
+[wall_clock_soak]
+pre_soak_hours = 8
+pre_soak_complete = false
+release_soak_hours = 24
+release_soak_complete = false
+nfr_008_pass = false
+
+[hardening]
+proptest_cases_per_property = 4096
+fuzz_regressions = "pass"
+miri = "pass"
+address_sanitizer = "pass"
+unsafe_findings = 0
+pass = true
+
+[privacy]
+network_sockets = 0
+audio_files = 0
+diagnostics_privacy = "pass"
+session_logout = "clean"
+pass = true
+
+[supply_chain]
+cargo_deny_advisories = "pass"
+cargo_deny_bans = "pass"
+cargo_deny_licenses = "pass"
+cargo_deny_sources = "pass"
+cargo_audit_advisories = 1216
+cargo_audit_dependencies = 243
+pass = true
+
+[cpu_vendor_matrix.intel]
+available = true
+observed = true
+pass = true
+
+[cpu_vendor_matrix.amd]
+available = false
+observed = false
+pass_inferred = false
+exception = "No AMD x86_64 execution host was available during this acceptance run."
+
+[hosted_ci]
+complete = false
+pass = false
+
+[commands]
+native_recovery = "dbus-run-session -- cargo test --release --package noired --features native-test --test phase7_recovery --locked -- --ignored --nocapture --test-threads=1"
+release_performance = "cargo test --release -p noire-pipewire --test phase5_pipeline live_rnnoise_meets_cpu_deadline_callback_and_rss_gates --locked -- --ignored --nocapture"
+accelerated_soak = "NOIRE_PHASE7_SOAK_HOURS=<8|24> cargo test --release -p noire-pipewire --test phase5_pipeline release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded --locked -- --ignored --nocapture"
+realtime_soak = "NOIRE_PHASE7_SOAK_REALTIME=1 NOIRE_PHASE7_SOAK_HOURS=<8|24> cargo test --release -p noire-pipewire --test phase5_pipeline release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded --locked -- --ignored --nocapture"
+hardening = ".github/scripts/run_phase7_hardening.sh"
+privacy = ".github/scripts/run_phase7_session.sh"

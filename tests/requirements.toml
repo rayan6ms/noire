@@ -37,7 +37,7 @@ evidence = ["AT-PIPEWIRE-AUDIO-IO", "AT-PIPEWIRE-LIVE-MODEL"]
 id = "FR-006"
 summary = "Provide RNNoise suppression and latency-matched bypass"
 priority = "must"
-evidence = ["AT-DSP-PRIMITIVES", "AT-MODEL-CONTRACT", "AT-RNNOISE-ADAPTER", "AT-OFFLINE-WAV", "AT-RNNOISE-CHUNKING", "AT-MODEL-PERFORMANCE", "AT-DSP-BYPASS", "AT-SUPPRESSION-QUALITY", "AT-LIVE-RNNOISE", "AT-PIPEWIRE-LIVE-MODEL", "MX-SPEECH-PRESERVATION"]
+evidence = ["AT-DSP-PRIMITIVES", "AT-MODEL-CONTRACT", "AT-RNNOISE-ADAPTER", "AT-OFFLINE-WAV", "AT-RNNOISE-CHUNKING", "AT-MODEL-PERFORMANCE", "AT-DSP-BYPASS", "AT-SUPPRESSION-QUALITY", "AT-LIVE-RNNOISE", "AT-PIPEWIRE-LIVE-MODEL", "AT-FUZZ-HARDENING", "MX-SPEECH-PRESERVATION"]
 
 [[requirement]]
 id = "FR-007"
@@ -49,7 +49,7 @@ evidence = ["AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE"]
 id = "FR-008"
 summary = "Recover from input, PipeWire, stream, and format failures"
 priority = "must"
-evidence = ["AT-FAULT-TRANSITIONS", "AT-PIPEWIRE-RECOVERY", "AT-SAFE-FAILURE"]
+evidence = ["AT-FAULT-TRANSITIONS", "AT-PIPEWIRE-RECOVERY", "AT-SAFE-FAILURE", "AT-FUZZ-HARDENING"]
 
 [[requirement]]
 id = "FR-009"
@@ -61,7 +61,7 @@ evidence = ["AT-PIPEWIRE-RECOVERY", "AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE", "
 id = "FR-010"
 summary = "Save configuration atomically and migrate supported schemas"
 priority = "must"
-evidence = ["AT-CONFIG-MIGRATION"]
+evidence = ["AT-CONFIG-MIGRATION", "AT-FUZZ-HARDENING"]
 
 [[requirement]]
 id = "FR-011"
@@ -127,7 +127,7 @@ evidence = ["AT-IDLE-RESOURCE", "AT-RECOVERY-SOAK", "AT-REALTIME-PERFORMANCE"]
 id = "NFR-005"
 summary = "Keep audio callbacks allocation-free, nonblocking, and bounded"
 priority = "release"
-evidence = ["AT-PIPEWIRE-CAPTURE", "AT-PIPEWIRE-LIVE-MODEL", "AT-MODEL-PERFORMANCE", "AT-FAULT-TRANSITIONS", "AT-REALTIME-PERFORMANCE"]
+evidence = ["AT-PIPEWIRE-CAPTURE", "AT-PIPEWIRE-LIVE-MODEL", "AT-MODEL-PERFORMANCE", "AT-FAULT-TRANSITIONS", "AT-REALTIME-PERFORMANCE", "AT-MEMORY-SAFETY"]
 
 [[requirement]]
 id = "NFR-006"
@@ -151,7 +151,7 @@ evidence = ["AT-RECOVERY-SOAK"]
 id = "NFR-009"
 summary = "Support the x86_64 distribution baseline"
 priority = "release"
-evidence = ["AT-NATIVE-DISTRO-BUILD", "MX-APPLICATION-COMPAT"]
+evidence = ["AT-NATIVE-DISTRO-BUILD", "AT-X86-VENDOR-MATRIX", "MX-APPLICATION-COMPAT"]
 
 [[requirement]]
 id = "NFR-010"
@@ -169,7 +169,7 @@ evidence = ["AT-IPC-CONTRACT", "AT-STATE-CONVERGENCE"]
 id = "NFR-012"
 summary = "Provide no network, telemetry, audio persistence, or fail-open leak"
 priority = "release"
-evidence = ["AT-SAFE-FAILURE", "AT-LIVE-RNNOISE", "AT-PRIVACY-BOUNDARY"]
+evidence = ["AT-SAFE-FAILURE", "AT-LIVE-RNNOISE", "AT-PRIVACY-BOUNDARY", "AT-MEMORY-SAFETY"]
 
 [[requirement]]
 id = "QG-001"
