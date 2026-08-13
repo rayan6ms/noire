@@ -4,7 +4,7 @@ run_date = "2026-08-12"
 implementation_commit = "98a2a604278223635b875a9956e320803b6ef56b"
 acceptance_commit = "46a1218a11a37a156180e21ba7d7978a3479dd89"
 pass = false
-pending = ["hosted CI", "independent real-time 8-hour pre-soak", "independent real-time 24-hour release soak"]
+pending = ["independent real-time 8-hour pre-soak", "independent real-time 24-hour release soak"]
 
 [reference_environment]
 identifier = "noire-reference-x86_64-2026-08-12"
@@ -150,14 +150,24 @@ observed = true
 pass = true
 
 [cpu_vendor_matrix.amd]
-available = false
-observed = false
-pass_inferred = false
-exception = "No AMD x86_64 execution host was available during this acceptance run."
+available = true
+observed = true
+cpu = "AMD EPYC 7763 64-Core Processor"
+hotplug_cycles = 100
+pipewire_restarts = 20
+input_recovery_p95_microseconds = 40377
+core_recovery_p95_microseconds = 59969
+rss_growth_kib = 0
+duplicate_virtual_sources = 0
+pass = true
 
 [hosted_ci]
-complete = false
-pass = false
+run_id = 31700006128
+commit = "dab61c237a242ee6d9780d1e86a412e9c5996106"
+jobs = 7
+success_artifacts_uploaded = 0
+complete = true
+pass = true
 
 [commands]
 native_recovery = "dbus-run-session -- cargo test --release --package noired --features native-test --test phase7_recovery --locked -- --ignored --nocapture --test-threads=1"
