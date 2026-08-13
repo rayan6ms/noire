@@ -18,7 +18,7 @@ fn main() {
 #[cfg(feature = "runtime")]
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
-    use std::{future, sync::Arc};
+    use std::sync::Arc;
 
     use noire_config::ConfigStore;
     use noired::{
@@ -40,6 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let launch_manager = Arc::new(SystemdUserManager::new(connection.clone()));
     register_service(&connection, NoireService::new(daemon, launch_manager)).await?;
     tracing::info!(event = "daemon.ready", bus_name = noire_ipc::BUS_NAME);
-    future::pending::<()>().await;
+    connection.closed().await;
+    tracing::info!(event = "daemon.session-closed");
     Ok(())
 }

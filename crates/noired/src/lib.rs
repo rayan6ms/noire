@@ -6,6 +6,7 @@ mod control;
 mod diagnostics;
 #[cfg(all(feature = "runtime", feature = "pipewire-backend"))]
 mod native;
+mod recovery;
 #[cfg(feature = "runtime")]
 mod service;
 #[cfg(feature = "runtime")]
@@ -18,6 +19,10 @@ pub use control::{
 pub use diagnostics::EventRateLimiter;
 #[cfg(all(feature = "runtime", feature = "pipewire-backend"))]
 pub use native::NativeAudioEngine;
+pub use recovery::{
+    INITIAL_BACKOFF_MS, MAX_BACKOFF_MS, RecoveryAttempt, RecoveryController, RecoveryFault,
+    RecoveryPhase, RecoveryStats,
+};
 #[cfg(feature = "runtime")]
 pub use service::{NoireService, claim_name, register_service};
 #[cfg(feature = "runtime")]

@@ -62,6 +62,7 @@ enum Setting {
     /// Enable or bypass suppression with a smooth transition.
     Enabled {
         /// True enables processed output; false selects delayed dry output.
+        #[arg(action = clap::ArgAction::Set)]
         enabled: bool,
     },
     /// Set wet strength from 0.0 through 1.0.
@@ -82,8 +83,37 @@ enum Setting {
     /// Enable or disable the user unit at login through systemd D-Bus.
     LaunchAtLogin {
         /// Desired enablement.
+        #[arg(action = clap::ArgAction::Set)]
         enabled: bool,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::{Arguments, Command, Setting};
+
+    #[test]
+    fn explicit_false_boolean_settings_are_parseable() -> Result<(), clap::Error> {
+        let enabled = Arguments::try_parse_from(["noirectl", "set", "enabled", "false"])?;
+        assert!(matches!(
+            enabled.command,
+            Command::Set {
+                setting: Setting::Enabled { enabled: false },
+                ..
+            }
+        ));
+        let login = Arguments::try_parse_from(["noirectl", "set", "launch-at-login", "false"])?;
+        assert!(matches!(
+            login.command,
+            Command::Set {
+                setting: Setting::LaunchAtLogin { enabled: false },
+                ..
+            }
+        ));
+        Ok(())
+    }
 }
 
 #[derive(Serialize)]

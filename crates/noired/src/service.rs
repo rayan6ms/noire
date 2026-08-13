@@ -70,8 +70,15 @@ impl NoireService {
 
 #[zbus::interface(name = "io.github.rayan6ms.Noire.Noire1")]
 impl NoireService {
-    async fn get_snapshot(&self) -> Snapshot {
-        self.daemon.lock().await.snapshot()
+    async fn get_snapshot(&self, #[zbus(signal_emitter)] emitter: SignalEmitter<'_>) -> Snapshot {
+        let mut daemon = self.daemon.lock().await;
+        let changed = daemon.refresh_observation();
+        let snapshot = daemon.snapshot();
+        drop(daemon);
+        if changed {
+            let _ = Self::state_changed(&emitter, snapshot.revision).await;
+        }
+        snapshot
     }
 
     async fn list_inputs(
@@ -221,7 +228,9 @@ impl NoireService {
     }
 
     async fn diagnostics(&self) -> DiagnosticReport {
-        self.daemon.lock().await.diagnostics()
+        let mut daemon = self.daemon.lock().await;
+        let _ = daemon.refresh_observation();
+        daemon.diagnostics()
     }
 
     #[zbus(property)]

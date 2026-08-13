@@ -657,7 +657,8 @@ impl LiveCaptureSink {
 }
 
 impl CaptureSink for LiveCaptureSink {
-    fn reset(&mut self, _generation: InputGeneration) {
+    fn reset(&mut self, generation: InputGeneration) {
+        self.transport.reset(generation);
         self.reset_deactivated();
     }
 

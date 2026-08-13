@@ -47,6 +47,8 @@ pub struct EngineObservation {
     pub pipewire_version: String,
     /// Current metrics snapshot.
     pub metrics: Metrics,
+    /// Current classified runtime fault, absent while healthy or intentionally stopped.
+    pub fault: Option<EngineError>,
 }
 
 impl Default for EngineObservation {
@@ -56,6 +58,7 @@ impl Default for EngineObservation {
             input_display_name: String::new(),
             pipewire_version: String::new(),
             metrics: Metrics::default(),
+            fault: None,
         }
     }
 }
@@ -89,6 +92,14 @@ pub trait AudioEngine: Send {
     /// Returns a classified backend failure when recovery cannot converge.
     fn retry(&mut self, config: &Config) -> Result<EngineObservation, EngineError> {
         self.apply(config)
+    }
+    /// Returns current realized state without changing processing intent.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified backend failure when current state cannot be observed.
+    fn observe(&mut self, previous: &EngineObservation) -> Result<EngineObservation, EngineError> {
+        Ok(previous.clone())
     }
     /// Returns stable candidate inputs without transient registry IDs.
     ///
@@ -265,6 +276,42 @@ impl Daemon {
             last_error: self.last_error.clone().unwrap_or_default(),
             metrics: self.observation.metrics.clone(),
         }
+    }
+
+    /// Refreshes realized audio state and returns whether public state changed.
+    #[must_use]
+    pub fn refresh_observation(&mut self) -> bool {
+        let previous_state = self.observation.state;
+        let previous_input = self.observation.input_display_name.clone();
+        let previous_version = self.observation.pipewire_version.clone();
+        let previous_fault = self.observation.fault.as_ref().map(|error| error.code);
+        match self.engine.observe(&self.observation) {
+            Ok(observation) => {
+                if let Some(error) = observation.fault.as_ref() {
+                    self.last_error = Some(error_info(error));
+                } else if observation.state != LifecycleState::Degraded
+                    && self
+                        .last_error
+                        .as_ref()
+                        .is_some_and(|error| error.component == "audio")
+                {
+                    self.last_error = None;
+                }
+                self.observation = observation;
+            }
+            Err(error) => {
+                self.last_error = Some(error_info(&error));
+                self.observation.state = LifecycleState::Degraded;
+            }
+        }
+        let changed = previous_state != self.observation.state
+            || previous_input != self.observation.input_display_name
+            || previous_version != self.observation.pipewire_version
+            || previous_fault != self.observation.fault.as_ref().map(|error| error.code);
+        if changed {
+            self.revision = self.revision.saturating_add(1);
+        }
+        changed
     }
 
     /// Refreshes and returns the stable input list.
@@ -536,6 +583,10 @@ mod tests {
         applied: Arc<Mutex<Vec<Config>>>,
     }
 
+    struct RecoveryProbeEngine {
+        observation: Arc<Mutex<EngineObservation>>,
+    }
+
     impl AudioEngine for RecordingEngine {
         fn apply(&mut self, config: &Config) -> Result<EngineObservation, EngineError> {
             self.applied
@@ -560,6 +611,26 @@ mod tests {
                 is_default: true,
                 availability: "available".to_owned(),
             }])
+        }
+    }
+
+    impl AudioEngine for RecoveryProbeEngine {
+        fn apply(&mut self, _config: &Config) -> Result<EngineObservation, EngineError> {
+            Err(test_engine_error("initial graph unavailable"))
+        }
+
+        fn observe(
+            &mut self,
+            _previous: &EngineObservation,
+        ) -> Result<EngineObservation, EngineError> {
+            self.observation
+                .lock()
+                .map_err(|_| test_engine_error("observation lock poisoned"))
+                .map(|observation| observation.clone())
+        }
+
+        fn inputs(&mut self) -> Result<Vec<InputDescriptor>, EngineError> {
+            Ok(Vec::new())
         }
     }
 
@@ -591,6 +662,53 @@ mod tests {
             warning: None,
             writable: true,
         }
+    }
+
+    #[test]
+    fn refreshed_observation_publishes_autonomous_recovery_without_metric_revision_churn()
+    -> Result<(), Box<dyn Error>> {
+        let (root, store) = temporary_store("recovery-observation")?;
+        let observation = Arc::new(Mutex::new(EngineObservation {
+            state: LifecycleState::Degraded,
+            ..EngineObservation::default()
+        }));
+        let mut loaded = defaults();
+        loaded.config.active = true;
+        let mut daemon = Daemon::new(
+            store,
+            Box::new(RecoveryProbeEngine {
+                observation: Arc::clone(&observation),
+            }),
+            loaded,
+        );
+        assert_eq!(daemon.snapshot().state, "degraded");
+        assert!(daemon.snapshot().has_error);
+
+        *observation
+            .lock()
+            .map_err(|_| "observation lock poisoned")? = EngineObservation {
+            state: LifecycleState::Running,
+            input_display_name: "Recovered Microphone".to_owned(),
+            pipewire_version: "test-1.0".to_owned(),
+            ..EngineObservation::default()
+        };
+        assert!(daemon.refresh_observation());
+        let recovered_revision = daemon.revision();
+        assert_eq!(daemon.snapshot().state, "running");
+        assert!(!daemon.snapshot().has_error);
+
+        observation
+            .lock()
+            .map_err(|_| "observation lock poisoned")?
+            .metrics
+            .callback_p50_ns = 10;
+        assert!(!daemon.refresh_observation());
+        assert_eq!(daemon.revision(), recovered_revision);
+        assert_eq!(daemon.snapshot().metrics.callback_p50_ns, 10);
+        if root.exists() {
+            fs::remove_dir_all(root)?;
+        }
+        Ok(())
     }
 
     #[test]

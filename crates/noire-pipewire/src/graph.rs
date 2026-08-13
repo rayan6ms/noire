@@ -3,9 +3,10 @@
 use std::time::Instant;
 
 use crate::{
-    BypassTelemetry, CaptureStreamError, ConsumerDemand, DemandTransition, LiveControl,
-    LivePipelineError, LiveTelemetry, NativeCaptureStream, PipewireConnection, SourceStreamError,
-    SourceStreamState, VirtualSourceStream, create_bypass_channel, create_live_channel,
+    BypassTelemetry, CaptureStreamError, CaptureStreamState, ConsumerDemand, DemandTransition,
+    LiveControl, LivePipelineError, LiveTelemetry, NativeCaptureStream, NegotiatedFormatEvent,
+    PipewireConnection, SourceStreamError, SourceStreamState, VirtualSourceStream,
+    create_bypass_channel, create_live_channel,
 };
 use noire_model::Denoiser;
 
@@ -169,6 +170,19 @@ pub enum LiveGraphError {
     Activation(pipewire::Error),
 }
 
+/// Low-rate graph fault requiring owner-thread reconstruction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GraphHealthIssue {
+    /// Physical capture entered a native stream error.
+    CaptureStream,
+    /// Published virtual source entered a native stream error.
+    SourceStream,
+    /// Physical capture rejected the canonical graph-facing format.
+    CaptureFormat,
+    /// Published virtual source rejected the canonical format.
+    SourceFormat,
+}
+
 impl std::fmt::Display for LiveGraphError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -191,6 +205,7 @@ pub struct LiveGraph {
     source: VirtualSourceStream,
     control: LiveControl,
     telemetry: LiveTelemetry,
+    target_node_name: String,
 }
 
 impl LiveGraph {
@@ -230,6 +245,7 @@ impl LiveGraph {
             source,
             control,
             telemetry,
+            target_node_name: selected_node_name.to_owned(),
         })
     }
 
@@ -295,5 +311,35 @@ impl LiveGraph {
     #[must_use]
     pub fn demand(&self) -> ConsumerDemand {
         self.source.demand()
+    }
+
+    /// Stable physical node name used to build this graph generation.
+    #[must_use]
+    pub fn target_node_name(&self) -> &str {
+        &self.target_node_name
+    }
+
+    /// Removes and classifies one owner-thread health fault, if present.
+    #[must_use]
+    pub fn take_health_issue(&self) -> Option<GraphHealthIssue> {
+        if self.capture.state() == CaptureStreamState::Error {
+            return Some(GraphHealthIssue::CaptureStream);
+        }
+        if self.source.state() == SourceStreamState::Error || self.source.take_error().is_some() {
+            return Some(GraphHealthIssue::SourceStream);
+        }
+        if matches!(
+            self.capture.take_negotiated_format(),
+            Some(NegotiatedFormatEvent::Rejected(_))
+        ) {
+            return Some(GraphHealthIssue::CaptureFormat);
+        }
+        if matches!(
+            self.source.take_negotiated_format(),
+            Some(NegotiatedFormatEvent::Rejected(_))
+        ) {
+            return Some(GraphHealthIssue::SourceFormat);
+        }
+        None
     }
 }

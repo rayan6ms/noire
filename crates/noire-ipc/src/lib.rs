@@ -68,6 +68,11 @@ pub const ERROR_CATALOG: &[ErrorCatalogEntry] = &[
         recovery: "wait briefly and retry",
     },
     ErrorCatalogEntry {
+        code: "audio-stream-failed",
+        cause: "a native capture or virtual-source stream stopped unexpectedly",
+        recovery: "allow bounded graph recovery; restart PipeWire if it persists",
+    },
+    ErrorCatalogEntry {
         code: "model-initialization-failed",
         cause: "the bundled suppression model could not initialize",
         recovery: "restart Noire; reinstall if the condition persists",

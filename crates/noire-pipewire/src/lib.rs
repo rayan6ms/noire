@@ -40,7 +40,7 @@ pub use format::{build_capture_format_pod, parse_negotiated_format};
 #[cfg(feature = "pipewire-backend")]
 pub use graph::{BypassGraph, BypassGraphError, BypassGraphService};
 #[cfg(feature = "pipewire-backend")]
-pub use graph::{LiveGraph, LiveGraphError};
+pub use graph::{GraphHealthIssue, LiveGraph, LiveGraphError};
 pub use live::{
     DeadlinePolicy, FailMode, LiveCaptureSink, LiveControl, LivePipelineError, LiveState,
     LiveTelemetry, LiveTelemetrySnapshot, TimingHistogramSnapshot, create_live_channel,

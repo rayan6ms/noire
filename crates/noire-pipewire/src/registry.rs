@@ -209,6 +209,7 @@ impl DeviceSelector {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegistrySnapshot {
     revision: u64,
+    node_names: Arc<[String]>,
     candidates: Arc<[NodeDescriptor]>,
 }
 
@@ -327,6 +328,8 @@ impl RegistrySnapshot {
     /// Filters, sorts, and stably deduplicates labels for one registry view.
     #[must_use]
     pub fn new(revision: u64, nodes: impl IntoIterator<Item = NodeDescriptor>) -> Self {
+        let nodes: Vec<_> = nodes.into_iter().collect();
+        let node_names = nodes.iter().map(|node| node.node_name.clone()).collect();
         let mut candidates: Vec<_> = nodes
             .into_iter()
             .filter(NodeDescriptor::is_candidate)
@@ -340,6 +343,7 @@ impl RegistrySnapshot {
         deduplicate_labels(&mut candidates);
         Self {
             revision,
+            node_names,
             candidates: candidates.into(),
         }
     }
@@ -354,6 +358,15 @@ impl RegistrySnapshot {
     #[must_use]
     pub fn candidates(&self) -> &[NodeDescriptor] {
         &self.candidates
+    }
+
+    /// Counts raw node globals with one stable node name, including virtual nodes.
+    #[must_use]
+    pub fn node_name_occurrences(&self, node_name: &str) -> usize {
+        self.node_names
+            .iter()
+            .filter(|candidate| candidate.as_str() == node_name)
+            .count()
     }
 
     /// Applies explicit selector/default policy without using global IDs.
@@ -519,6 +532,8 @@ mod tests {
 
         assert_eq!(snapshot.candidates().len(), 1);
         assert_eq!(snapshot.candidates()[0].node_name, "alsa_input.real");
+        assert_eq!(snapshot.node_name_occurrences(RESERVED_NODE_NAME), 1);
+        assert_eq!(snapshot.node_name_occurrences("missing.node"), 0);
         Ok(())
     }
 
