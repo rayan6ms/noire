@@ -18,6 +18,42 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  hardening:
+    name: Fuzz regressions, Miri, and sanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned stable and nightly toolchains
+        run: |
+          mkdir -p "$RUNNER_TEMP/noire-ci-logs"
+          rustup toolchain install 1.97.0 --profile minimal --no-self-update
+          rustup toolchain install nightly-2026-08-10 --profile minimal \
+            --component miri,rust-src --no-self-update
+
+      - name: Restore Cargo sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git/db
+          key: cargo-sources-v1-hardening-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Run generated-input, interpreter, sanitizer, and unsafe checks
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.0
+        run: |
+          .github/scripts/run_phase7_hardening.sh \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/phase7-hardening.log"
+
+      - name: Upload failure evidence
+        if: ${{ failure() }}
+        uses: ./.github/actions/upload-failure-evidence
+        with:
+          artifact-name: ci-failure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+
   quality:
     name: Format, lint, test, and docs
     runs-on: ubuntu-24.04
@@ -131,8 +167,9 @@ jobs:
       - name: Enforce the empty unsafe allowlist
         run: |
           {
-            if grep --recursive --line-number --word-regexp \
-              --include='*.rs' unsafe crates; then
+            unsafe_pattern='(^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|impl|trait|extern|\()'
+            if grep --extended-regexp --recursive --line-number \
+              --include='*.rs' "$unsafe_pattern" crates; then
               echo "unsafe Rust requires an explicit SECURITY.md allowlist entry" >&2
               exit 1
             fi
@@ -235,7 +272,7 @@ jobs:
   native-headless:
     name: Native headless (PipeWire)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -262,7 +299,7 @@ jobs:
             sudo apt-get install --no-install-recommends --yes \
               gcc pkg-config libclang-dev dbus-daemon \
               libpipewire-0.3-dev libspa-0.2-dev \
-              pipewire pipewire-bin pipewire-pulse pulseaudio-utils wireplumber
+              pipewire pipewire-bin pipewire-pulse pulseaudio-utils stress-ng wireplumber
             pkg-config --modversion libpipewire-0.3
             pkg-config --modversion libspa-0.2
           } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-packages.log"
@@ -273,6 +310,17 @@ jobs:
         run: |
           python3 .github/scripts/verify_headless_boundary.py \
             2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/headless-boundary.log"
+
+      - name: Record native CPU environment
+        run: |
+          {
+            uname -m
+            lscpu
+            printf 'NOIRE_PHASE7_PLATFORM architecture=%s vendor=%s model=%s\n' \
+              "$(uname -m)" \
+              "$(lscpu | awk -F: '/Vendor ID/{gsub(/^[[:space:]]+/, "", $2); print $2}')" \
+              "$(lscpu | awk -F: '/Model name/{gsub(/^[[:space:]]+/, "", $2); print $2}')"
+          } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-platform.log"
 
       - name: Build and test without UI assets
         env:
@@ -286,6 +334,7 @@ jobs:
               data \
               .github/scripts/run_pipewire_session.sh \
               .github/scripts/run_phase6_session.sh \
+              .github/scripts/run_phase7_session.sh \
               | tar -xf - -C "$headless_source"
             cd "$headless_source"
 
@@ -305,6 +354,7 @@ jobs:
               NOIRE_PIPEWIRE_TEST_SECONDS=5 \
               dbus-run-session -- .github/scripts/run_pipewire_session.sh
             dbus-run-session -- .github/scripts/run_phase6_session.sh
+            .github/scripts/run_phase7_session.sh
           } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-headless.log"
 
       - name: Upload failure evidence

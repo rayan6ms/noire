@@ -22,6 +22,9 @@ tracing-subscriber = { workspace = true, optional = true }
 thiserror.workspace = true
 zbus = { workspace = true, optional = true }
 
+[dev-dependencies]
+proptest.workspace = true
+
 [features]
 default = ["runtime"]
 pipewire-backend = ["noire-pipewire/pipewire-backend", "dep:noire-model-rnnoise"]

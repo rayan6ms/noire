@@ -181,7 +181,45 @@ impl ModelDescriptor {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+
     use super::{DescriptorError, ModelDescriptor, ModelDescriptorSpec};
+
+    proptest! {
+        #[test]
+        fn arbitrary_manifest_numbers_are_rejected_or_bounded(
+            sample_rate_hz in any::<u32>(),
+            channels in any::<u16>(),
+            frame_samples in any::<usize>(),
+            hop_samples in any::<usize>(),
+            lookahead_samples in any::<usize>(),
+            delay_samples in any::<usize>(),
+        ) {
+            let result = ModelDescriptor::new(ModelDescriptorSpec {
+                id: "org.noire.fuzz",
+                name: "Fuzz model",
+                version: "1",
+                license: "MIT",
+                sample_rate_hz,
+                channels,
+                frame_samples,
+                hop_samples,
+                lookahead_samples,
+                delay_samples,
+            });
+            if let Ok(descriptor) = result {
+                prop_assert!(descriptor.sample_rate_hz() > 0);
+                prop_assert!(descriptor.channels() > 0);
+                prop_assert!(descriptor.frame_samples() > 0);
+                prop_assert!(descriptor.hop_samples() <= descriptor.frame_samples());
+                prop_assert!(descriptor.delay_samples() >= descriptor.lookahead_samples());
+                prop_assert_eq!(
+                    descriptor.frame_buffer_samples(),
+                    descriptor.frame_samples() * usize::from(descriptor.channels())
+                );
+            }
+        }
+    }
 
     fn valid_spec() -> ModelDescriptorSpec {
         ModelDescriptorSpec {

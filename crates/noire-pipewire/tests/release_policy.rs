@@ -16,6 +16,12 @@ fn release_profile_aborts_and_callback_sources_contain_no_unwind_adapter()
             .lines()
             .any(|line| line.trim() == "panic = \"abort\"")
     );
+    assert!(
+        release
+            .lines()
+            .any(|line| line.trim() == "codegen-units = 1")
+    );
+    assert!(release.lines().any(|line| line.trim() == "lto = \"thin\""));
 
     for relative in ["src/capture.rs", "src/source.rs", "src/live.rs"] {
         let source = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(relative))?;

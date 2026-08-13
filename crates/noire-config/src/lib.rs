@@ -630,7 +630,39 @@ fn io_error(path: &Path, source: io::Error) -> ConfigError {
 mod tests {
     use std::{error::Error, fs, time::SystemTime};
 
+    use proptest::prelude::*;
+
     use super::*;
+
+    proptest! {
+        #[test]
+        fn arbitrary_config_documents_never_panic_or_escape_validation(input in any::<String>()) {
+            if let Ok(config) = decode_and_migrate(&input) {
+                prop_assert_eq!(config.schema_version, CONFIG_SCHEMA_VERSION);
+                prop_assert!(config.validate().is_ok());
+            }
+        }
+
+        #[test]
+        fn legacy_migration_preserves_valid_finite_strength(
+            active in any::<bool>(),
+            enabled in any::<bool>(),
+            selected in any::<bool>(),
+            strength in 0.0_f64..=1.0,
+        ) {
+            let input_node = if selected { "alsa_input.fuzz" } else { "" };
+            let legacy = format!(
+                "schema_version = 0\nactive = {active}\ninput_node = '{input_node}'\n\
+                 suppression_enabled = {enabled}\nstrength = {strength}\n"
+            );
+            let migrated = decode_and_migrate(&legacy)
+                .map_err(|error| TestCaseError::fail(error.to_string()))?;
+            prop_assert_eq!(migrated.active, active);
+            prop_assert_eq!(migrated.suppression.enabled, enabled);
+            prop_assert_eq!(migrated.input.mode == InputMode::Selected, selected);
+            prop_assert!((migrated.suppression.strength - strength).abs() <= f64::EPSILON);
+        }
+    }
 
     fn temporary_store(test: &str) -> Result<(PathBuf, ConfigStore), Box<dyn Error>> {
         let nonce = SystemTime::now()

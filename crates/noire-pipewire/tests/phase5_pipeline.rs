@@ -6,16 +6,23 @@
     clippy::too_many_lines
 )]
 
-use std::{error::Error, fs, time::Instant};
+use std::{
+    error::Error,
+    fs, thread,
+    time::{Duration, Instant},
+};
 
 use noire_dsp::{
     ChannelMap, ChannelPosition, ChannelSelection, MODEL_FRAME_SAMPLES, SAMPLE_RATE_HZ,
 };
 use noire_model::DenoiserFactory;
 use noire_model_rnnoise::RnnoiseFactory;
-use noire_pipewire::{CaptureSink, InputGeneration, LiveState, create_live_channel};
+use noire_pipewire::{
+    BYPASS_RING_CAPACITY, CaptureSink, InputGeneration, LiveState, create_live_channel,
+};
 
 const PERFORMANCE_MODEL_FRAMES: usize = 60_000;
+const MODEL_FRAMES_PER_AUDIO_HOUR: usize = 360_000;
 
 fn rnnoise() -> Result<Box<dyn noire_model::Denoiser>, Box<dyn Error>> {
     Ok(RnnoiseFactory::new()?.create()?)
@@ -168,6 +175,126 @@ fn live_rnnoise_meets_cpu_deadline_callback_and_rss_gates() -> Result<(), Box<dy
         wall.as_millis(),
         snapshot.model_timing.maximum_ns,
         snapshot.callback_timing.maximum_ns,
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "Phase-7 accelerated or realtime 8/24-hour release soak"]
+fn release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded()
+-> Result<(), Box<dyn Error>> {
+    let model_frames = std::env::var("NOIRE_PHASE7_SOAK_MODEL_FRAMES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|frames| *frames > 0)
+        .unwrap_or(24 * MODEL_FRAMES_PER_AUDIO_HOUR);
+    let pace_realtime = std::env::var("NOIRE_PHASE7_SOAK_REALTIME").is_ok_and(|value| value == "1");
+    let rss_before_kib = resident_kib()?;
+    let mut peak_rss_kib = rss_before_kib;
+    let (mut sink, mut output, control, telemetry) = create_live_channel(rnnoise()?)?;
+    let input = fixture("speech", MODEL_FRAME_SAMPLES);
+    let mut rendered = [0.0; MODEL_FRAME_SAMPLES];
+    let mut generation = InputGeneration::INITIAL;
+
+    for _ in 0..20 {
+        sink.write(generation, &input);
+        let _ = output.fill(&mut rendered)?;
+    }
+    let started = Instant::now();
+    for frame in 0..model_frames {
+        if frame > 0 && frame.is_multiple_of(MODEL_FRAMES_PER_AUDIO_HOUR) {
+            generation = generation.next();
+            sink.reset(generation);
+            eprintln!(
+                "phase7-soak: equivalent_audio_hours={} rss_kib={}",
+                frame / MODEL_FRAMES_PER_AUDIO_HOUR,
+                resident_kib()?
+            );
+        }
+        if frame.is_multiple_of(1_000) {
+            control.set_enabled((frame / 1_000) % 2 == 0);
+            control.set_strength((frame % 10_000) as f32 / 10_000.0);
+        }
+        sink.write(generation, &input);
+        let report = output.fill(&mut rendered)?;
+        assert_eq!(usize::from(report.frames), MODEL_FRAME_SAMPLES);
+        std::hint::black_box(rendered[127]);
+        if frame.is_multiple_of(60_000) {
+            peak_rss_kib = peak_rss_kib.max(resident_kib()?);
+        }
+        if pace_realtime {
+            let completed_frames = u64::try_from(frame.saturating_add(1)).unwrap_or(u64::MAX);
+            let due = started + Duration::from_millis(completed_frames.saturating_mul(10));
+            thread::sleep(due.saturating_duration_since(Instant::now()));
+        }
+    }
+    let wall = started.elapsed();
+    let rss_after_kib = resident_kib()?;
+    peak_rss_kib = peak_rss_kib.max(rss_after_kib);
+    let snapshot = telemetry.snapshot();
+    let rss_growth_kib = peak_rss_kib.saturating_sub(rss_before_kib);
+    let expected_resets = model_frames.saturating_sub(1) / MODEL_FRAMES_PER_AUDIO_HOUR;
+    let expected_resets = u64::try_from(expected_resets).unwrap_or(u64::MAX);
+
+    assert_eq!(
+        snapshot.model_frames,
+        u64::try_from(model_frames)
+            .unwrap_or(u64::MAX)
+            .saturating_add(20)
+    );
+    assert_eq!(snapshot.model_errors, 0);
+    assert_eq!(snapshot.state, noire_pipewire::LiveState::Running);
+    assert_eq!(snapshot.model_resets, expected_resets);
+    assert_eq!(snapshot.deadline_misses, 0);
+    assert_eq!(snapshot.sanitized_samples, 0);
+    assert_eq!(snapshot.hard_ceiling_samples, 0);
+    assert_eq!(snapshot.transport.underflows, 0);
+    assert_eq!(snapshot.transport.overflows, 0);
+    assert_eq!(snapshot.transport.dropped_frames, 0);
+    assert_eq!(snapshot.transport.missing_frames, 0);
+    assert_eq!(snapshot.transport.oversized_requests, 0);
+    assert_eq!(snapshot.transport.sanitized_samples, 0);
+    assert_eq!(snapshot.transport.generation_resets, expected_resets);
+    let queue_capacity = u64::try_from(BYPASS_RING_CAPACITY).unwrap_or(u64::MAX);
+    assert!(snapshot.transport.current_frames <= queue_capacity);
+    assert!(snapshot.transport.high_water_frames <= queue_capacity);
+    assert!(
+        snapshot.transport.discarded_stale_frames <= expected_resets.saturating_mul(queue_capacity)
+    );
+    assert!(
+        snapshot.transport.startup_silence_frames
+            <= expected_resets
+                .saturating_add(1)
+                .saturating_mul(queue_capacity)
+    );
+    assert!(rss_growth_kib < 5 * 1_024, "RSS grew {rss_growth_kib} KiB");
+    println!(
+        "NOIRE_PHASE7_SOAK pacing={} model_frames={model_frames} equivalent_audio_seconds={} wall_ms={} generations={} model_resets={} transport_resets={} discarded_stale={} startup_silence={} queue_high_water={} queue_capacity={} model_errors={} deadline_misses={} underflows={} overflows={} dropped={} missing={} oversized={} sanitized={} hard_ceiling={} rss_before_kib={rss_before_kib} rss_after_kib={rss_after_kib} rss_peak_kib={peak_rss_kib} rss_growth_kib={rss_growth_kib}",
+        if pace_realtime {
+            "realtime"
+        } else {
+            "accelerated"
+        },
+        model_frames / 100,
+        wall.as_millis(),
+        generation.get(),
+        snapshot.model_resets,
+        snapshot.transport.generation_resets,
+        snapshot.transport.discarded_stale_frames,
+        snapshot.transport.startup_silence_frames,
+        snapshot.transport.high_water_frames,
+        queue_capacity,
+        snapshot.model_errors,
+        snapshot.deadline_misses,
+        snapshot.transport.underflows,
+        snapshot.transport.overflows,
+        snapshot.transport.dropped_frames,
+        snapshot.transport.missing_frames,
+        snapshot.transport.oversized_requests,
+        snapshot
+            .sanitized_samples
+            .saturating_add(snapshot.transport.sanitized_samples),
+        snapshot.hard_ceiling_samples,
     );
     Ok(())
 }

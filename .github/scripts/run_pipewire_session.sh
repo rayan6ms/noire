@@ -64,3 +64,10 @@ if grep -Eiq '(^|[^[:alpha:]])(xrun|underrun|overrun)([^[:alpha:]]|$)' \
     echo "The disposable PipeWire session reported an xrun" >&2
     exit 1
 fi
+
+kill "$pipewire_pulse_pid" "$wireplumber_pid" "$pipewire_pid" 2>/dev/null || true
+wait "$pipewire_pulse_pid" "$wireplumber_pid" "$pipewire_pid" 2>/dev/null || true
+
+cargo test --release --package noired --features native-test \
+    --test phase7_recovery --locked -- --ignored --nocapture --test-threads=1 \
+    2>&1 | tee "$log_dir/phase7-recovery.log"
