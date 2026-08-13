@@ -183,11 +183,12 @@ fn live_rnnoise_meets_cpu_deadline_callback_and_rss_gates() -> Result<(), Box<dy
 #[ignore = "Phase-7 accelerated or realtime 8/24-hour release soak"]
 fn release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded()
 -> Result<(), Box<dyn Error>> {
-    let model_frames = std::env::var("NOIRE_PHASE7_SOAK_MODEL_FRAMES")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|frames| *frames > 0)
-        .unwrap_or(24 * MODEL_FRAMES_PER_AUDIO_HOUR);
+    let configured_model_frames = std::env::var("NOIRE_PHASE7_SOAK_MODEL_FRAMES").ok();
+    let configured_hours = std::env::var("NOIRE_PHASE7_SOAK_HOURS").ok();
+    let model_frames = soak_model_frames(
+        configured_model_frames.as_deref(),
+        configured_hours.as_deref(),
+    )?;
     let pace_realtime = std::env::var("NOIRE_PHASE7_SOAK_REALTIME").is_ok_and(|value| value == "1");
     let rss_before_kib = resident_kib()?;
     let mut peak_rss_kib = rss_before_kib;
@@ -296,6 +297,45 @@ fn release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded()
             .saturating_add(snapshot.transport.sanitized_samples),
         snapshot.hard_ceiling_samples,
     );
+    Ok(())
+}
+
+fn soak_model_frames(
+    configured_model_frames: Option<&str>,
+    configured_hours: Option<&str>,
+) -> Result<usize, Box<dyn Error>> {
+    if configured_model_frames.is_some() && configured_hours.is_some() {
+        return Err("configure soak model frames or hours, not both".into());
+    }
+    if let Some(value) = configured_model_frames {
+        let frames = value.parse::<usize>()?;
+        if frames == 0 {
+            return Err("soak model frames must be greater than zero".into());
+        }
+        return Ok(frames);
+    }
+    let hours = configured_hours.unwrap_or("24").parse::<usize>()?;
+    if !matches!(hours, 8 | 24) {
+        return Err("Phase-7 soak hours must be exactly 8 or 24".into());
+    }
+    hours
+        .checked_mul(MODEL_FRAMES_PER_AUDIO_HOUR)
+        .ok_or_else(|| "soak model-frame count overflowed".into())
+}
+
+#[test]
+fn soak_duration_configuration_is_exact_and_rejects_ambiguity() -> Result<(), Box<dyn Error>> {
+    assert_eq!(
+        soak_model_frames(None, Some("8"))?,
+        8 * MODEL_FRAMES_PER_AUDIO_HOUR
+    );
+    assert_eq!(
+        soak_model_frames(None, Some("24"))?,
+        24 * MODEL_FRAMES_PER_AUDIO_HOUR
+    );
+    assert_eq!(soak_model_frames(Some("100"), None)?, 100);
+    assert!(soak_model_frames(None, Some("7")).is_err());
+    assert!(soak_model_frames(Some("100"), Some("8")).is_err());
     Ok(())
 }
 
