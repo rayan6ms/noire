@@ -4,6 +4,9 @@ docs/
 # Rust build output
 /target/
 
+# Native package and release-candidate build output
+/dist/
+
 # Generated Python bytecode
 __pycache__/
 *.py[cod]
