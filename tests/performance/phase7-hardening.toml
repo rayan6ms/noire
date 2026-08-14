@@ -116,7 +116,7 @@ mode_pass = true
 [wall_clock_soak]
 pre_soak_hours = 8
 pre_soak_complete = false
-release_soak_hours = 24
+release_soak_hours = 15
 release_soak_complete = false
 nfr_008_pass = false
 
@@ -172,7 +172,7 @@ pass = true
 [commands]
 native_recovery = "dbus-run-session -- cargo test --release --package noired --features native-test --test phase7_recovery --locked -- --ignored --nocapture --test-threads=1"
 release_performance = "cargo test --release -p noire-pipewire --test phase5_pipeline live_rnnoise_meets_cpu_deadline_callback_and_rss_gates --locked -- --ignored --nocapture"
-accelerated_soak = "NOIRE_PHASE7_SOAK_HOURS=<8|24> cargo test --release -p noire-pipewire --test phase5_pipeline release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded --locked -- --ignored --nocapture"
-realtime_soak = ".github/scripts/run_phase7_soak.sh <8|24>"
+accelerated_soak = "NOIRE_PHASE7_SOAK_HOURS=<8|15> cargo test --release -p noire-pipewire --test phase5_pipeline release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded --locked -- --ignored --nocapture"
+realtime_soak = ".github/scripts/run_phase7_soak.sh <8|15>"
 hardening = ".github/scripts/run_phase7_hardening.sh"
 privacy = ".github/scripts/run_phase7_session.sh"

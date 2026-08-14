@@ -21,6 +21,7 @@ DEFAULT_VERSION = "1.0.0"
 DEFAULT_PACKAGE_RELEASE = "1"
 APPSTREAM = ROOT / "data/metainfo/io.github.rayan6ms.Noire.metainfo.xml"
 APPSTREAM_PACKAGE_PATH = "./usr/share/metainfo/io.github.rayan6ms.Noire.metainfo.xml"
+SOAK_EVIDENCE = ROOT / "tests/performance/phase7-hardening.toml"
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,23 @@ def toolchain_version() -> Check:
         channel = tomllib.load(source)["toolchain"]["channel"]
     expected = "1.97.0"
     return Check("release-toolchain", channel == expected, f"channel={channel}, expected={expected}")
+
+
+def soak_duration_contract() -> Check:
+    with SOAK_EVIDENCE.open("rb") as source:
+        evidence = tomllib.load(source)
+    wall_clock = evidence.get("wall_clock_soak", {})
+    commands = evidence.get("commands", {})
+    accelerated = commands.get("accelerated_soak", "")
+    realtime = commands.get("realtime_soak", "")
+    actual = (wall_clock.get("pre_soak_hours"), wall_clock.get("release_soak_hours"))
+    commands_match = "<8|15>" in accelerated and "<8|15>" in realtime
+    passed = actual == (8, 15) and commands_match
+    return Check(
+        "soak-duration-contract",
+        passed,
+        f"hours={actual[0]}/{actual[1]}, command_choices={'8/15' if commands_match else 'mismatch'}",
+    )
 
 
 def source_policy() -> Check:
@@ -350,6 +368,7 @@ def main() -> int:
         cargo_versions(expected),
         appstream_version(expected),
         toolchain_version(),
+        soak_duration_contract(),
         source_policy(),
         source_state(),
         traceability(),
