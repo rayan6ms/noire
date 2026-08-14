@@ -31,6 +31,13 @@ On Fedora, run:
 packaging/rpm/build.sh 1.0.0 x86_64 target/release dist/rpm
 ```
 
+Release RPMs must be compiled on the Fedora 43 support floor so their generated
+ELF requirements do not accidentally bind to a newer glibc. The reproducible
+system-dependency image is `packaging/validation/Containerfile.release-fedora`;
+its `FEDORA_VERSION` build argument defaults to 43. Mount the clean source and
+the pinned Rust/Cargo homes into that image, build all three release binaries,
+then run the RPM builder above inside the same container.
+
 Set `NOIRE_RPM_RELEASE=2` (or another positive integer) when building a newer
 package revision of the same application version. Debian revisions belong in the
 first argument, for example `1.0.0-2`. Both builders reject placeholder scripts
@@ -71,9 +78,11 @@ podman run --rm --security-opt label=disable \
   .github/scripts/run_phase8_packaged_ui_vm.sh deb dist/deb
 ```
 
-Use `Containerfile.debian` with `debian:13` and the same Debian artifacts, or
-`Containerfile.fedora`, the `rpm` harness argument, and `dist/rpm`. These bounded
-development checks do not replace signed-candidate clean-VM qualification.
+Use `Containerfile.debian` with `debian:13` and the same Debian artifacts. For
+the exact Fedora floor, build with `--build-arg FEDORA_VERSION=43`, then use the
+`rpm` harness argument and `dist/rpm`; omit the build argument to retain Fedora
+44 coverage. These bounded development checks do not replace signed-candidate
+clean-VM qualification.
 
 Refresh the AppStream overview image from a real running Debian package in the
 Ubuntu fixture with:
@@ -146,8 +155,8 @@ same-user execution, exactly one live PipeWire source, zero sources after an
 explicit stop, newer-schema read-only refusal, uninstall, and configuration
 preservation. Use `Containerfile.fedora`, the `rpm` harness argument, and an RPM
 artifact directory for the Fedora-family equivalent. The bounded development
-matrix is Ubuntu 24.04, Debian 13, and Fedora 44; repeat it with signed artifacts
-in clean VMs before release.
+matrix is Ubuntu 24.04, Debian 13, Fedora 43, and Fedora 44; repeat it with signed
+artifacts in clean VMs before release.
 
 ## Release metadata
 

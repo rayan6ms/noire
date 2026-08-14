@@ -1,0 +1,15 @@
+ARG FEDORA_VERSION=43
+FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
+
+RUN dnf install --assumeyes --setopt=install_weak_deps=False \
+        clang-devel \
+        gcc \
+        gtk4-devel \
+        pipewire-devel \
+        pkgconf-pkg-config \
+        rpm-build \
+        rpmlint \
+    && dnf clean all
+
+WORKDIR /workspace
+CMD ["/bin/bash"]

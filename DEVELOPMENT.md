@@ -51,11 +51,12 @@ The reproducible Ubuntu 24.04 GTK test environment is defined by
 headers.
 
 The installed-package boundary is covered separately by the gated, bounded
-`.github/scripts/run_phase8_packaged_ui_vm.sh` harness. In a disposable Ubuntu
-24.04, Debian 13, or Fedora 44 container it proves that `noire-daemon` remains
-GTK-free, exercises daemon/CLI D-Bus operation, installs the optional UI, checks
-GTK 4.10+, requires a clear no-display failure, runs the real window under Xvfb
-for three seconds, and removes the UI without breaking headless operation.
+`.github/scripts/run_phase8_packaged_ui_vm.sh` harness. In disposable Ubuntu
+24.04, Debian 13, Fedora 43, and Fedora 44 containers it proves that
+`noire-daemon` remains GTK-free, exercises daemon/CLI D-Bus operation, installs
+the optional UI, checks GTK 4.10+, requires a clear no-display failure, runs the
+real window under Xvfb for three seconds, and removes the UI without breaking
+headless operation.
 The default AppStream image is an actual running-state window from this packaged
 Ubuntu environment. Refresh it only in a disposable container with
 `.github/scripts/capture_phase8_appstream_screenshot.sh`, then run

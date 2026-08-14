@@ -45,7 +45,7 @@ completed = ["P7-01", "P7-02", "P7-03", "P7-04", "P7-05", "P7-06", "P7-08"]
 [[phase]]
 id = 8
 tasks = 8
-completed = ["P8-01", "P8-02", "P8-03", "P8-04", "P8-05", "P8-06"]
+completed = ["P8-01", "P8-02", "P8-03", "P8-04", "P8-05", "P8-06", "P8-08"]
 
 [[phase]]
 id = 9
@@ -58,6 +58,6 @@ tasks = 7
 completed = ["P10-06"]
 
 [qualification]
-open_tasks = ["P7-07", "P8-07", "P8-08", "P10-01", "P10-02", "P10-03", "P10-04", "P10-05", "P10-07"]
+open_tasks = ["P7-07", "P8-07", "P10-01", "P10-02", "P10-03", "P10-04", "P10-05", "P10-07"]
 remote_release_blockers = ["https://github.com/rayan6ms/noire/issues/1"]
-notes = "P8-08 remains open because the exact Fedora 43 floor has not been qualified. The 1.0.0 source transition does not close a qualification task by itself."
+notes = "P8-08 passed with the exact 1.0.0-1 packages on Ubuntu 24.04, Debian 13, Fedora 43, and Fedora 44. P8-07 human accessibility review remains open."
