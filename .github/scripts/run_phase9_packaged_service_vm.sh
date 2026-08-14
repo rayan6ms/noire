@@ -13,12 +13,15 @@ if [[ "$(id -u)" != "0" ]]; then
     echo "The packaged service harness must run as root" >&2
     exit 2
 fi
-if ! systemctl is-system-running --wait >/dev/null 2>&1; then
+state=""
+for ((attempt = 0; attempt < 100; attempt++)); do
     state="$(systemctl is-system-running 2>/dev/null || true)"
-    if [[ "$state" != "degraded" ]]; then
-        echo "A running disposable systemd system manager is required" >&2
-        exit 2
-    fi
+    [[ "$state" == "running" || "$state" == "degraded" ]] && break
+    sleep 0.1
+done
+if [[ "$state" != "running" && "$state" != "degraded" ]]; then
+    echo "A running disposable systemd system manager is required (state: ${state:-unknown})" >&2
+    exit 2
 fi
 
 family="$1"

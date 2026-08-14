@@ -41,6 +41,7 @@ SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) \
     --version VERSION \
     --artifact-dir DEB_ARTIFACT_DIRECTORY \
     --artifact-dir RPM_ARTIFACT_DIRECTORY \
+    --artifact-dir SOURCE_ARTIFACT_DIRECTORY \
     --output-dir RELEASE_METADATA_DIRECTORY
 ```
 

@@ -169,6 +169,7 @@ SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD) \
     --version 1.0.0 \
     --artifact-dir dist/deb \
     --artifact-dir dist/rpm \
+    --artifact-dir dist/source \
     --output-dir dist/release-metadata
 ```
 
@@ -189,6 +190,7 @@ packaging/generate-release-metadata.py verify \
   --version 1.0.0 \
   --artifact-dir dist/deb \
   --artifact-dir dist/rpm \
+  --artifact-dir dist/source \
   --metadata-dir dist/release-metadata
 ```
 

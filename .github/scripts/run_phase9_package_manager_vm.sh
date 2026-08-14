@@ -23,6 +23,8 @@ test_user=noire-package-test
     echo "Both package directories must exist" >&2
     exit 2
 }
+baseline_dir=$(realpath "$baseline_dir")
+upgrade_dir=$(realpath "$upgrade_dir")
 
 if ! id "$test_user" >/dev/null 2>&1; then
     useradd --create-home --shell /bin/sh "$test_user"
