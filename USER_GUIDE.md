@@ -11,7 +11,11 @@ session.
 
 ## Install
 
-Install the full desktop package from one release-candidate directory:
+Download all packages for your distribution from a single
+[published release](https://github.com/rayan6ms/noire/releases/latest). Verify
+the detached OpenPGP signature over `SHA256SUMS` and then the package checksums
+as described in that release's notes. Install the full desktop package from the
+download directory:
 
 ```sh
 sudo apt install ./noire-daemon_*_amd64.deb ./noire-ui_*_amd64.deb \
@@ -29,8 +33,7 @@ For a headless installation, install only `noire-daemon`. It contains `noired`,
 `noirectl`, D-Bus activation, the systemd user unit, completions, man pages, and
 this documentation without pulling in GTK.
 
-Package files from different Noire versions must not be mixed. Verify release
-checksums and signatures before installing a published release.
+Package files from different Noire versions must not be mixed.
 
 ## First use
 
