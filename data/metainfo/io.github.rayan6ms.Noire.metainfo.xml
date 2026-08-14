@@ -36,9 +36,10 @@
     </screenshot>
   </screenshots>
   <releases>
-    <release version="1.0.0" date="2026-08-13" type="stable">
+    <release version="1.0.0" date="2026-08-14" type="stable">
       <description>
         <p>Initial stable release.</p>
+        <p>Qualification disclosure: the eight-hour soak recorded two isolated sampled model calls above the 0.75 ms target without entering degraded mode. The owner waived the planned 15-hour soak and the remaining human, application, clean-VM, idle-resource, and signed-package qualification for this release.</p>
       </description>
     </release>
   </releases>

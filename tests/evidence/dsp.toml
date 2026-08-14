@@ -123,7 +123,7 @@ sources = ["crates/noire-model-rnnoise/src/offline.rs::fn partial_final_frame_co
 [[template]]
 id = "MX-SPEECH-PRESERVATION"
 kind = "mixed"
-status = "planned"
+status = "waived"
 phase = 2
 owner = "rayan6ms"
 requirements = ["FR-006", "QG-004"]
@@ -135,6 +135,7 @@ environments = ["Pinned offline quality environment", "Independent blinded liste
 result_artifacts = ["STOI/clipping JSON report and signed concealed-key listening record"]
 manual_reason = "Missing words, musical noise, and perceived distortion require blinded human listening; objective metrics alone cannot establish those outcomes."
 manual_fields = ["reviewer identifier", "review date", "randomized answers", "missing-word judgment", "concealed-key verification"]
+sources = ["tests/release/qualification-decision-1.0.0.toml::waived_evidence"]
 
 [[template]]
 id = "AT-SAFE-FAILURE"

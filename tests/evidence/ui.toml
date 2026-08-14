@@ -18,7 +18,7 @@ sources = ["crates/noire-ui/src/app.rs::fn widget_state_matrix_tracks_daemon_tru
 [[template]]
 id = "MX-ACCESSIBILITY"
 kind = "mixed"
-status = "planned"
+status = "waived"
 phase = 8
 owner = "rayan6ms"
 requirements = ["FR-011", "NFR-010"]
@@ -30,4 +30,4 @@ environments = ["Automated Xvfb/X11 and headless Weston/Wayland preflight", "GNO
 result_artifacts = ["Accessibility-tree and display-backend preflight report", "Signed keyboard/screen-reader checklist"]
 manual_reason = "Assistive-technology speech output and end-to-end keyboard usability require human review beyond machine inspection of the accessibility tree."
 manual_fields = ["reviewer", "date", "desktop", "screen reader", "keyboard path", "spoken labels", "color independence"]
-sources = ["crates/noire-ui/src/app.rs::fn accessibility_tree_and_keyboard_paths_are_complete", "crates/noire-ui/src/app.rs::fn rtl_high_contrast_scaled_layout_remains_operable", ".github/scripts/run_phase8_ui_smoke.sh::app::tests::accessibility_tree_and_keyboard_paths_are_complete", ".github/scripts/run_phase8_accessibility_preflight.sh::NOIRE_PHASE8_ACCESSIBILITY_PREFLIGHT", "tests/usability/phase8-accessibility-review.md::Keyboard path"]
+sources = ["crates/noire-ui/src/app.rs::fn accessibility_tree_and_keyboard_paths_are_complete", "crates/noire-ui/src/app.rs::fn rtl_high_contrast_scaled_layout_remains_operable", ".github/scripts/run_phase8_ui_smoke.sh::app::tests::accessibility_tree_and_keyboard_paths_are_complete", ".github/scripts/run_phase8_accessibility_preflight.sh::NOIRE_PHASE8_ACCESSIBILITY_PREFLIGHT", "tests/usability/phase8-accessibility-review.md::Keyboard path", "tests/release/qualification-decision-1.0.0.toml::waived_evidence"]

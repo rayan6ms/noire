@@ -22,6 +22,7 @@ DEFAULT_PACKAGE_RELEASE = "1"
 APPSTREAM = ROOT / "data/metainfo/io.github.rayan6ms.Noire.metainfo.xml"
 APPSTREAM_PACKAGE_PATH = "./usr/share/metainfo/io.github.rayan6ms.Noire.metainfo.xml"
 SOAK_EVIDENCE = ROOT / "tests/performance/phase7-hardening.toml"
+QUALIFICATION_DECISION = ROOT / "tests/release/qualification-decision-1.0.0.toml"
 
 
 @dataclass(frozen=True)
@@ -100,20 +101,35 @@ def toolchain_version() -> Check:
     return Check("release-toolchain", channel == expected, f"channel={channel}, expected={expected}")
 
 
-def soak_duration_contract() -> Check:
+def soak_disposition_contract() -> Check:
     with SOAK_EVIDENCE.open("rb") as source:
         evidence = tomllib.load(source)
+    with QUALIFICATION_DECISION.open("rb") as source:
+        decision = tomllib.load(source)
     wall_clock = evidence.get("wall_clock_soak", {})
-    commands = evidence.get("commands", {})
-    accelerated = commands.get("accelerated_soak", "")
-    realtime = commands.get("realtime_soak", "")
-    actual = (wall_clock.get("pre_soak_hours"), wall_clock.get("release_soak_hours"))
-    commands_match = "<8|15>" in accelerated and "<8|15>" in realtime
-    passed = actual == (8, 15) and commands_match
+    final_test = decision.get("final_test", {})
+    log_path = ROOT / final_test.get("log", "missing")
+    log_digest = digest(log_path.read_bytes()) if log_path.is_file() else "missing"
+    passed = (
+        decision.get("release") == DEFAULT_VERSION
+        and decision.get("decision") == "release-with-explicit-qualification-waivers"
+        and wall_clock.get("pre_soak_hours") == 8
+        and wall_clock.get("pre_soak_complete") is True
+        and wall_clock.get("pre_soak_pass") is False
+        and wall_clock.get("pre_soak_deadline_misses") == 2
+        and wall_clock.get("release_soak_complete") is False
+        and wall_clock.get("release_soak_waived") is True
+        and final_test.get("result") == "failed-accepted-with-waiver"
+        and final_test.get("deadline_misses") == 2
+        and log_digest == final_test.get("log_sha256")
+        and decision.get("owner") == "rayan6ms"
+        and decision.get("expires")
+    )
     return Check(
-        "soak-duration-contract",
+        "soak-disposition-contract",
         passed,
-        f"hours={actual[0]}/{actual[1]}, command_choices={'8/15' if commands_match else 'mismatch'}",
+        "eight_hour_result=failed deadline_misses=2 final_fifteen_hour=waived "
+        f"decision={decision.get('decision', 'missing')} log_sha256={log_digest}",
     )
 
 
@@ -180,18 +196,21 @@ def screenshot_contract() -> Check:
     return Check("appstream-screenshot", True, command.stdout.decode().strip())
 
 
-def evidence_status() -> tuple[int, int, list[str]]:
+def evidence_status() -> tuple[int, int, list[str], list[str]]:
     active = 0
     planned: list[str] = []
+    waived: list[str] = []
     for path in sorted((ROOT / "tests/evidence").glob("*.toml")):
         with path.open("rb") as source:
             document = tomllib.load(source)
         for template in document.get("template", []):
             if template["status"] == "active":
                 active += 1
-            else:
+            elif template["status"] == "planned":
                 planned.append(template["id"])
-    return active, active + len(planned), planned
+            else:
+                waived.append(template["id"])
+    return active, active + len(planned) + len(waived), planned, waived
 
 
 def expected_debs(version: str, release: str) -> list[str]:
@@ -368,7 +387,7 @@ def main() -> int:
         cargo_versions(expected),
         appstream_version(expected),
         toolchain_version(),
-        soak_duration_contract(),
+        soak_disposition_contract(),
         source_policy(),
         source_state(),
         traceability(),
@@ -386,20 +405,31 @@ def main() -> int:
             arguments.source_dir,
         ),
     ]
+    active, total, planned, waived = evidence_status()
+    with QUALIFICATION_DECISION.open("rb") as source:
+        qualification_decision = tomllib.load(source)
+    declared_waived = qualification_decision.get("waived_template_statuses", [])
+    checks.append(
+        Check(
+            "qualification-waiver-set",
+            sorted(waived) == sorted(declared_waived),
+            f"recorded={','.join(sorted(waived))}; declared={','.join(sorted(declared_waived))}",
+        )
+    )
     for check in checks:
         state = "PASS" if check.passed else "BLOCK"
         print(f"{state:5} {check.name}: {check.detail}")
 
-    active, total, planned = evidence_status()
     blockers = [check.name for check in checks if not check.passed]
     print(f"QUALIFICATION planned_evidence={','.join(planned)}")
+    print(f"QUALIFICATION waived_evidence={','.join(waived)}")
     print(
         "NOIRE_RC_FREEZE_AUDIT "
         f"state={'ready' if not blockers else 'blocked'} "
         f"version={expected} package_release={release} "
         f"checks={len(checks) - len(blockers)}/{len(checks)} "
         f"active_evidence={active}/{total} freeze_blockers={len(blockers)} "
-        f"qualification_planned={len(planned)}"
+        f"qualification_planned={len(planned)} qualification_waived={len(waived)}"
     )
     if blockers and not arguments.report_only:
         return 1

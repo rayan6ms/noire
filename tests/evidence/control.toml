@@ -77,7 +77,7 @@ sources = ["crates/noired/tests/phase6_session.rs::fn same_user_contract_rejects
 [[template]]
 id = "MX-ERROR-USABILITY"
 kind = "mixed"
-status = "planned"
+status = "waived"
 phase = 8
 owner = "rayan6ms"
 requirements = ["FR-009", "FR-011", "FR-012", "QG-009"]
@@ -89,4 +89,4 @@ environments = ["Headless control runner and GNOME/KDE test sessions"]
 result_artifacts = ["Catalog coverage test output and signed usability checklist"]
 manual_reason = "Plain-language clarity and actionable recovery wording require human review even when catalog coverage and state behavior are automated."
 manual_fields = ["reviewer", "date", "error code", "cause clarity", "recovery clarity", "UI remains operable"]
-sources = ["crates/noired/src/service.rs::fn every_production_public_error_code_has_catalog_copy", "crates/noired/src/service.rs::fn rejected_requests_publish_exact_catalog_cause_and_recovery", "crates/noire-ui/src/state.rs::fn every_catalog_error_has_complete_operable_ui_presentation", "crates/noire-ui/src/app.rs::What to do:", "tests/usability/phase8-error-review.md::Catalog review"]
+sources = ["crates/noired/src/service.rs::fn every_production_public_error_code_has_catalog_copy", "crates/noired/src/service.rs::fn rejected_requests_publish_exact_catalog_cause_and_recovery", "crates/noire-ui/src/state.rs::fn every_catalog_error_has_complete_operable_ui_presentation", "crates/noire-ui/src/app.rs::What to do:", "tests/usability/phase8-error-review.md::Catalog review", "tests/release/qualification-decision-1.0.0.toml::waived_evidence"]

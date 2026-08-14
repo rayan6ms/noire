@@ -18,7 +18,7 @@ sources = [".github/workflows/ci.yml::native-headless:", ".github/scripts/verify
 [[template]]
 id = "AT-NATIVE-DISTRO-BUILD"
 kind = "automated"
-status = "planned"
+status = "waived"
 phase = 10
 owner = "rayan6ms"
 requirements = ["NFR-009"]
@@ -28,3 +28,4 @@ commands = ["Run the clean-checkout release matrix on Ubuntu, Debian, and Fedora
 fixtures = ["Locked source checkout and native development packages"]
 environments = ["Ubuntu 24.04 LTS x86_64", "Debian 13 x86_64", "Fedora 43+ x86_64"]
 result_artifacts = ["Per-distribution build and test logs with package versions"]
+sources = ["tests/release/qualification-decision-1.0.0.toml::waived_evidence"]

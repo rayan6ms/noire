@@ -3,7 +3,7 @@ schema_version = 1
 [[template]]
 id = "ME-DEFERRED-SCOPE"
 kind = "manual"
-status = "planned"
+status = "active"
 phase = 10
 owner = "rayan6ms"
 requirements = ["FR-015", "FR-016"]
@@ -13,3 +13,4 @@ environments = ["Project release-governance review"]
 result_artifacts = ["Owner-approved scope review or superseding ADR and requirement update"]
 manual_reason = "Product scope and architecture approval are accountable owner decisions rather than executable software behavior."
 manual_fields = ["owner", "date", "release", "decision", "rationale", "superseding task or ADR"]
+sources = ["tests/release/qualification-decision-1.0.0.toml::completed_governance_evidence"]

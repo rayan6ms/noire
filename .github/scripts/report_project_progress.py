@@ -12,8 +12,10 @@ ROOT = Path(__file__).resolve().parents[2]
 EXPECTED_PHASE_TASKS = {0: 6, 1: 8, 2: 8, 3: 7, 4: 7, 5: 7, 6: 8, 7: 8, 8: 8, 9: 7, 10: 7}
 
 
-def evidence_counts() -> tuple[int, int]:
+def evidence_counts() -> tuple[int, int, int, int]:
     active = 0
+    planned = 0
+    waived = 0
     total = 0
     for path in sorted((ROOT / "tests/evidence").glob("*.toml")):
         with path.open("rb") as source:
@@ -21,7 +23,9 @@ def evidence_counts() -> tuple[int, int]:
         for template in document.get("template", []):
             total += 1
             active += template["status"] == "active"
-    return active, total
+            planned += template["status"] == "planned"
+            waived += template["status"] == "waived"
+    return active, planned, waived, total
 
 
 def main() -> int:
@@ -46,22 +50,27 @@ def main() -> int:
     completed = len(completed_ids)
     total = sum(EXPECTED_PHASE_TASKS.values())
     open_ids = document["qualification"]["open_tasks"]
+    waived_ids = document["qualification"].get("waived_tasks", [])
     expected_ids = {
         f"P{phase}-{task:02d}"
         for phase, task_count in EXPECTED_PHASE_TASKS.items()
         for task in range(1, task_count + 1)
     }
-    recorded_ids = set(completed_ids) | set(open_ids)
+    recorded_ids = set(completed_ids) | set(open_ids) | set(waived_ids)
     if len(open_ids) != len(set(open_ids)):
         raise ValueError("open task IDs must be unique")
     if set(completed_ids) & set(open_ids):
         raise ValueError("a task cannot be both completed and open")
+    if len(waived_ids) != len(set(waived_ids)):
+        raise ValueError("waived task IDs must be unique")
+    if set(completed_ids) & set(waived_ids) or set(open_ids) & set(waived_ids):
+        raise ValueError("a task cannot be completed, open, and waived simultaneously")
     if recorded_ids != expected_ids:
         missing = sorted(expected_ids - recorded_ids)
         unknown = sorted(recorded_ids - expected_ids)
         raise ValueError(f"task ledger mismatch: missing={missing}, unknown={unknown}")
 
-    evidence_active, evidence_total = evidence_counts()
+    evidence_active, evidence_planned, evidence_waived, evidence_total = evidence_counts()
     if evidence_total == 0:
         raise ValueError("no evidence templates were found")
     implementation_percent = 100 * completed / total
@@ -72,9 +81,12 @@ def main() -> int:
         f"implementation_percent={implementation_percent:.1f} "
         f"evidence_coverage={evidence_active}/{evidence_total} "
         f"evidence_percent={evidence_percent:.1f} "
-        f"open_tasks={len(open_ids)}"
+        f"evidence_planned={evidence_planned} "
+        f"evidence_waived={evidence_waived} "
+        f"open_tasks={len(open_ids)} waived_tasks={len(waived_ids)}"
     )
     print(f"OPEN_TASKS {','.join(open_ids)}")
+    print(f"WAIVED_TASKS {','.join(waived_ids)}")
     return 0
 
 

@@ -319,6 +319,11 @@ The wall-clock Phase-7 8-hour and 15-hour soaks are release-candidate gates, not
 feature-development prerequisites. Run them only after the application and
 packaging have reached a frozen release-candidate state; use the bounded standard,
 native-session, and accelerated checks while implementation is still changing.
+For 1.0.0 specifically, qualification ended after the completed eight-hour run;
+the failed zero-total-deadline-miss assertion and cancellation of the 15-hour
+run are recorded as owner-accepted waivers in
+`tests/release/qualification-decision-1.0.0.toml`. Do not run another 1.0.0 soak
+or describe the waived gate as passed.
 
 Phase-2 offline allocation and timing checks use the release profile:
 

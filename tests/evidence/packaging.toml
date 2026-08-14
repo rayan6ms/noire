@@ -18,7 +18,7 @@ sources = ["data/systemd/user/noire.service::BusName=io.github.rayan6ms.Noire.No
 [[template]]
 id = "AT-PACKAGE-LIFECYCLE"
 kind = "automated"
-status = "planned"
+status = "waived"
 phase = 9
 owner = "rayan6ms"
 requirements = ["FR-013", "QG-007"]
@@ -28,12 +28,12 @@ commands = [".github/scripts/run_phase9_package_smoke.sh", ".github/scripts/run_
 fixtures = ["Canonical staged package payload", "Real x86_64 release binaries", "Baseline and upgrade native packages", "Unknown future-schema user configuration", "Signed candidate packages and pre-upgrade user configuration"]
 environments = ["Native Debian and RPM package builders", "Clean Ubuntu, Debian, and Fedora x86_64 VMs"]
 result_artifacts = ["NOIRE_PHASE9_PACKAGE content, metadata, split, and generated-format assertions", "NOIRE_PHASE9_RELEASE_METADATA deterministic/dirty-source/checksum/SBOM/notice/provenance/tamper assertions", "NOIRE_PHASE9_PACKAGE_MANAGER headless/full/upgrade/downgrade/remove/reinstall/future-config assertions for Debian and RPM families", "NOIRE_PHASE9_PACKAGED_SERVICE ownership/activation/login/graph/newer-schema-refusal/stop/uninstall/config assertions", "Signed-candidate signature and full clean-VM assertions"]
-sources = ["packaging/stage-package.sh::stage_daemon()", "packaging/validate-binaries.sh::is_elf()", "packaging/debian/build.sh::shlib_dependencies()", "packaging/rpm/noire.spec::%package daemon", "packaging/rpm/rpmlintrc::empty convenience metapackage", "packaging/generate-release-metadata.py::NOIRE_RELEASE_METADATA", ".github/scripts/run_phase9_package_smoke.sh::NOIRE_PHASE9_PACKAGE content=pass", ".github/scripts/run_phase9_release_metadata_smoke.sh::NOIRE_PHASE9_RELEASE_METADATA deterministic=pass", ".github/scripts/run_phase9_package_manager_vm.sh::NOIRE_PHASE9_PACKAGE_MANAGER family=$family", ".github/scripts/run_phase9_packaged_service_vm.sh::NOIRE_PHASE9_PACKAGED_SERVICE family=$family"]
+sources = ["packaging/stage-package.sh::stage_daemon()", "packaging/validate-binaries.sh::is_elf()", "packaging/debian/build.sh::shlib_dependencies()", "packaging/rpm/noire.spec::%package daemon", "packaging/rpm/rpmlintrc::empty convenience metapackage", "packaging/generate-release-metadata.py::NOIRE_RELEASE_METADATA", ".github/scripts/run_phase9_package_smoke.sh::NOIRE_PHASE9_PACKAGE content=pass", ".github/scripts/run_phase9_release_metadata_smoke.sh::NOIRE_PHASE9_RELEASE_METADATA deterministic=pass", ".github/scripts/run_phase9_package_manager_vm.sh::NOIRE_PHASE9_PACKAGE_MANAGER family=$family", ".github/scripts/run_phase9_packaged_service_vm.sh::NOIRE_PHASE9_PACKAGED_SERVICE family=$family", "tests/release/qualification-decision-1.0.0.toml::waived_evidence"]
 
 [[template]]
 id = "MX-APPLICATION-COMPAT"
 kind = "mixed"
-status = "planned"
+status = "waived"
 phase = 10
 owner = "rayan6ms"
 requirements = ["NFR-009", "QG-008"]
@@ -45,3 +45,4 @@ environments = ["Required distribution, desktop, security, and application matri
 result_artifacts = ["Application/version matrix, selected-node assertion, capture metadata, and signed intelligibility result"]
 manual_reason = "Third-party GUI source selection and end-to-end speech intelligibility cannot be established reliably from process exit codes alone."
 manual_fields = ["reviewer", "date", "distribution", "desktop", "application/version", "selected source", "intelligibility"]
+sources = ["tests/release/qualification-decision-1.0.0.toml::waived_evidence"]

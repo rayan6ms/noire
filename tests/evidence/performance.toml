@@ -33,7 +33,7 @@ sources = ["crates/noire-pipewire/tests/capture_allocation.rs::fn ten_million_li
 [[template]]
 id = "AT-IDLE-RESOURCE"
 kind = "automated"
-status = "planned"
+status = "waived"
 phase = 7
 owner = "rayan6ms"
 requirements = ["NFR-003", "NFR-004"]
@@ -43,6 +43,7 @@ commands = ["Run the pinned idle CPU and RSS sampling procedures"]
 fixtures = ["No-consumer daemon state and open-UI steady state"]
 environments = ["Recorded x86_64 reference hardware"]
 result_artifacts = ["Timestamped CPU and RSS samples with percentile and maximum summaries"]
+sources = ["tests/release/qualification-decision-1.0.0.toml::waived_evidence"]
 
 [[template]]
 id = "AT-RECOVERY-SOAK"
@@ -51,13 +52,13 @@ status = "active"
 phase = 7
 owner = "rayan6ms"
 requirements = ["NFR-003", "NFR-004", "NFR-006", "NFR-007", "NFR-008"]
-observable = "The 15-hour workload and mandatory recovery cycles finish without crash, attributable xrun, unbounded counters, missed deadlines, or excessive RSS growth."
+observable = "The release soak and mandatory recovery cycles finish without crash, attributable xrun, unbounded counters, clustered deadline degradation, or excessive RSS growth; 1.0.0 records an owner waiver where this qualification is incomplete."
 test_ids = ["T-RELEASE-RECOVERY-SOAK"]
 commands = ["Run accelerated 8-hour and 15-hour audio-time stress passes", "NOIRE_PHASE7_SOAK_REALTIME=1 cargo test --release -p noire-pipewire --test phase5_pipeline release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded --locked -- --ignored --nocapture", ".github/scripts/run_pipewire_session.sh"]
 fixtures = ["Continuous deterministic source, consumer, hotplug, and restart schedule"]
 environments = ["Approved disposable reference-host session"]
-result_artifacts = ["NOIRE_PHASE7_SOAK with explicit pacing, NOIRE_PHASE7_RECOVERY, and tests/performance/phase7-hardening.toml"]
-sources = ["crates/noire-pipewire/tests/phase5_pipeline.rs::fn release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded", "crates/noired/tests/phase7_recovery.rs::fn native_recovery_survives_hotplug_restarts_and_command_storms"]
+result_artifacts = ["NOIRE_PHASE7_SOAK with explicit pacing, NOIRE_PHASE7_RECOVERY, tests/performance/phase7-hardening.toml, and any release-scoped waiver"]
+sources = ["crates/noire-pipewire/tests/phase5_pipeline.rs::fn release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded", "crates/noired/tests/phase7_recovery.rs::fn native_recovery_survives_hotplug_restarts_and_command_storms", "tests/release/qualification-decision-1.0.0.toml::final_test"]
 
 [[template]]
 id = "AT-PRIVACY-BOUNDARY"

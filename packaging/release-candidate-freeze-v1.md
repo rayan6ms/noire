@@ -44,9 +44,18 @@ the release metadata over all three artifact directories.
 
 ## Qualification after freeze
 
-The frozen set remains non-releasable until the GNOME/KDE accessibility and
-error-path review, clean-VM distribution/application matrix, QG-004 panel,
-signed package-lifecycle repetition, and bounded real-time soak program pass.
-The 8-hour pre-soak is the longest single run before the final 15-hour gate;
-there is no 18-hour or 24-hour test. Every open release blocker must be closed or receive
-an explicit owner-approved, time-bounded waiver before release.
+Normally the frozen set remains non-releasable until the GNOME/KDE
+accessibility and error-path review, clean-VM distribution/application matrix,
+QG-004 panel, signed package-lifecycle repetition, and bounded real-time soak
+program pass. Every open release blocker must either pass or receive an
+explicit owner-approved, release-scoped waiver. A waiver is not a pass and the
+release notes must disclose the resulting limitation.
+
+For 1.0.0, the owner ended qualification after the eight-hour real-time run and
+waived the remaining gates. The run completed on commit `465e63f` but failed the
+original zero-total-deadline-miss assertion after observing two isolated sampled
+misses; it did not enter the production five-misses-within-ten-seconds degraded
+state. The 15-hour run and all other unperformed qualification are cancelled for
+1.0.0. The exact result, accepted risks, scope, and expiry are recorded in
+[`tests/release/qualification-decision-1.0.0.toml`](../tests/release/qualification-decision-1.0.0.toml).
+None of the waived requirements may be described as tested or passed.

@@ -302,8 +302,8 @@ def validate_templates(
                 errors.append(f"{context}: phase must be an integer from 0 through 10")
             if kind not in KIND_PREFIX:
                 errors.append(f"{context}: kind must be automated, manual, or mixed")
-            if status not in {"active", "planned"}:
-                errors.append(f"{context}: status must be active or planned")
+            if status not in {"active", "planned", "waived"}:
+                errors.append(f"{context}: status must be active, planned, or waived")
             if template_id and not TEMPLATE_PATTERN.fullmatch(template_id):
                 errors.append(f"{context}: invalid evidence template ID {template_id!r}")
             expected_prefix = KIND_PREFIX.get(kind)
@@ -348,7 +348,7 @@ def validate_templates(
                 "sources",
                 context,
                 errors,
-                required=status == "active",
+                required=status in {"active", "waived"},
             )
             for source in sources:
                 validate_source_locator(root, source, context, errors)

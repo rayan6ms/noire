@@ -212,6 +212,9 @@ python3 .github/scripts/audit_release_candidate.py \
 ```
 
 The audit deliberately fails development packages, stale package metadata,
-dirty source, version drift, and Git-sourced dependencies. A passing freeze audit
-does not satisfy the later human, clean-VM, application, signed-lifecycle, or soak
-gates.
+dirty source, version drift, and Git-sourced dependencies. A passing freeze
+audit does not itself satisfy later qualification. For 1.0.0, the owner stopped
+after the completed eight-hour run and explicitly waived the remaining human,
+clean-VM, application, signed-lifecycle, idle-resource, and final-soak gates.
+See [`tests/release/qualification-decision-1.0.0.toml`](../tests/release/qualification-decision-1.0.0.toml).
+Waived evidence must not be reported as passed.

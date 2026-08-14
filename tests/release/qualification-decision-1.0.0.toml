@@ -1,0 +1,44 @@
+schema_version = 1
+release = "1.0.0"
+owner = "rayan6ms"
+decision_date = "2026-08-14"
+decision = "release-with-explicit-qualification-waivers"
+valid_for_release = "1.0.0 only"
+expires = "when 1.0.0 is published, cancelled, or superseded"
+candidate_commit = "465e63fb04b5c8ac1ea5976e44f1eb96e222e59c"
+reason = "The owner designated the completed eight-hour real-time run as the final test and declined all remaining automated and human qualification. Unperformed gates are waived rather than reported as passed."
+
+waived_tasks = ["P7-07", "P8-07", "P10-01", "P10-02", "P10-03", "P10-04", "P10-05", "P10-07"]
+waived_evidence = ["AT-RECOVERY-SOAK", "AT-IDLE-RESOURCE", "AT-NATIVE-DISTRO-BUILD", "AT-PACKAGE-LIFECYCLE", "MX-ACCESSIBILITY", "MX-APPLICATION-COMPAT", "MX-ERROR-USABILITY", "MX-SPEECH-PRESERVATION"]
+waived_template_statuses = ["AT-IDLE-RESOURCE", "AT-NATIVE-DISTRO-BUILD", "AT-PACKAGE-LIFECYCLE", "MX-ACCESSIBILITY", "MX-APPLICATION-COMPAT", "MX-ERROR-USABILITY", "MX-SPEECH-PRESERVATION"]
+completed_governance_evidence = ["ME-DEFERRED-SCOPE"]
+
+[final_test]
+name = "Phase-7 real-time soak"
+duration_hours = 8
+started_at = "2026-08-14T05:26:41-03:00"
+finished_at = "2026-08-14T13:26:51-03:00"
+exit_status = 101
+result = "failed-accepted-with-waiver"
+model_frames = 2880000
+sampled_model_calls = 28800
+deadline_misses = 2
+sampled_deadline_miss_percent = 0.006944
+all_frame_deadline_miss_percent = 0.000069
+model_errors = 0
+model_resets = 7
+state_at_final_assertions = "running"
+log = "tests/performance/phase7-pre-soak-8h-465e63f.log"
+log_sha256 = "0dc108b2f878285f2309c042b404171e8aa9f470cf252bf523b095eadef5a990"
+interpretation = "Two isolated sampled calls exceeded 0.75 ms across eight hours. The runtime did not reach its five-misses-within-ten-seconds degradation threshold. The original zero-total-miss acceptance assertion was stricter than the production runtime policy."
+
+[accepted_risks]
+final_fifteen_hour_soak = "not run"
+idle_resource_qualification = "not run"
+human_accessibility_review = "not run"
+human_error_copy_review = "not run"
+blinded_speech_panel = "not run"
+clean_vm_application_matrix = "not run"
+signed_package_lifecycle = "not run"
+native_clean_checkout_matrix = "not run"
+impact = "Noire 1.0.0 must be described as owner-accepted with incomplete qualification. The waived requirements and evidence must not be represented as passed."

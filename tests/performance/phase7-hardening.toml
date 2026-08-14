@@ -4,7 +4,9 @@ run_date = "2026-08-12"
 implementation_commit = "98a2a604278223635b875a9956e320803b6ef56b"
 acceptance_commit = "46a1218a11a37a156180e21ba7d7978a3479dd89"
 pass = false
-pending = ["independent real-time 8-hour pre-soak", "independent real-time 15-hour release soak"]
+pending = []
+release_disposition = "failed-soak-accepted-with-owner-waiver"
+waiver = "tests/release/qualification-decision-1.0.0.toml"
 
 [reference_environment]
 identifier = "noire-reference-x86_64-2026-08-12"
@@ -115,10 +117,22 @@ mode_pass = true
 
 [wall_clock_soak]
 pre_soak_hours = 8
-pre_soak_complete = false
+pre_soak_complete = true
+pre_soak_pass = false
+pre_soak_commit = "465e63fb04b5c8ac1ea5976e44f1eb96e222e59c"
+pre_soak_started_at = "2026-08-14T05:26:41-03:00"
+pre_soak_finished_at = "2026-08-14T13:26:51-03:00"
+pre_soak_exit_status = 101
+pre_soak_model_frames = 2880000
+pre_soak_deadline_misses = 2
+pre_soak_model_errors = 0
+pre_soak_state_at_final_assertions = "running"
+pre_soak_log = "tests/performance/phase7-pre-soak-8h-465e63f.log"
 release_soak_hours = 15
 release_soak_complete = false
+release_soak_waived = true
 nfr_008_pass = false
+nfr_008_waived_for_1_0_0 = true
 
 [hardening]
 proptest_cases_per_property = 4096
@@ -172,7 +186,7 @@ pass = true
 [commands]
 native_recovery = "dbus-run-session -- cargo test --release --package noired --features native-test --test phase7_recovery --locked -- --ignored --nocapture --test-threads=1"
 release_performance = "cargo test --release -p noire-pipewire --test phase5_pipeline live_rnnoise_meets_cpu_deadline_callback_and_rss_gates --locked -- --ignored --nocapture"
-accelerated_soak = "NOIRE_PHASE7_SOAK_HOURS=<8|15> cargo test --release -p noire-pipewire --test phase5_pipeline release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded --locked -- --ignored --nocapture"
-realtime_soak = ".github/scripts/run_phase7_soak.sh <8|15>"
+accelerated_soak = "Historical qualification command; no further 1.0.0 soak is scheduled"
+realtime_soak = "Final 1.0.0 run completed with an owner-accepted waiver; see tests/release/qualification-decision-1.0.0.toml"
 hardening = ".github/scripts/run_phase7_hardening.sh"
 privacy = ".github/scripts/run_phase7_session.sh"
