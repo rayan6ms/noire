@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Noire
+Comment=Control microphone noise suppression
+Exec=noire
+Icon=io.github.rayan6ms.Noire
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=microphone;noise;audio;PipeWire;
+DBusActivatable=true
+StartupNotify=true

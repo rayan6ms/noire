@@ -23,6 +23,9 @@ cargo check --workspace --all-targets --locked
 Engineering setup and boundaries are documented in [DEVELOPMENT.md](DEVELOPMENT.md),
 [ARCHITECTURE.md](ARCHITECTURE.md), and [CONTRIBUTING.md](CONTRIBUTING.md).
 
+Installation and operation are covered by the [user guide](USER_GUIDE.md), with
+separate [troubleshooting](TROUBLESHOOTING.md) and [privacy](PRIVACY.md) notes.
+
 Noire does not modify global PipeWire or WirePlumber configuration, upload audio,
 or require a graphical session for daemon and CLI use.
 

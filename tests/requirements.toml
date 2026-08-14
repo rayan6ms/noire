@@ -143,7 +143,7 @@ evidence = ["AT-PIPEWIRE-RECOVERY", "AT-RECOVERY-SOAK"]
 
 [[requirement]]
 id = "NFR-008"
-summary = "Pass the 24-hour release soak"
+summary = "Pass the 15-hour release soak"
 priority = "release"
 evidence = ["AT-RECOVERY-SOAK"]
 

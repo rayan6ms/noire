@@ -23,6 +23,7 @@ thiserror.workspace = true
 zbus = { workspace = true, optional = true }
 
 [dev-dependencies]
+futures-util.workspace = true
 proptest.workspace = true
 
 [features]

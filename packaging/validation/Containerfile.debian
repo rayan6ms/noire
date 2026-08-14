@@ -1,0 +1,22 @@
+FROM docker.io/library/debian:13
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+        ca-certificates \
+        dbus-user-session \
+        pipewire \
+        pipewire-bin \
+        procps \
+        systemd \
+        systemd-sysv \
+        util-linux \
+        wireplumber \
+        xauth \
+        xvfb \
+    && apt-get clean \
+    && find /var/lib/apt/lists -mindepth 1 -delete
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

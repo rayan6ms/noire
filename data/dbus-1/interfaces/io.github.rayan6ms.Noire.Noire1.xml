@@ -16,10 +16,13 @@
     <method name="Retry"><arg name="expected_revision" type="t" direction="in"/><arg name="snapshot" type="(ussttsbbssssbssbdssustb(ssssbt)(ttttttttttttttttddd))" direction="out"/></method>
     <method name="SetLaunchAtLogin"><arg name="enabled" type="b" direction="in"/><arg name="expected_revision" type="t" direction="in"/><arg name="snapshot" type="(ussttsbbssssbssbdssustb(ssssbt)(ttttttttttttttttddd))" direction="out"/></method>
     <method name="Diagnostics"><arg name="report" type="(ussssssss)" direction="out"/></method>
+    <method name="SubscribeMeters"/>
+    <method name="UnsubscribeMeters"/>
     <property name="StateRevision" type="t" access="read"/>
     <property name="DeviceRevision" type="t" access="read"/>
     <signal name="StateChanged"><arg name="revision" type="t"/></signal>
     <signal name="DevicesChanged"><arg name="device_revision" type="t"/></signal>
     <signal name="ErrorRaised"><arg name="error" type="(ssssbt)"/></signal>
+    <signal name="MetersChanged"><arg name="metrics" type="(ttttttttttttttttddd)"/></signal>
   </interface>
 </node>

@@ -1,0 +1,27 @@
+.TH NOIRE 1 "August 2026" "Noire 1.0.0" "User Commands"
+.SH NAME
+noire \- control Noire through its GTK interface
+.SH SYNOPSIS
+.B noire
+.RI [ options ]
+.SH DESCRIPTION
+.B noire
+opens the optional GTK4 control interface for the per-user Noire daemon.
+Closing the window does not stop the daemon or remove its virtual microphone.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show command help.
+.TP
+.BR \-V ", " \-\-version
+Show the installed version.
+.SH FILES
+.TP
+.I ~/.config/noire/config.toml
+Per-user configuration. The package manager does not create or remove this file.
+.TP
+.I /usr/share/doc/noire-daemon/USER_GUIDE.md
+Installed user guide, including first use, privacy modes, and safe removal.
+.SH SEE ALSO
+.BR noirectl (1),
+.BR noired (1)

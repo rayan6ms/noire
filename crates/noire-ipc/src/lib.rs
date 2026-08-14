@@ -28,61 +28,115 @@ pub struct ErrorCatalogEntry {
     pub cause: &'static str,
     /// Actionable user recovery.
     pub recovery: &'static str,
+    /// Whether retrying the same operation can reasonably recover.
+    pub retryable: bool,
 }
 
 /// Stable user-facing error categories covered by daemon and CLI tests.
 pub const ERROR_CATALOG: &[ErrorCatalogEntry] = &[
     ErrorCatalogEntry {
         code: "conflict",
-        cause: "another client committed a newer state revision",
-        recovery: "refresh daemon state and retry",
+        cause: "Another client committed a newer state revision.",
+        recovery: "Refresh daemon state and retry.",
+        retryable: true,
     },
     ErrorCatalogEntry {
         code: "invalid-argument",
-        cause: "a requested setting failed complete validation",
-        recovery: "correct the rejected value and retry",
+        cause: "A requested setting failed complete validation.",
+        recovery: "Correct the rejected value and retry.",
+        retryable: false,
     },
     ErrorCatalogEntry {
         code: "config-persistence",
-        cause: "the validated configuration could not be saved durably",
-        recovery: "check configuration directory permissions and free storage",
+        cause: "The validated configuration could not be saved durably.",
+        recovery: "Check configuration directory permissions and free storage.",
+        retryable: true,
     },
     ErrorCatalogEntry {
         code: "config-newer-schema",
-        cause: "the configuration was written by a newer incompatible daemon",
-        recovery: "run a daemon supporting that schema; the file remains untouched",
+        cause: "The configuration was written by a newer incompatible daemon.",
+        recovery: "Run a daemon supporting that schema; the file remains untouched.",
+        retryable: false,
+    },
+    ErrorCatalogEntry {
+        code: "config-recovered",
+        cause: "The primary configuration was invalid and a safe fallback was loaded.",
+        recovery: "Inspect the preserved primary configuration and correct it.",
+        retryable: false,
     },
     ErrorCatalogEntry {
         code: "input-unavailable",
-        cause: "the selected or default input is not currently available",
-        recovery: "select an available input or enable explicit default fallback",
+        cause: "The selected or default input is not currently available.",
+        recovery: "Select an available input or enable explicit default fallback.",
+        retryable: true,
     },
     ErrorCatalogEntry {
         code: "pipewire-unavailable",
-        cause: "the per-user PipeWire service cannot be reached",
-        recovery: "restore the user PipeWire session and retry",
+        cause: "The per-user PipeWire service cannot be reached.",
+        recovery: "Restore the user PipeWire session and retry.",
+        retryable: true,
+    },
+    ErrorCatalogEntry {
+        code: "audio-backend-unavailable",
+        cause: "This daemon build does not include the native audio backend.",
+        recovery: "Install or run the native daemon build.",
+        retryable: false,
+    },
+    ErrorCatalogEntry {
+        code: "audio-thread-unavailable",
+        cause: "Noire could not create its audio control thread.",
+        recovery: "Free process resources and restart Noire.",
+        retryable: true,
     },
     ErrorCatalogEntry {
         code: "audio-command-busy",
-        cause: "the bounded audio control queue is temporarily full",
-        recovery: "wait briefly and retry",
+        cause: "The bounded audio control queue is temporarily full.",
+        recovery: "Wait briefly and retry.",
+        retryable: true,
+    },
+    ErrorCatalogEntry {
+        code: "audio-command-timeout",
+        cause: "The audio control thread did not respond in time.",
+        recovery: "Retry; restart Noire if the condition persists.",
+        retryable: true,
+    },
+    ErrorCatalogEntry {
+        code: "audio-thread-stopped",
+        cause: "The audio control thread stopped unexpectedly.",
+        recovery: "Restart the Noire user service.",
+        retryable: false,
     },
     ErrorCatalogEntry {
         code: "audio-stream-failed",
-        cause: "a native capture or virtual-source stream stopped unexpectedly",
-        recovery: "allow bounded graph recovery; restart PipeWire if it persists",
+        cause: "A native capture or virtual-source stream stopped unexpectedly.",
+        recovery: "Allow bounded graph recovery; restart PipeWire if it persists.",
+        retryable: true,
+    },
+    ErrorCatalogEntry {
+        code: "audio-graph-unavailable",
+        cause: "The live microphone processing graph could not be created.",
+        recovery: "Verify PipeWire and the selected input, then retry.",
+        retryable: true,
     },
     ErrorCatalogEntry {
         code: "model-initialization-failed",
-        cause: "the bundled suppression model could not initialize",
-        recovery: "restart Noire; reinstall if the condition persists",
+        cause: "The bundled suppression model could not initialize.",
+        recovery: "Restart Noire; reinstall if the condition persists.",
+        retryable: true,
     },
     ErrorCatalogEntry {
         code: "launch-manager-unavailable",
-        cause: "the per-user systemd manager rejected launch-at-login control",
-        recovery: "verify the user systemd session and retry",
+        cause: "The per-user systemd manager rejected launch-at-login control.",
+        recovery: "Verify the user systemd session and retry.",
+        retryable: true,
     },
 ];
+
+/// Finds the stable user-facing contract for one public error code.
+#[must_use]
+pub fn error_catalog_entry(code: &str) -> Option<&'static ErrorCatalogEntry> {
+    ERROR_CATALOG.iter().find(|entry| entry.code == code)
+}
 
 /// Complete low-rate daemon state returned atomically.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -308,6 +362,10 @@ pub trait Noire1 {
     fn set_launch_at_login(&self, enabled: bool, expected_revision: u64) -> zbus::Result<Snapshot>;
     /// Produces a sanitized diagnostics report.
     fn diagnostics(&self) -> zbus::Result<DiagnosticReport>;
+    /// Enables bounded meter signals for this D-Bus client.
+    fn subscribe_meters(&self) -> zbus::Result<()>;
+    /// Disables meter signals for this D-Bus client.
+    fn unsubscribe_meters(&self) -> zbus::Result<()>;
 
     /// Current state revision as a D-Bus property.
     #[zbus(property)]
@@ -325,6 +383,9 @@ pub trait Noire1 {
     /// Emitted once for each deduplicated public error occurrence.
     #[zbus(signal)]
     fn error_raised(&self, error: ErrorInfo) -> zbus::Result<()>;
+    /// Emitted at no more than 10 Hz while at least one client subscribes.
+    #[zbus(signal)]
+    fn meters_changed(&self, metrics: Metrics) -> zbus::Result<()>;
 }
 
 #[cfg(test)]
@@ -336,7 +397,7 @@ mod tests {
         let snapshot = Snapshot {
             schema_version: SNAPSHOT_SCHEMA_VERSION,
             api_version: API_VERSION.to_owned(),
-            build_version: "0.1.0".to_owned(),
+            build_version: env!("CARGO_PKG_VERSION").to_owned(),
             revision: 7,
             device_revision: 3,
             state: "stopped".to_owned(),
@@ -399,9 +460,12 @@ mod tests {
             "Retry",
             "SetLaunchAtLogin",
             "Diagnostics",
+            "SubscribeMeters",
+            "UnsubscribeMeters",
             "StateChanged",
             "DevicesChanged",
             "ErrorRaised",
+            "MetersChanged",
         ] {
             assert!(xml.contains(&format!("name=\"{member}\"")));
         }
@@ -414,7 +478,19 @@ mod tests {
             assert!(!entry.code.is_empty());
             assert!(!entry.cause.is_empty());
             assert!(!entry.recovery.is_empty());
+            assert!(entry.cause.chars().next().is_some_and(char::is_uppercase));
+            assert!(entry.cause.ends_with('.'));
+            assert!(
+                entry
+                    .recovery
+                    .chars()
+                    .next()
+                    .is_some_and(char::is_uppercase)
+            );
+            assert!(entry.recovery.ends_with('.'));
             assert!(codes.insert(entry.code));
+            assert_eq!(error_catalog_entry(entry.code), Some(entry));
         }
+        assert_eq!(error_catalog_entry("not-a-public-error"), None);
     }
 }

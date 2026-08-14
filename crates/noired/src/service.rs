@@ -1,16 +1,18 @@
 //! Version-one D-Bus service adapter.
 
 use std::{
+    collections::BTreeSet,
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use noire_config::{FailMode, LatencyProfile};
 use noire_ipc::{
-    BUS_NAME, DiagnosticReport, ErrorInfo, InputDescriptor, OBJECT_PATH, ServiceError, Snapshot,
+    BUS_NAME, DiagnosticReport, ErrorInfo, InputDescriptor, Metrics, OBJECT_PATH, ServiceError,
+    Snapshot, error_catalog_entry,
 };
 use tokio::sync::Mutex;
-use zbus::object_server::SignalEmitter;
+use zbus::{message::Header, object_server::SignalEmitter};
 
 use crate::{ControlError, Daemon, EventRateLimiter, LaunchManager};
 
@@ -20,6 +22,7 @@ pub struct NoireService {
     daemon: Arc<Mutex<Daemon>>,
     launch_manager: Arc<dyn LaunchManager>,
     error_limiter: Arc<Mutex<EventRateLimiter>>,
+    meter_subscribers: Arc<Mutex<BTreeSet<String>>>,
 }
 
 impl std::fmt::Debug for NoireService {
@@ -38,7 +41,94 @@ impl NoireService {
             daemon: Arc::new(Mutex::new(daemon)),
             launch_manager,
             error_limiter: Arc::new(Mutex::new(EventRateLimiter::new(Duration::from_secs(5)))),
+            meter_subscribers: Arc::new(Mutex::new(BTreeSet::new())),
         }
+    }
+
+    /// Publishes autonomous state/device changes and subscribed meters.
+    ///
+    /// This control-plane loop never runs on a `PipeWire` callback. Its 100 ms
+    /// cadence is the maximum public meter rate, and meters are not emitted when
+    /// no D-Bus client has explicitly subscribed.
+    pub async fn monitor(&self, connection: &zbus::Connection) {
+        let Ok(emitter) = SignalEmitter::new(connection, OBJECT_PATH) else {
+            return;
+        };
+        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut prune_tick = 0_u8;
+
+        loop {
+            tokio::select! {
+                () = connection.closed() => break,
+                _ = interval.tick() => {}
+            }
+
+            let (state_changed, device_changed, snapshot) = {
+                let mut daemon = self.daemon.lock().await;
+                let state_changed = daemon.refresh_observation();
+                let before = daemon.device_revision();
+                let _ignored = daemon.inputs();
+                let device_changed = before != daemon.device_revision();
+                (state_changed, device_changed, daemon.snapshot())
+            };
+            if state_changed {
+                let _ignored = Self::state_changed(&emitter, snapshot.revision).await;
+            }
+            if device_changed {
+                let _ignored = Self::devices_changed(&emitter, snapshot.device_revision).await;
+            }
+
+            prune_tick = prune_tick.wrapping_add(1);
+            if prune_tick >= 10 {
+                self.prune_meter_subscribers(connection).await;
+                prune_tick = 0;
+            }
+            let subscribers: Vec<String> = self
+                .meter_subscribers
+                .lock()
+                .await
+                .iter()
+                .cloned()
+                .collect();
+            for subscriber in subscribers {
+                let Ok(destination) = zbus::names::BusName::try_from(subscriber.as_str()) else {
+                    continue;
+                };
+                let targeted = emitter.clone().set_destination(destination);
+                let _ignored = Self::meters_changed(&targeted, snapshot.metrics.clone()).await;
+            }
+        }
+    }
+
+    async fn prune_meter_subscribers(&self, connection: &zbus::Connection) {
+        let subscribers: Vec<String> = self
+            .meter_subscribers
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect();
+        if subscribers.is_empty() {
+            return;
+        }
+        let Ok(bus) = zbus::fdo::DBusProxy::new(connection).await else {
+            return;
+        };
+        for subscriber in subscribers {
+            let Ok(name) = zbus::names::BusName::try_from(subscriber.as_str()) else {
+                continue;
+            };
+            if !matches!(bus.name_has_owner(name).await, Ok(true)) {
+                self.meter_subscribers.lock().await.remove(&subscriber);
+            }
+        }
+    }
+
+    fn caller(header: &Header<'_>) -> Result<String, ServiceError> {
+        header.sender().map(ToString::to_string).ok_or_else(|| {
+            ServiceError::Internal("D-Bus request did not identify its sender".to_owned())
+        })
     }
 
     async fn publish(
@@ -233,6 +323,28 @@ impl NoireService {
         daemon.diagnostics()
     }
 
+    async fn subscribe_meters(
+        &self,
+        #[zbus(header)] header: Header<'_>,
+    ) -> Result<(), ServiceError> {
+        self.meter_subscribers
+            .lock()
+            .await
+            .insert(Self::caller(&header)?);
+        Ok(())
+    }
+
+    async fn unsubscribe_meters(
+        &self,
+        #[zbus(header)] header: Header<'_>,
+    ) -> Result<(), ServiceError> {
+        self.meter_subscribers
+            .lock()
+            .await
+            .remove(&Self::caller(&header)?);
+        Ok(())
+    }
+
     #[zbus(property)]
     async fn state_revision(&self) -> u64 {
         self.daemon.lock().await.revision()
@@ -252,6 +364,9 @@ impl NoireService {
 
     #[zbus(signal)]
     async fn error_raised(emitter: &SignalEmitter<'_>, error: ErrorInfo) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn meters_changed(emitter: &SignalEmitter<'_>, metrics: Metrics) -> zbus::Result<()>;
 }
 
 /// Claims the well-known name without queueing or replacing another daemon.
@@ -268,17 +383,32 @@ pub async fn claim_name(connection: &zbus::Connection) -> zbus::Result<()> {
         .map(|_| ())
 }
 
-/// Registers the object after name ownership has been established.
+/// Registers the object before name ownership makes the service reachable.
 ///
 /// # Errors
 ///
-/// Returns an object-server registration failure.
+/// Returns an object-server registration failure. Production startup must call
+/// this before [`claim_name`] so activation requests cannot enter a name/object
+/// registration gap.
 pub async fn register_service(
     connection: &zbus::Connection,
     service: NoireService,
 ) -> zbus::Result<()> {
     connection.object_server().at(OBJECT_PATH, service).await?;
     Ok(())
+}
+
+/// Registers the service object and only then exposes its well-known name.
+///
+/// # Errors
+///
+/// Returns an object-server registration or non-queued name-ownership failure.
+pub async fn register_and_claim(
+    connection: &zbus::Connection,
+    service: NoireService,
+) -> zbus::Result<()> {
+    register_service(connection, service).await?;
+    claim_name(connection).await
 }
 
 fn map_error(error: ControlError) -> ServiceError {
@@ -297,56 +427,43 @@ fn map_error(error: ControlError) -> ServiceError {
 }
 
 fn public_error(error: &ControlError) -> (&'static str, ErrorInfo) {
-    let (event, code, recovery, component, retryable) = match error {
-        ControlError::Conflict { .. } => (
-            "control.conflict",
-            "conflict",
-            "refresh daemon state and retry against its current revision",
-            "control",
-            true,
-        ),
-        ControlError::Invalid(_) => (
-            "control.invalid",
-            "invalid-argument",
-            "correct the rejected value and retry",
-            "control",
-            false,
-        ),
-        ControlError::Audio(engine) => (
-            "audio.unavailable",
-            engine.code,
-            engine.recovery,
-            "audio",
-            engine.retryable,
-        ),
-        ControlError::Persistence(_) => (
-            "config.persistence",
-            "config-persistence",
-            "check configuration directory permissions and available storage",
-            "config",
-            true,
-        ),
-        ControlError::ReadOnly => (
-            "config.read-only",
-            "config-newer-schema",
-            "run a daemon version supporting the existing configuration",
-            "config",
-            false,
-        ),
-        ControlError::LaunchManager(_) => (
-            "systemd.manager",
-            "launch-manager-unavailable",
-            "verify the per-user systemd manager and retry",
-            "systemd",
-            true,
-        ),
+    let (event, code, component) = match error {
+        ControlError::Conflict { .. } => ("control.conflict", "conflict", "control"),
+        ControlError::Invalid(_) => ("control.invalid", "invalid-argument", "control"),
+        ControlError::Audio(engine) => ("audio.unavailable", engine.code, "audio"),
+        ControlError::Persistence(_) => ("config.persistence", "config-persistence", "config"),
+        ControlError::ReadOnly => ("config.read-only", "config-newer-schema", "config"),
+        ControlError::LaunchManager(_) => {
+            ("systemd.manager", "launch-manager-unavailable", "systemd")
+        }
     };
+    let (message, recovery, retryable) = error_catalog_entry(code).map_or_else(
+        || match error {
+            ControlError::Audio(engine) => (
+                engine.message.clone(),
+                engine.recovery.to_owned(),
+                engine.retryable,
+            ),
+            _ => (
+                "Noire rejected the requested change.".to_owned(),
+                "Refresh daemon state and retry.".to_owned(),
+                false,
+            ),
+        },
+        |catalog| {
+            (
+                catalog.cause.to_owned(),
+                catalog.recovery.to_owned(),
+                catalog.retryable,
+            )
+        },
+    );
     (
         event,
         ErrorInfo {
             code: code.to_owned(),
-            message: error.to_string(),
-            recovery: recovery.to_owned(),
+            message,
+            recovery,
             component: component.to_owned(),
             retryable,
             timestamp_millis: std::time::SystemTime::now()
@@ -356,4 +473,91 @@ fn public_error(error: &ControlError) -> (&'static str, ErrorInfo) {
                 }),
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use noire_ipc::error_catalog_entry;
+
+    use super::*;
+    use crate::EngineError;
+
+    #[test]
+    fn every_production_public_error_code_has_catalog_copy() {
+        fn literal_codes(source: &str) -> impl Iterator<Item = &str> {
+            let production = source
+                .split_once("#[cfg(test)]")
+                .map_or(source, |(production, _tests)| production);
+            production
+                .split("code: \"")
+                .skip(1)
+                .filter_map(|suffix| suffix.split_once('"').map(|(code, _rest)| code))
+        }
+
+        let sources = [
+            include_str!("control.rs"),
+            include_str!("native.rs"),
+            include_str!("systemd.rs"),
+        ];
+        let mut production_codes: std::collections::BTreeSet<&str> = sources
+            .iter()
+            .flat_map(|source| literal_codes(source))
+            .collect();
+        production_codes.extend([
+            "conflict",
+            "invalid-argument",
+            "config-persistence",
+            "config-newer-schema",
+            "config-recovered",
+        ]);
+
+        let uncataloged: Vec<_> = production_codes
+            .into_iter()
+            .filter(|code| error_catalog_entry(code).is_none())
+            .collect();
+        assert!(
+            uncataloged.is_empty(),
+            "production public errors missing catalog copy: {uncataloged:?}"
+        );
+    }
+
+    #[test]
+    fn rejected_requests_publish_exact_catalog_cause_and_recovery() {
+        let errors = [
+            ControlError::Conflict {
+                expected: 1,
+                current: 2,
+            },
+            ControlError::Invalid("test invalid value".to_owned()),
+            ControlError::Audio(EngineError {
+                code: "audio-command-busy",
+                message: "test queue detail".to_owned(),
+                recovery: "test recovery",
+                retryable: false,
+            }),
+            ControlError::Persistence("test filesystem detail".to_owned()),
+            ControlError::ReadOnly,
+            ControlError::LaunchManager("test manager detail".to_owned()),
+        ];
+
+        for error in errors {
+            let (_event, public) = public_error(&error);
+            let presented = (
+                public.message.as_str(),
+                public.recovery.as_str(),
+                public.retryable,
+            );
+            assert_eq!(
+                error_catalog_entry(&public.code).map(|catalog| (
+                    catalog.cause,
+                    catalog.recovery,
+                    catalog.retryable
+                )),
+                Some(presented),
+                "{}",
+                public.code
+            );
+            assert!(!public.component.is_empty(), "{}", public.code);
+        }
+    }
 }

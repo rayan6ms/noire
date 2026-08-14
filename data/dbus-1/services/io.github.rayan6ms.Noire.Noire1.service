@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=io.github.rayan6ms.Noire.Noire1
+Exec=/usr/bin/noired
+SystemdService=noire.service

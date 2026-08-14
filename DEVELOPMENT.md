@@ -35,6 +35,33 @@ cargo run -p noirectl -- devices
 cargo run -p noirectl -- set strength 0.75
 ```
 
+With GTK 4.10 or newer installed, run the optional settings and status client
+against the same daemon:
+
+```bash
+cargo run -p noire-ui --features gtk-ui
+```
+
+The UI does not start or embed the daemon. It remains usable when the daemon or
+audio backend is unavailable, and all D-Bus work runs off the GTK main thread.
+GTK-visible translated strings use GLib's `noire` gettext domain. The deterministic
+template update and reviewed-catalog layout are documented in `po/README.md`.
+The reproducible Ubuntu 24.04 GTK test environment is defined by
+`packaging/validation/Containerfile.ui-ubuntu` for hosts without development
+headers.
+
+The installed-package boundary is covered separately by the gated, bounded
+`.github/scripts/run_phase8_packaged_ui_vm.sh` harness. In a disposable Ubuntu
+24.04, Debian 13, or Fedora 44 container it proves that `noire-daemon` remains
+GTK-free, exercises daemon/CLI D-Bus operation, installs the optional UI, checks
+GTK 4.10+, requires a clear no-display failure, runs the real window under Xvfb
+for three seconds, and removes the UI without breaking headless operation.
+The default AppStream image is an actual running-state window from this packaged
+Ubuntu environment. Refresh it only in a disposable container with
+`.github/scripts/capture_phase8_appstream_screenshot.sh`, then run
+`.github/scripts/validate_appstream_screenshots.py` to prove the HTTPS URL maps
+to the committed 1280×720 PNG and matches its declared dimensions.
+
 The default daemon build remains controllable but reports an actionable error if
 asked to start audio. Add `--features pipewire-backend` for the native live graph.
 Configuration is owned by the daemon at `$XDG_CONFIG_HOME/noire/config.toml` or
@@ -96,10 +123,90 @@ cargo check -p noire-ui --features gtk-ui --locked
 cargo check --workspace --all-targets --all-features --locked
 ```
 
+## Native package development
+
+Package generation is intentionally separate from installation. Build the three
+native release binaries, then use the distro-family builder documented in
+[`packaging/README.md`](packaging/README.md). The daemon package remains GTK-free;
+the UI and an empty convenience package are separate artifacts.
+
+Validate the canonical payload, desktop/AppStream metadata, package split, and
+every package format supported by the current host without installing anything:
+
+```bash
+.github/scripts/run_phase9_package_smoke.sh
+```
+
+The Debian and RPM builders write only beneath the requested output directory.
+Run install, upgrade, removal, and service lifecycle checks only in the gated
+disposable environment; package scripts must never enter user home directories
+or restart every logged-in user's service.
+
+For a short package-manager lifecycle using real baseline and upgrade packages,
+run this as root inside a disposable Ubuntu/Debian or Fedora environment:
+
+```bash
+NOIRE_PHASE9_DISPOSABLE_VM=1 \
+  .github/scripts/run_phase9_package_manager_vm.sh deb dist/deb-1 dist/deb-2
+```
+
+Substitute `rpm` and RPM artifact directories on Fedora. This bounded check
+covers headless/full install, runtime dependencies, upgrade, actual package
+downgrade, remove, reinstall, and byte-preservation of an incompatible future
+config schema. It deliberately does not replace the final signed-candidate login
+and PipeWire graph-node qualification.
+
+The complementary installed-service harness is
+`.github/scripts/run_phase9_packaged_service_vm.sh`. Run it only in a disposable
+systemd container built from `packaging/validation/Containerfile.ubuntu`,
+`Containerfile.debian`, or `Containerfile.fedora`; exact Podman commands are in
+`packaging/README.md`. It checks concurrent D-Bus activation, opt-in login, one
+live Noire PipeWire source, zero sources after stop, future-schema
+safe-default/read-only refusal, uninstall, and configuration preservation.
+
+For the shorter packaged GTK/no-GTK boundary, use
+`.github/scripts/run_phase8_packaged_ui_vm.sh` in the same disposable images;
+it does not require systemd as PID 1. Exact commands are in
+`packaging/README.md`.
+
+Run the short, offline release-metadata smoke to prove clean-source enforcement,
+byte-for-byte reproducibility, checksums, SPDX 2.3 content, embedded-model
+identity, SLSA provenance, and tamper rejection:
+
+```bash
+.github/scripts/run_phase9_release_metadata_smoke.sh
+```
+
+The real-artifact generation and verification commands are documented in
+[`packaging/README.md`](packaging/README.md). Metadata signing and publication
+remain frozen-release-candidate operations, not development checks.
+
+Before creating a candidate, run the bounded audit against the intended 1.0.0
+package set. It checks the version closure, clean source state, pinned toolchain,
+dependency source policy, traceability, AppStream screenshot, exact package
+filenames, and that both UI packages contain the current AppStream metadata:
+
+```bash
+python3 .github/scripts/audit_release_candidate.py \
+  --expected-version 1.0.0 --package-release 1 \
+  --deb-dir dist/deb --rpm-dir dist/rpm \
+  --source-dir dist/source --metadata-dir dist/release-metadata
+```
+
+The exact unsigned candidate contents and the distinction between freezing and
+release qualification are defined in
+[`packaging/release-candidate-freeze-v1.md`](packaging/release-candidate-freeze-v1.md).
+`--report-only` is diagnostic and never records a freeze pass.
+
 Missing `libpipewire-0.3.pc`, `libspa-0.2.pc`, or `gtk4.pc` errors indicate a
 system development-package or `PKG_CONFIG_PATH` problem. A bindgen error that
 cannot find `libclang.so` indicates a libclang installation or `LIBCLANG_PATH`
 problem; do not vendor machine-specific paths into the repository.
+
+The two local PipeWire 0.10.0 sys-crate patches are the upstream,
+source-independent bindgen output-directory fix documented in
+[`vendor/README.md`](vendor/README.md). They keep Ubuntu 24.04 builds compatible
+while `deny.toml` continues to reject all Git dependency sources.
 
 ## PipeWire sessions
 
@@ -142,6 +249,26 @@ When behavior, scope, or release evidence changes, update
 `planned` records its future evidence contract; only set it to `active` when its
 cited automated sources exist and run.
 
+Phase 8 error-copy automation covers every production public error code. Its
+remaining human clarity and operability review is recorded in
+[`tests/usability/phase8-error-review.md`](tests/usability/phase8-error-review.md);
+keep `MX-ERROR-USABILITY` planned until that signed GNOME/KDE review is complete.
+
+The corresponding keyboard, accessibility-tree, screen-reader, and
+color-independence procedure is in
+[`tests/usability/phase8-accessibility-review.md`](tests/usability/phase8-accessibility-review.md).
+Keep `MX-ACCESSIBILITY` planned until both desktop records are signed.
+
+The packaged opt-in user unit is
+[`data/systemd/user/noire.service`](data/systemd/user/noire.service). Validate its
+syntax and policy without touching the current user manager with
+`.github/scripts/run_phase9_user_service.sh`. The complete enable, login,
+failure-restart, stop, and disable harness is intentionally gated behind
+`NOIRE_PHASE9_DISPOSABLE_VM=1` in `.github/scripts/run_phase9_service_vm.sh`.
+The matching D-Bus activation record is
+[`data/dbus-1/services/io.github.rayan6ms.Noire.Noire1.service`](data/dbus-1/services/io.github.rayan6ms.Noire.Noire1.service);
+the package smoke checks that both files name the same service and bus owner.
+
 When native packages are available, repeat check, Clippy, and test with
 `--all-features`. Feature-specific integration, latency, quality, and soak tests
 are additional evidence; they are not replaced by the standard sequence.
@@ -182,6 +309,11 @@ controls, and removes the real live graph:
 dbus-run-session -- .github/scripts/run_phase6_session.sh
 dbus-run-session -- .github/scripts/run_pipewire_session.sh
 ```
+
+The wall-clock Phase-7 8-hour and 15-hour soaks are release-candidate gates, not
+feature-development prerequisites. Run them only after the application and
+packaging have reached a frozen release-candidate state; use the bounded standard,
+native-session, and accelerated checks while implementation is still changing.
 
 Phase-2 offline allocation and timing checks use the release profile:
 

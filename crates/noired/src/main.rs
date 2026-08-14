@@ -21,15 +21,12 @@ async fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
 
     use noire_config::ConfigStore;
-    use noired::{
-        AudioEngine, Daemon, NoireService, SystemdUserManager, claim_name, register_service,
-    };
+    use noired::{AudioEngine, Daemon, NoireService, SystemdUserManager, register_and_claim};
 
     Arguments::parse();
     tracing_subscriber::fmt().with_target(false).init();
 
     let connection = zbus::Connection::session().await?;
-    claim_name(&connection).await?;
     let store = ConfigStore::discover()?;
     let loaded = store.load()?;
     #[cfg(feature = "pipewire-backend")]
@@ -38,9 +35,13 @@ async fn main() -> anyhow::Result<()> {
     let engine: Box<dyn AudioEngine> = Box::new(noired::NullAudioEngine);
     let daemon = Daemon::new(store, engine, loaded);
     let launch_manager = Arc::new(SystemdUserManager::new(connection.clone()));
-    register_service(&connection, NoireService::new(daemon, launch_manager)).await?;
+    // Expose the well-known name only after the object is ready. Otherwise
+    // simultaneous D-Bus activation clients can deliver calls into the gap and
+    // wait forever for replies that the object server never saw.
+    let service = NoireService::new(daemon, launch_manager);
+    register_and_claim(&connection, service.clone()).await?;
     tracing::info!(event = "daemon.ready", bus_name = noire_ipc::BUS_NAME);
-    connection.closed().await;
+    service.monitor(&connection).await;
     tracing::info!(event = "daemon.session-closed");
     Ok(())
 }

@@ -1,0 +1,31 @@
+[Unit]
+Description=Noire real-time microphone noise suppression
+Documentation=https://github.com/rayan6ms/noire
+After=pipewire.service wireplumber.service
+StartLimitIntervalSec=30s
+StartLimitBurst=3
+
+[Service]
+Type=dbus
+BusName=io.github.rayan6ms.Noire.Noire1
+ExecStart=/usr/bin/noired
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=5s
+UMask=0077
+
+ConfigurationDirectory=noire
+ConfigurationDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%E/noire
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=default.target

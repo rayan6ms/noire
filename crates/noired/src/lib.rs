@@ -24,7 +24,7 @@ pub use recovery::{
     RecoveryPhase, RecoveryStats,
 };
 #[cfg(feature = "runtime")]
-pub use service::{NoireService, claim_name, register_service};
+pub use service::{NoireService, claim_name, register_and_claim, register_service};
 #[cfg(feature = "runtime")]
 pub use systemd::{LaunchManager, LaunchManagerError, SystemdUserManager};
 

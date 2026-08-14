@@ -3,16 +3,17 @@ schema_version = 1
 [[template]]
 id = "AT-SYSTEMD-USER-SERVICE"
 kind = "automated"
-status = "planned"
+status = "active"
 phase = 9
 owner = "rayan6ms"
 requirements = ["FR-013"]
 observable = "The packaged user service supports opt-in login start, explicit stop/disable, bounded restart, and least-privilege session operation."
 test_ids = ["T-SYSTEMD-USER-SERVICE"]
-commands = ["Run user-service install, enable, login, stop, disable, and failure-restart scenarios"]
-fixtures = ["Fresh user account and packaged systemd user unit"]
-environments = ["Clean supported-distribution VM"]
-result_artifacts = ["systemd user-unit states, process identities, exit codes, and journal excerpts"]
+commands = [".github/scripts/run_phase9_user_service.sh", "NOIRE_PHASE9_DISPOSABLE_VM=1 NOIRE_PHASE9_DAEMON_BINARY=target/debug/noired .github/scripts/run_phase9_service_vm.sh", "NOIRE_PHASE9_DISPOSABLE_VM=1 .github/scripts/run_phase9_packaged_service_vm.sh <deb|rpm> <package-dir>"]
+fixtures = ["Fresh user account and packaged systemd user unit", "Real daemon package and synthetic PipeWire source"]
+environments = ["Disposable Ubuntu 24.04, Debian 13, and Fedora 44 systemd containers", "Clean supported-distribution VM"]
+result_artifacts = ["NOIRE_PHASE9_UNIT with static validation, login activation, process UID, restart count, stop, and disable assertions", "NOIRE_PHASE9_PACKAGED_SERVICE with package ownership, concurrent activation, login, graph, stop, uninstall, and config assertions"]
+sources = ["data/systemd/user/noire.service::BusName=io.github.rayan6ms.Noire.Noire1", "data/dbus-1/services/io.github.rayan6ms.Noire.Noire1.service::SystemdService=noire.service", ".github/scripts/run_phase9_user_service.sh::NOIRE_PHASE9_UNIT static_verify=pass", ".github/scripts/run_phase9_service_vm.sh::NOIRE_PHASE9_UNIT static_verify=pass login=pass", ".github/scripts/run_phase9_packaged_service_vm.sh::NOIRE_PHASE9_PACKAGED_SERVICE family=$family"]
 
 [[template]]
 id = "AT-PACKAGE-LIFECYCLE"
@@ -21,12 +22,13 @@ status = "planned"
 phase = 9
 owner = "rayan6ms"
 requirements = ["FR-013", "QG-007"]
-observable = "Install, login, upgrade, stop, uninstall, and reinstall leave no duplicate process/node or stale node and preserve user configuration."
+observable = "Install, login, upgrade, incompatible-schema downgrade refusal, stop, uninstall, and reinstall leave no duplicate process/node or stale node and preserve user configuration."
 test_ids = ["T-PACKAGE-LIFECYCLE-VM"]
-commands = ["Run the complete headless and desktop package lifecycle in clean VMs"]
-fixtures = ["Signed candidate packages and pre-upgrade user configuration"]
-environments = ["Clean Ubuntu, Debian, and Fedora x86_64 VMs"]
-result_artifacts = ["Package-manager, process, graph-node, service, and config byte assertions"]
+commands = [".github/scripts/run_phase9_package_smoke.sh", ".github/scripts/run_phase9_release_metadata_smoke.sh", "NOIRE_PHASE9_DISPOSABLE_VM=1 .github/scripts/run_phase9_package_manager_vm.sh <deb|rpm> <baseline-package-dir> <upgrade-package-dir>", "NOIRE_PHASE9_DISPOSABLE_VM=1 .github/scripts/run_phase9_packaged_service_vm.sh <deb|rpm> <package-dir>", "Repeat the integrated lifecycle with signed candidates in clean VMs"]
+fixtures = ["Canonical staged package payload", "Real x86_64 release binaries", "Baseline and upgrade native packages", "Unknown future-schema user configuration", "Signed candidate packages and pre-upgrade user configuration"]
+environments = ["Native Debian and RPM package builders", "Clean Ubuntu, Debian, and Fedora x86_64 VMs"]
+result_artifacts = ["NOIRE_PHASE9_PACKAGE content, metadata, split, and generated-format assertions", "NOIRE_PHASE9_RELEASE_METADATA deterministic/dirty-source/checksum/SBOM/notice/provenance/tamper assertions", "NOIRE_PHASE9_PACKAGE_MANAGER headless/full/upgrade/downgrade/remove/reinstall/future-config assertions for Debian and RPM families", "NOIRE_PHASE9_PACKAGED_SERVICE ownership/activation/login/graph/newer-schema-refusal/stop/uninstall/config assertions", "Signed-candidate signature and full clean-VM assertions"]
+sources = ["packaging/stage-package.sh::stage_daemon()", "packaging/validate-binaries.sh::is_elf()", "packaging/debian/build.sh::shlib_dependencies()", "packaging/rpm/noire.spec::%package daemon", "packaging/rpm/rpmlintrc::empty convenience metapackage", "packaging/generate-release-metadata.py::NOIRE_RELEASE_METADATA", ".github/scripts/run_phase9_package_smoke.sh::NOIRE_PHASE9_PACKAGE content=pass", ".github/scripts/run_phase9_release_metadata_smoke.sh::NOIRE_PHASE9_RELEASE_METADATA deterministic=pass", ".github/scripts/run_phase9_package_manager_vm.sh::NOIRE_PHASE9_PACKAGE_MANAGER family=$family", ".github/scripts/run_phase9_packaged_service_vm.sh::NOIRE_PHASE9_PACKAGED_SERVICE family=$family"]
 
 [[template]]
 id = "MX-APPLICATION-COMPAT"

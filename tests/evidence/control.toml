@@ -62,16 +62,17 @@ sources = [
 [[template]]
 id = "AT-STATE-CONVERGENCE"
 kind = "automated"
-status = "planned"
+status = "active"
 phase = 8
 owner = "rayan6ms"
 requirements = ["FR-007", "FR-009", "FR-011", "FR-012", "NFR-011", "QG-006"]
-observable = "CLI and UI converge to daemon truth after success, rejection, restart, and stale revision without presenting rejected settings as applied."
+observable = "CLI and UI converge to daemon truth through replies and state/device signals after success, rejection, autonomous change, restart, and stale revision without presenting rejected settings as applied."
 test_ids = ["T-CONTROL-STATE-CONVERGENCE"]
-commands = ["Run D-Bus, CLI, and UI integration scenarios with revision and timing assertions"]
-fixtures = ["Accepted, rejected, stale, disconnected, and daemon-restart state sequences"]
+commands = ["dbus-run-session -- .github/scripts/run_phase6_session.sh", ".github/scripts/run_phase8_ui_smoke.sh"]
+fixtures = ["Accepted, rejected, stale, autonomous, disconnected, and daemon-restart state sequences"]
 environments = ["Headless control runner and disposable GTK test session"]
 result_artifacts = ["Daemon, CLI, and UI state snapshots with convergence timestamps"]
+sources = ["crates/noired/tests/phase6_session.rs::fn same_user_contract_rejects_stale_invalid_and_malformed_requests", "crates/noire-ui/src/client.rs::fn dbus_worker_converges_after_external_change_rejection_and_restart", "crates/noire-ui/src/client.rs::fn reconnect_backoff_is_exponential_and_capped", "crates/noire-ui/src/state.rs::fn rejected_mutation_restores_authoritative_snapshot", ".github/scripts/run_phase8_ui_smoke.sh::client::tests::dbus_worker_converges_after_external_change_rejection_and_restart"]
 
 [[template]]
 id = "MX-ERROR-USABILITY"
@@ -82,9 +83,10 @@ owner = "rayan6ms"
 requirements = ["FR-009", "FR-011", "FR-012", "QG-009"]
 observable = "Every user-fixable degraded state has a stable code, plain cause, actionable recovery, and a usable UI without PipeWire or an input."
 test_ids = ["T-ERROR-CATALOG-COVERAGE"]
-commands = ["Run error-catalog coverage tests and the degraded-state UI review"]
+commands = ["cargo test --package noired --locked every_production_public_error_code_has_catalog_copy", "cargo test --package noire-ui --locked every_catalog_error_has_complete_operable_ui_presentation", ".github/scripts/run_phase8_ui_smoke.sh", "Complete tests/usability/phase8-error-review.md on GNOME Wayland and KDE Wayland"]
 fixtures = ["Every public error code and user-fixable degraded-state scenario"]
 environments = ["Headless control runner and GNOME/KDE test sessions"]
-result_artifacts = ["Catalog coverage JSON and signed usability checklist"]
+result_artifacts = ["Catalog coverage test output and signed usability checklist"]
 manual_reason = "Plain-language clarity and actionable recovery wording require human review even when catalog coverage and state behavior are automated."
 manual_fields = ["reviewer", "date", "error code", "cause clarity", "recovery clarity", "UI remains operable"]
+sources = ["crates/noired/src/service.rs::fn every_production_public_error_code_has_catalog_copy", "crates/noired/src/service.rs::fn rejected_requests_publish_exact_catalog_cause_and_recovery", "crates/noire-ui/src/state.rs::fn every_catalog_error_has_complete_operable_ui_presentation", "crates/noire-ui/src/app.rs::What to do:", "tests/usability/phase8-error-review.md::Catalog review"]

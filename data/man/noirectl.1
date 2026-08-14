@@ -1,0 +1,41 @@
+.TH NOIRECTL 1 "August 2026" "Noire 1.0.0" "User Commands"
+.SH NAME
+noirectl \- inspect and control the Noire daemon
+.SH SYNOPSIS
+.B noirectl
+.RI [ \-\-json ]
+.I COMMAND
+.RI [ options ]
+.SH DESCRIPTION
+.B noirectl
+uses the versioned Noire session D-Bus API. Commands include
+.BR status ,
+.BR devices ,
+.BR start ,
+.BR stop ,
+.BR set ,
+.BR retry ,
+and
+.BR diagnostics .
+.SH OPTIONS
+.TP
+.BR \-\-json
+Emit stable, schema-versioned JSON.
+.TP
+.BR \-h ", " \-\-help
+Show command help.
+.TP
+.BR \-V ", " \-\-version
+Show the installed version.
+.SH EXIT STATUS
+Returns zero on success and 2 when a request is rejected or the service is unavailable.
+.SH FILES
+.TP
+.I /usr/share/doc/noire-daemon/USER_GUIDE.md
+Installed user guide and complete command examples.
+.TP
+.I /usr/share/doc/noire-daemon/TROUBLESHOOTING.md
+Recovery guidance for stable error codes.
+.SH SEE ALSO
+.BR noire (1),
+.BR noired (1)

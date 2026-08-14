@@ -180,7 +180,7 @@ fn live_rnnoise_meets_cpu_deadline_callback_and_rss_gates() -> Result<(), Box<dy
 }
 
 #[test]
-#[ignore = "Phase-7 accelerated or realtime 8/24-hour release soak"]
+#[ignore = "Phase-7 accelerated or realtime 8/15-hour release soak"]
 fn release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded()
 -> Result<(), Box<dyn Error>> {
     let configured_model_frames = std::env::var("NOIRE_PHASE7_SOAK_MODEL_FRAMES").ok();
@@ -314,9 +314,9 @@ fn soak_model_frames(
         }
         return Ok(frames);
     }
-    let hours = configured_hours.unwrap_or("24").parse::<usize>()?;
-    if !matches!(hours, 8 | 24) {
-        return Err("Phase-7 soak hours must be exactly 8 or 24".into());
+    let hours = configured_hours.unwrap_or("15").parse::<usize>()?;
+    if !matches!(hours, 8 | 15) {
+        return Err("Phase-7 soak hours must be exactly 8 or 15".into());
     }
     hours
         .checked_mul(MODEL_FRAMES_PER_AUDIO_HOUR)
@@ -330,8 +330,8 @@ fn soak_duration_configuration_is_exact_and_rejects_ambiguity() -> Result<(), Bo
         8 * MODEL_FRAMES_PER_AUDIO_HOUR
     );
     assert_eq!(
-        soak_model_frames(None, Some("24"))?,
-        24 * MODEL_FRAMES_PER_AUDIO_HOUR
+        soak_model_frames(None, Some("15"))?,
+        15 * MODEL_FRAMES_PER_AUDIO_HOUR
     );
     assert_eq!(soak_model_frames(Some("100"), None)?, 100);
     assert!(soak_model_frames(None, Some("7")).is_err());

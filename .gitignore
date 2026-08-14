@@ -3,3 +3,7 @@ docs/
 
 # Rust build output
 /target/
+
+# Generated Python bytecode
+__pycache__/
+*.py[cod]

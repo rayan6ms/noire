@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.rayan6ms.Noire</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Noire</name>
+  <summary>Native microphone noise suppression for PipeWire</summary>
+  <developer id="io.github.rayan6ms">
+    <name>rayan6ms</name>
+  </developer>
+  <description>
+    <p>
+      Noire publishes a noise-reduced virtual microphone for browsers, voice
+      clients, recorders, and other PipeWire applications.
+    </p>
+    <p>
+      The optional GTK interface controls a per-user background service. Audio
+      remains on the local machine and Noire does not modify global PipeWire or
+      WirePlumber configuration.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.rayan6ms.Noire.desktop</launchable>
+  <provides>
+    <binary>noire</binary>
+  </provides>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+  </categories>
+  <url type="homepage">https://github.com/rayan6ms/noire</url>
+  <url type="bugtracker">https://github.com/rayan6ms/noire/issues</url>
+  <screenshots>
+    <screenshot type="default">
+      <image type="source" width="1280" height="720">https://raw.githubusercontent.com/rayan6ms/noire/main/data/screenshots/noire-overview.png</image>
+      <caption>Control microphone noise suppression and review service status</caption>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="1.0.0" date="2026-08-13" type="stable">
+      <description>
+        <p>Initial stable release.</p>
+      </description>
+    </release>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

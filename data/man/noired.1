@@ -1,0 +1,33 @@
+.TH NOIRED 1 "August 2026" "Noire 1.0.0" "User Commands"
+.SH NAME
+noired \- per-user Noire microphone noise-suppression daemon
+.SH SYNOPSIS
+.B noired
+.RI [ options ]
+.SH DESCRIPTION
+.B noired
+owns the Noire PipeWire graph and the
+.B io.github.rayan6ms.Noire.Noire1
+session D-Bus name. It is normally started by the packaged systemd user unit or
+through D-Bus activation and never needs root privileges at runtime.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show command help.
+.TP
+.BR \-V ", " \-\-version
+Show the installed version.
+.SH FILES
+.TP
+.I ~/.config/noire/config.toml
+Per-user configuration, created by the daemon with mode 0600.
+.TP
+.I /usr/share/doc/noire-daemon/PRIVACY.md
+Local audio, diagnostics, persistence, and fail-mode data handling.
+.TP
+.I /usr/share/doc/noire-daemon/TROUBLESHOOTING.md
+Recovery guidance for service, PipeWire, input, and configuration failures.
+.SH SEE ALSO
+.BR noire (1),
+.BR noirectl (1),
+.BR systemd.user (5)

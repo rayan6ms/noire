@@ -1,0 +1,18 @@
+FROM registry.fedoraproject.org/fedora:44
+
+RUN dnf install --assumeyes --setopt=install_weak_deps=False \
+        dbus-daemon \
+        pipewire \
+        pipewire-utils \
+        procps-ng \
+        shadow-utils \
+        systemd \
+        systemd-pam \
+        util-linux \
+        wireplumber \
+        xorg-x11-server-Xvfb \
+        xorg-x11-xauth \
+    && dnf clean all
+
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]

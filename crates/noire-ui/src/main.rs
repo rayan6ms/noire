@@ -11,5 +11,9 @@ struct Arguments;
 
 fn main() {
     Arguments::parse();
-    println!("noire workspace skeleton; GTK interface not implemented yet");
+    #[cfg(feature = "gtk-ui")]
+    noire_ui::run();
+
+    #[cfg(not(feature = "gtk-ui"))]
+    eprintln!("noire was built without GTK support; rebuild with --features gtk-ui");
 }

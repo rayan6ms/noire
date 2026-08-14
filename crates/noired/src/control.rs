@@ -7,7 +7,7 @@ use noire_config::{
 };
 use noire_ipc::{
     API_VERSION, DiagnosticReport, ErrorInfo, InputDescriptor, Metrics, SNAPSHOT_SCHEMA_VERSION,
-    Snapshot,
+    Snapshot, error_catalog_entry,
 };
 use thiserror::Error;
 
@@ -182,21 +182,14 @@ impl Daemon {
     /// remains controllable.
     #[must_use]
     pub fn new(store: ConfigStore, mut engine: Box<dyn AudioEngine>, loaded: LoadOutcome) -> Self {
-        let mut last_error = loaded.warning.as_deref().map(|message| ErrorInfo {
-            code: match loaded.source {
-                LoadSource::NewerReadOnly => "config-newer-schema",
-                _ => "config-recovered",
-            }
-            .to_owned(),
-            message: message.to_owned(),
-            recovery: if loaded.source == LoadSource::NewerReadOnly {
-                "run a daemon version that supports this config schema".to_owned()
-            } else {
-                "inspect the preserved primary config and correct it".to_owned()
-            },
-            component: "config".to_owned(),
-            retryable: false,
-            timestamp_millis: unix_millis(),
+        let mut last_error = loaded.warning.as_deref().map(|_message| {
+            catalog_error_info(
+                match loaded.source {
+                    LoadSource::NewerReadOnly => "config-newer-schema",
+                    _ => "config-recovered",
+                },
+                "config",
+            )
         });
         let observation = match engine.apply(&loaded.config) {
             Ok(observation) => observation,
@@ -542,6 +535,16 @@ impl Daemon {
 }
 
 fn error_info(error: &EngineError) -> ErrorInfo {
+    if let Some(entry) = error_catalog_entry(error.code) {
+        return ErrorInfo {
+            code: entry.code.to_owned(),
+            message: entry.cause.to_owned(),
+            recovery: entry.recovery.to_owned(),
+            component: "audio".to_owned(),
+            retryable: entry.retryable,
+            timestamp_millis: unix_millis(),
+        };
+    }
     ErrorInfo {
         code: error.code.to_owned(),
         message: error.message.clone(),
@@ -550,6 +553,27 @@ fn error_info(error: &EngineError) -> ErrorInfo {
         retryable: error.retryable,
         timestamp_millis: unix_millis(),
     }
+}
+
+fn catalog_error_info(code: &str, component: &str) -> ErrorInfo {
+    error_catalog_entry(code).map_or_else(
+        || ErrorInfo {
+            code: code.to_owned(),
+            message: "Noire recovered from a configuration problem.".to_owned(),
+            recovery: "Inspect the preserved configuration before retrying.".to_owned(),
+            component: component.to_owned(),
+            retryable: false,
+            timestamp_millis: unix_millis(),
+        },
+        |entry| ErrorInfo {
+            code: entry.code.to_owned(),
+            message: entry.cause.to_owned(),
+            recovery: entry.recovery.to_owned(),
+            component: component.to_owned(),
+            retryable: entry.retryable,
+            timestamp_millis: unix_millis(),
+        },
+    )
 }
 
 fn unix_millis() -> u64 {

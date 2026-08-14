@@ -77,10 +77,28 @@ jobs:
             ~/.cargo/git/db
           key: cargo-sources-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
 
+      - name: Fetch the locked x86_64 dependency graph
+        run: cargo +1.97.0 fetch --locked --target x86_64-unknown-linux-gnu
+
       - name: Validate requirement traceability
         run: |
           python3 .github/scripts/validate_traceability.py --self-test \
             2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/traceability.log"
+
+      - name: Validate the project progress ledger
+        run: |
+          python3 .github/scripts/report_project_progress.py \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/project-progress.log"
+
+      - name: Validate the packaged systemd user unit
+        run: |
+          .github/scripts/run_phase9_user_service.sh \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/systemd-user-unit.log"
+
+      - name: Validate native package contents and split
+        run: |
+          .github/scripts/run_phase9_package_smoke.sh \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/package-smoke.log"
 
       - name: Check formatting
         run: cargo +1.97.0 fmt --all -- --check 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/format.log"
@@ -95,6 +113,11 @@ jobs:
 
       - name: Run unit and documentation tests
         run: cargo +1.97.0 test --workspace --locked 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/test.log"
+
+      - name: Validate deterministic release metadata
+        run: |
+          .github/scripts/run_phase9_release_metadata_smoke.sh \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/release-metadata.log"
 
       - name: Build documentation with warnings denied
         env:
@@ -255,9 +278,9 @@ jobs:
       - name: Smoke-test binary interfaces
         run: |
           {
-            test "$(target/release/noired --version)" = "noired 0.1.0"
-            test "$(target/release/noire --version)" = "noire 0.1.0"
-            test "$(target/release/noirectl --version)" = "noirectl 0.1.0"
+            test "$(target/release/noired --version)" = "noired 1.0.0"
+            test "$(target/release/noire --version)" = "noire 1.0.0"
+            test "$(target/release/noirectl --version)" = "noirectl 1.0.0"
             target/release/noired --help >/dev/null
             target/release/noire --help >/dev/null
             target/release/noirectl --help >/dev/null
@@ -391,7 +414,7 @@ jobs:
           {
             sudo apt-get update
             sudo apt-get install --no-install-recommends --yes \
-              gcc pkg-config libclang-dev \
+              gcc pkg-config libclang-dev dbus-x11 gettext xvfb \
               libpipewire-0.3-dev libspa-0.2-dev libgtk-4-dev
             pkg-config --modversion libpipewire-0.3
             pkg-config --modversion libspa-0.2
@@ -418,6 +441,11 @@ jobs:
             -u DBUS_SESSION_BUS_ADDRESS \
             cargo +1.97.0 test --workspace --all-features --locked \
             2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-test.log"
+
+      - name: Exercise the GTK unavailable-daemon state
+        run: |
+          .github/scripts/run_phase8_ui_smoke.sh \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/ui-smoke.log"
 
       - name: Upload failure evidence
         if: ${{ failure() }}

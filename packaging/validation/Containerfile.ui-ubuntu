@@ -1,0 +1,19 @@
+FROM docker.io/library/ubuntu:24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+        dbus-x11 \
+        dpkg-dev \
+        gcc \
+        gettext \
+        libclang-dev \
+        libgtk-4-dev \
+        libpipewire-0.3-dev \
+        pkg-config \
+        xvfb \
+    && apt-get clean \
+    && find /var/lib/apt/lists -mindepth 1 -delete
+
+WORKDIR /workspace

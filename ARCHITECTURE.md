@@ -3,8 +3,9 @@
 This document describes the target 1.0 boundaries. The repository contains the
 platform-independent domain scaffold, foundational DSP/model pipeline, the
 feature-gated native PipeWire capture and live-model graph, and the daemon,
-configuration, session D-Bus, and CLI control plane. Later UI/package behavior
-is not yet implemented.
+configuration, session D-Bus, CLI control plane, and the feature-gated GTK
+settings/status client. Native package staging and Debian/Fedora builders are
+implemented; signed clean-VM release qualification remains outstanding.
 
 ## System shape
 
@@ -34,6 +35,20 @@ physical microphone
 The daemon and CLI remain usable without GTK or a graphical session. There is
 no privileged helper, cloud inference, telemetry, account, or network path in
 the 1.0 design.
+
+The GTK client renders only daemon-owned snapshots. Its pure presentation model
+derives control availability and plain-language healthy, degraded, reconnecting,
+and disconnected states without importing GTK. A dedicated Tokio thread owns
+the reusable session-bus connection and performs every D-Bus call; GTK exchanges
+bounded low-rate requests and replies with that worker and never performs daemon
+I/O on its main thread. After a rejected mutation, the worker rereads the full
+snapshot before the UI renders again, so an optimistic control value is never
+presented as committed daemon state. The daemon's 100 ms control-plane monitor
+publishes state/device signals independently of the UI; the client does not poll
+full snapshots. Live meters use an explicit per-D-Bus-client subscription, are
+emitted no faster than 10 Hz, stop immediately on normal UI shutdown, and prune
+abandoned client identities. Daemon ownership loss enters a capped 250 ms to
+4 s exponential reconnect path without blocking GTK.
 
 ## Workspace ownership
 
@@ -229,6 +244,24 @@ audio, raw device-property dump, environment dump, network path, or upload.
 
 Audio sends only fixed atomics and bounded state back to control code. D-Bus,
 filesystem, logging, and systemd calls remain outside every process callback.
+
+## Installation boundary
+
+Both native package families consume the same staged filesystem contract.
+`noire-daemon` owns the daemon, CLI, user unit, D-Bus activation/interface files,
+configuration documentation, completions, and man pages without GTK. `noire-ui`
+owns the GTK binary and desktop/AppStream/icon assets and depends on the matching
+daemon package. `noire` is an empty convenience package. Package operations do
+not enter home directories, mutate per-user configuration, or enumerate and
+restart logged-in user services.
+
+Upgrade and rollback compatibility is enforced by the unprivileged daemon, not
+root package scripts. A daemon that finds a newer unsupported configuration
+schema preserves the file byte-for-byte, uses inactive safe defaults, rejects
+mutations as read-only, and creates no audio graph. A compatible older revision
+starts normally. This keeps package-manager rollback available without granting
+install scripts authority to inspect every user's configuration. Users explicitly
+stop processing before removal; uninstall preserves configuration by default.
 
 ## Safety and failure policy
 

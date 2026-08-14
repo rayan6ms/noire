@@ -1,0 +1,8 @@
+# The `noire` package is intentionally an empty convenience metapackage. Keep
+# these exceptions scoped to that package so daemon/UI payload lint stays strict.
+addFilter(r"^noire\.[^:]+: [EW]: no-binary$")
+addFilter(r"^noire\.[^:]+: [EW]: no-documentation$")
+
+# GTK's generated ELF requirements do not expose the GLES loader it selects at
+# runtime. The packaged UI VM proved this explicit dependency is required.
+addFilter(r"^noire-ui\.[^:]+: E: explicit-lib-dependency libglvnd-gles")

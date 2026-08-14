@@ -4,7 +4,7 @@ run_date = "2026-08-12"
 implementation_commit = "98a2a604278223635b875a9956e320803b6ef56b"
 acceptance_commit = "46a1218a11a37a156180e21ba7d7978a3479dd89"
 pass = false
-pending = ["independent real-time 8-hour pre-soak", "independent real-time 24-hour release soak"]
+pending = ["independent real-time 8-hour pre-soak", "independent real-time 15-hour release soak"]
 
 [reference_environment]
 identifier = "noire-reference-x86_64-2026-08-12"

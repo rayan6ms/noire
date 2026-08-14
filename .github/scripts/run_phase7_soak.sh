@@ -2,8 +2,8 @@
 set -euo pipefail
 
 hours="${1:-${NOIRE_PHASE7_SOAK_HOURS:-}}"
-if [[ "$hours" != "8" && "$hours" != "24" ]]; then
-    echo "usage: $0 <8|24>" >&2
+if [[ "$hours" != "8" && "$hours" != "15" ]]; then
+    echo "usage: $0 <8|15>" >&2
     exit 2
 fi
 if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then

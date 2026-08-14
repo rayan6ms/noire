@@ -13,13 +13,20 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+futures-util = { workspace = true, optional = true }
 gtk4 = { workspace = true, optional = true }
 noire-core.workspace = true
 noire-ipc.workspace = true
+tokio = { workspace = true, optional = true }
+zbus = { workspace = true, optional = true }
+
+[dev-dependencies]
+noire-config.workspace = true
+noired.workspace = true
 
 [features]
 default = []
-gtk-ui = ["dep:gtk4"]
+gtk-ui = ["dep:futures-util", "dep:gtk4", "dep:tokio", "dep:zbus", "noire-ipc/dbus"]
 
 [lints]
 workspace = true

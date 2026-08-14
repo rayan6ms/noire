@@ -8,19 +8,26 @@ use std::{
     future::{self, Future},
     path::PathBuf,
     pin::Pin,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant, SystemTime},
 };
 
+use futures_util::StreamExt;
 use noire_config::{Config, ConfigStore, LoadOutcome, LoadSource};
-use noire_ipc::{InputDescriptor, Noire1Proxy};
+use noire_ipc::{InputDescriptor, Metrics, Noire1Proxy};
 use noired::{
     AudioEngine, Daemon, EngineError, EngineObservation, LaunchManager, LaunchManagerError,
-    LifecycleState, NoireService, claim_name, register_service,
+    LifecycleState, NoireService, claim_name, register_and_claim,
 };
 
 #[derive(Default)]
-struct FakeEngine;
+struct FakeEngine {
+    meter_tick: u64,
+    autonomous_recovery: Arc<AtomicBool>,
+}
 
 impl AudioEngine for FakeEngine {
     fn apply(&mut self, config: &Config) -> Result<EngineObservation, EngineError> {
@@ -43,6 +50,20 @@ impl AudioEngine for FakeEngine {
             is_default: true,
             availability: "available".to_owned(),
         }])
+    }
+
+    fn observe(&mut self, previous: &EngineObservation) -> Result<EngineObservation, EngineError> {
+        self.meter_tick = self.meter_tick.saturating_add(1);
+        let mut observation = previous.clone();
+        if self.autonomous_recovery.load(Ordering::Relaxed) {
+            observation.state = LifecycleState::Degraded;
+        }
+        observation.metrics = Metrics {
+            rms: f64::from((self.meter_tick % 10) as u32) / 10.0,
+            peak: f64::from((self.meter_tick % 10) as u32) / 10.0,
+            ..observation.metrics
+        };
+        Ok(observation)
     }
 }
 
@@ -79,10 +100,13 @@ async fn same_user_contract_rejects_stale_invalid_and_malformed_requests()
 -> Result<(), Box<dyn Error>> {
     let (root, store) = temporary_store()?;
     let server = zbus::Connection::session().await?;
-    claim_name(&server).await?;
+    let autonomous_recovery = Arc::new(AtomicBool::new(false));
     let daemon = Daemon::new(
         store,
-        Box::new(FakeEngine),
+        Box::new(FakeEngine {
+            meter_tick: 0,
+            autonomous_recovery: Arc::clone(&autonomous_recovery),
+        }),
         LoadOutcome {
             config: Config::default(),
             source: LoadSource::Defaults,
@@ -90,11 +114,10 @@ async fn same_user_contract_rejects_stale_invalid_and_malformed_requests()
             writable: true,
         },
     );
-    register_service(
-        &server,
-        NoireService::new(daemon, Arc::new(FakeLaunchManager)),
-    )
-    .await?;
+    let service = NoireService::new(daemon, Arc::new(FakeLaunchManager));
+    register_and_claim(&server, service.clone()).await?;
+    let monitor_connection = server.clone();
+    let monitor = tokio::spawn(async move { service.monitor(&monitor_connection).await });
     let competing_daemon = zbus::Connection::session().await?;
     assert!(claim_name(&competing_daemon).await.is_err());
 
@@ -109,6 +132,29 @@ async fn same_user_contract_rejects_stale_invalid_and_malformed_requests()
         initial.revision
     );
     assert_eq!(proxy.list_inputs().await?.len(), 1);
+    let mut meters = proxy.receive_meters_changed().await?;
+    let mut unsubscribed_meters = second_proxy.receive_meters_changed().await?;
+    proxy.subscribe_meters().await?;
+    let first_meter = tokio::time::timeout(Duration::from_millis(250), meters.next())
+        .await?
+        .ok_or("meter stream ended")?;
+    assert!(first_meter.args()?.metrics().rms >= 0.0);
+    let first_received = Instant::now();
+    tokio::time::timeout(Duration::from_millis(150), meters.next())
+        .await?
+        .ok_or("meter stream ended")?;
+    assert!(first_received.elapsed() >= Duration::from_millis(90));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(1), unsubscribed_meters.next())
+            .await
+            .is_err()
+    );
+    proxy.unsubscribe_meters().await?;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), meters.next())
+            .await
+            .is_err()
+    );
     let introspection = zbus::fdo::IntrospectableProxy::builder(&client)
         .destination(noire_ipc::BUS_NAME)?
         .path(noire_ipc::OBJECT_PATH)?
@@ -122,6 +168,9 @@ async fn same_user_contract_rejects_stale_invalid_and_malformed_requests()
         "StateChanged",
         "StateRevision",
         "DeviceRevision",
+        "SubscribeMeters",
+        "UnsubscribeMeters",
+        "MetersChanged",
     ] {
         assert!(introspection.contains(&format!("name=\"{member}\"")));
     }
@@ -191,7 +240,14 @@ async fn same_user_contract_rejects_stale_invalid_and_malformed_requests()
             .journal_hint
             .contains(root.to_string_lossy().as_ref())
     );
+    let mut state_changes = replacement.receive_state_changed().await?;
+    autonomous_recovery.store(true, Ordering::Relaxed);
+    tokio::time::timeout(Duration::from_millis(250), state_changes.next())
+        .await?
+        .ok_or("state signal stream ended")?;
+    assert_eq!(replacement.get_snapshot().await?.state, "degraded");
 
     fs::remove_dir_all(root)?;
+    monitor.abort();
     Ok(())
 }

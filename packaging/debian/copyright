@@ -1,0 +1,15 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Noire
+Source: https://github.com/rayan6ms/noire
+
+Files: *
+Copyright: 2026 rayan6ms
+License: GPL-3.0-or-later
+ On Debian systems, the complete GPL version 3 text is available at
+ /usr/share/common-licenses/GPL-3.
+
+Files: icons/noire.svg
+Copyright: 2026 rayan6ms
+License: CC-BY-SA-4.0
+ The complete license text is installed by the noire-ui package as
+ /usr/share/licenses/noire-ui/icon-LICENSE.

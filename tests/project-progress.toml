@@ -1,0 +1,63 @@
+schema_version = 1
+last_reviewed = "2026-08-13"
+definition = "Completed normative implementation tasks divided by all Phase 0-10 tasks. Evidence coverage and release qualification are reported separately."
+
+[[phase]]
+id = 0
+tasks = 6
+completed = ["P0-01", "P0-02", "P0-03", "P0-04", "P0-05", "P0-06"]
+
+[[phase]]
+id = 1
+tasks = 8
+completed = ["P1-01", "P1-02", "P1-03", "P1-04", "P1-05", "P1-06", "P1-07", "P1-08"]
+
+[[phase]]
+id = 2
+tasks = 8
+completed = ["P2-01", "P2-02", "P2-03", "P2-04", "P2-05", "P2-06", "P2-07", "P2-08"]
+
+[[phase]]
+id = 3
+tasks = 7
+completed = ["P3-01", "P3-02", "P3-03", "P3-04", "P3-05", "P3-06", "P3-07"]
+
+[[phase]]
+id = 4
+tasks = 7
+completed = ["P4-01", "P4-02", "P4-03", "P4-04", "P4-05", "P4-06", "P4-07"]
+
+[[phase]]
+id = 5
+tasks = 7
+completed = ["P5-01", "P5-02", "P5-03", "P5-04", "P5-05", "P5-06", "P5-07"]
+
+[[phase]]
+id = 6
+tasks = 8
+completed = ["P6-01", "P6-02", "P6-03", "P6-04", "P6-05", "P6-06", "P6-07", "P6-08"]
+
+[[phase]]
+id = 7
+tasks = 8
+completed = ["P7-01", "P7-02", "P7-03", "P7-04", "P7-05", "P7-06", "P7-08"]
+
+[[phase]]
+id = 8
+tasks = 8
+completed = ["P8-01", "P8-02", "P8-03", "P8-04", "P8-05", "P8-06"]
+
+[[phase]]
+id = 9
+tasks = 7
+completed = ["P9-01", "P9-02", "P9-03", "P9-04", "P9-05", "P9-06", "P9-07"]
+
+[[phase]]
+id = 10
+tasks = 7
+completed = ["P10-06"]
+
+[qualification]
+open_tasks = ["P7-07", "P8-07", "P8-08", "P10-01", "P10-02", "P10-03", "P10-04", "P10-05", "P10-07"]
+remote_release_blockers = ["https://github.com/rayan6ms/noire/issues/1"]
+notes = "P8-08 remains open because the exact Fedora 43 floor has not been qualified. The 1.0.0 source transition does not close a qualification task by itself."

@@ -1,0 +1,14 @@
+#compdef noirectl
+
+_arguments -s \
+  '(- 1 *)--json[emit schema-versioned JSON]' \
+  '(- 1 *)'{-h,--help}'[show help]' \
+  '(- 1 *)'{-V,--version}'[show version]' \
+  '1:command:(status devices start stop set retry diagnostics)' \
+  '*::argument:->args'
+
+if [[ $words[2] == set ]]; then
+  _values 'setting' input enabled strength latency-profile fail-mode launch-at-login
+elif [[ $words[2] == start || $words[2] == stop || $words[2] == retry ]]; then
+  _arguments '--revision[expected daemon revision]:revision:'
+fi
