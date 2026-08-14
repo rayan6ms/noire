@@ -414,7 +414,7 @@ jobs:
           {
             sudo apt-get update
             sudo apt-get install --no-install-recommends --yes \
-              gcc pkg-config libclang-dev dbus-x11 gettext xvfb \
+              gcc pkg-config libclang-dev at-spi2-core dbus-x11 gettext weston xvfb \
               libpipewire-0.3-dev libspa-0.2-dev libgtk-4-dev
             pkg-config --modversion libpipewire-0.3
             pkg-config --modversion libspa-0.2
@@ -446,6 +446,11 @@ jobs:
         run: |
           .github/scripts/run_phase8_ui_smoke.sh \
             2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/ui-smoke.log"
+
+      - name: Exercise GTK accessibility and display preflight
+        run: |
+          .github/scripts/run_phase8_accessibility_preflight.sh \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/ui-accessibility-preflight.log"
 
       - name: Upload failure evidence
         if: ${{ failure() }}

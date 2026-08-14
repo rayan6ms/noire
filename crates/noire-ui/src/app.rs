@@ -1230,6 +1230,68 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a disposable GTK display; run with run_phase8_accessibility_preflight.sh"]
+    fn rtl_high_contrast_scaled_layout_remains_operable() -> Result<(), Box<dyn std::error::Error>>
+    {
+        gtk::init()?;
+        gtk::Widget::set_default_direction(gtk::TextDirection::Rtl);
+
+        let settings = gtk::Settings::default().ok_or("GTK settings must exist")?;
+        settings.set_gtk_theme_name(Some("HighContrast"));
+        let theme = settings
+            .gtk_theme_name()
+            .ok_or("GTK theme name must exist")?
+            .to_ascii_lowercase();
+        assert_eq!(theme, "highcontrast");
+
+        let display = gtk::gdk::Display::default().ok_or("GDK display must exist")?;
+        let backend = display.type_().name().to_ascii_lowercase();
+        let expected_backend = std::env::var("NOIRE_PHASE8_GDK_BACKEND")?;
+        assert!(
+            backend.contains(&expected_backend),
+            "expected {expected_backend} display, found {backend}"
+        );
+
+        let widgets = build_widgets();
+        let updating = Cell::new(false);
+        let mut state = UiState::default();
+        state.converge(snapshot("running", true), inputs());
+        render(&widgets, &state, &updating);
+        let window = gtk::Window::builder()
+            .title("Noire accessibility environment test")
+            .default_width(640)
+            .default_height(760)
+            .child(&widgets.root)
+            .build();
+        window.present();
+        let context = glib::MainContext::default();
+        while context.pending() {
+            context.iteration(false);
+        }
+        for _attempt in 0..50 {
+            if window.width() > 0 && window.height() > 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            while context.pending() {
+                context.iteration(false);
+            }
+        }
+
+        assert!(window.is_mapped());
+        assert!(widgets.root.is_mapped());
+        assert_eq!(widgets.root.direction(), gtk::TextDirection::Rtl);
+        assert_eq!(window.scale_factor(), 2);
+        assert!(window.width() > 0);
+        assert!(window.height() > 0);
+        assert_information_accessibility(&widgets, &window);
+
+        window.close();
+        gtk::Widget::set_default_direction(gtk::TextDirection::Ltr);
+        Ok(())
+    }
+
+    #[test]
     #[ignore = "requires a disposable GTK display; run with run_phase8_ui_smoke.sh"]
     fn widget_state_matrix_tracks_daemon_truth_and_accessible_controls()
     -> Result<(), glib::BoolError> {

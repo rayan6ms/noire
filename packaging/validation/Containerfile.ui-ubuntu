@@ -16,4 +16,11 @@ RUN apt-get update \
     && apt-get clean \
     && find /var/lib/apt/lists -mindepth 1 -delete
 
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+        at-spi2-core \
+        weston \
+    && apt-get clean \
+    && find /var/lib/apt/lists -mindepth 1 -delete
+
 WORKDIR /workspace

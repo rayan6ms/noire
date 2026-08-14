@@ -18,7 +18,11 @@ desktop records are complete on the tested commit.
 
 ## Procedure
 
-1. Run `.github/scripts/run_phase8_ui_smoke.sh`.
+1. Run `.github/scripts/run_phase8_ui_smoke.sh` and
+   `.github/scripts/run_phase8_accessibility_preflight.sh`. Record both final
+   `NOIRE_PHASE8_*` lines. The preflight covers X11/Wayland backend selection,
+   AT-SPI bridge activation, HighContrast, 200% scale, RTL layout, mapping, and
+   programmatic focus; it does not substitute for the human checks below.
 2. Launch Noire with the daemon healthy. Starting at the window, use only
    `Tab`, `Shift+Tab`, arrows, `Space`, `Enter`, and `Escape` to visit and operate
    Start/Stop, Microphone, Noise suppression, Strength, Latency, Failure
@@ -31,6 +35,12 @@ desktop records are complete on the tested commit.
 5. Confirm healthy, reconnecting, degraded, and disconnected states are
    understandable with a monochrome display or color filter; the text must be
    sufficient without icons or color.
+6. Repeat the complete path with High Contrast enabled, 200% display scale, and
+   an RTL locale. Confirm content remains reachable without horizontal clipping
+   and focus indicators remain visible.
+7. On GNOME, repeat once in an X11 session where the supported test environment
+   offers it. Record an explicit `unavailable` with the desktop/version when the
+   distribution no longer exposes an X11 login session.
 
 ## Keyboard path
 

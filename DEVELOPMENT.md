@@ -48,7 +48,11 @@ GTK-visible translated strings use GLib's `noire` gettext domain. The determinis
 template update and reviewed-catalog layout are documented in `po/README.md`.
 The reproducible Ubuntu 24.04 GTK test environment is defined by
 `packaging/validation/Containerfile.ui-ubuntu` for hosts without development
-headers.
+headers. Run `.github/scripts/run_phase8_accessibility_preflight.sh` in that
+fixture to exercise RTL layout, HighContrast, 200% scale, focus targets, the
+AT-SPI bridge, X11, and a headless Wayland compositor. This preflight does not
+replace the GNOME/KDE Orca review in
+`tests/usability/phase8-accessibility-review.md`.
 
 The installed-package boundary is covered separately by the gated, bounded
 `.github/scripts/run_phase8_packaged_ui_vm.sh` harness. In disposable Ubuntu
