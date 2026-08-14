@@ -13,7 +13,7 @@ if [[ "$(id -u)" != "0" ]]; then
     echo "The packaged UI harness must run as root" >&2
     exit 2
 fi
-for tool in dbus-run-session xvfb-run timeout ldd; do
+for tool in dbus-run-session dbus-send xvfb-run timeout ldd; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "The packaged UI harness requires $tool" >&2
         exit 2
@@ -153,13 +153,17 @@ run_headless_session() {
         }
         trap cleanup_session EXIT
         for _attempt in $(seq 1 50); do
-            if /usr/bin/noirectl --json status >/dev/null 2>&1; then
+            if dbus-send --session --dest=org.freedesktop.DBus \
+                --type=method_call --print-reply /org/freedesktop/DBus \
+                org.freedesktop.DBus.NameHasOwner \
+                string:io.github.rayan6ms.Noire.Noire1 2>/dev/null | \
+                grep -F "boolean true" >/dev/null; then
                 break
             fi
             sleep 0.05
         done
-        /usr/bin/noirectl --json status | grep -F schema_version >/dev/null
         kill -0 "$daemon_pid"
+        /usr/bin/noirectl --json status | grep -F schema_version >/dev/null
     ' bash "$work_dir/headless-daemon.log"
 }
 
@@ -177,11 +181,16 @@ run_display_session() {
         }
         trap cleanup_session EXIT
         for _attempt in $(seq 1 50); do
-            if /usr/bin/noirectl --json status >/dev/null 2>&1; then
+            if dbus-send --session --dest=org.freedesktop.DBus \
+                --type=method_call --print-reply /org/freedesktop/DBus \
+                org.freedesktop.DBus.NameHasOwner \
+                string:io.github.rayan6ms.Noire.Noire1 2>/dev/null | \
+                grep -F "boolean true" >/dev/null; then
                 break
             fi
             sleep 0.05
         done
+        kill -0 "$daemon_pid"
         /usr/bin/noirectl --json status | grep -F schema_version >/dev/null
         set +e
         GTK_A11Y=none xvfb-run --auto-servernum timeout --signal=TERM 3 \
