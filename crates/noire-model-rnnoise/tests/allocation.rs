@@ -6,10 +6,12 @@ use std::alloc::System;
 use std::error::Error;
 
 use noire_dsp::{
-    ChannelMap, ChannelPosition, ChannelSelection, ClickDetector, DcBlocker, DryDelay,
-    EqualPowerMixer, FaultRamp, FrameAssembler, Meter, MixReport, sanitize_buffer,
+    ChannelMap, ChannelPosition, ChannelSelection, ClickDetector, DcBlocker, DryDelay, FaultRamp,
+    FrameAssembler, LinearMixer, Meter, MixReport, SpeechPreservingStrength, sanitize_buffer,
 };
 use noire_model::DenoiserFactory;
+#[cfg(feature = "experimental-enhancement")]
+use noire_model_rnnoise::{EnhancedRnnoiseConfig, EnhancedRnnoiseFactory};
 use noire_model_rnnoise::{RNNOISE_FRAME_SAMPLES, RnnoiseFactory};
 use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 
@@ -28,6 +30,7 @@ fn warmed_dsp_and_model_processing_allocate_nothing() -> Result<(), Box<dyn Erro
     let mut assembler = FrameAssembler::new();
     let mut delay = DryDelay::new(RNNOISE_FRAME_SAMPLES)?;
     let mut meter = Meter::new();
+    let mut speech_strength = SpeechPreservingStrength::new();
     let mut fault_ramp = FaultRamp::new();
     let mut click_detector = ClickDetector::new();
     let input = signal_frame();
@@ -36,32 +39,50 @@ fn warmed_dsp_and_model_processing_allocate_nothing() -> Result<(), Box<dyn Erro
         frame.fill(sample);
     }
     let mut mono = input;
+    let mut model_input = input;
     let mut delayed = [0.0; RNNOISE_FRAME_SAMPLES];
     let mut model_output = [0.0; RNNOISE_FRAME_SAMPLES];
+    #[cfg(feature = "experimental-enhancement")]
+    let mut enhanced_model =
+        EnhancedRnnoiseFactory::new(EnhancedRnnoiseConfig::default())?.create()?;
+    #[cfg(feature = "experimental-enhancement")]
+    let mut enhanced_output = [0.0; RNNOISE_FRAME_SAMPLES];
     let mut mixed = [0.0; RNNOISE_FRAME_SAMPLES];
     let mut safe_output = [0.0; RNNOISE_FRAME_SAMPLES];
 
-    model.process_frame(&input, &mut model_output)?;
+    let mut pending_vad = model
+        .process_frame(&input, &mut model_output)?
+        .vad_probability();
+    #[cfg(feature = "experimental-enhancement")]
+    for _ in 0..100 {
+        enhanced_model.process_frame(&input, &mut enhanced_output)?;
+    }
     let region = Region::new(GLOBAL);
     for _ in 0..1_024 {
         map.process(&stereo, &mut mono)?;
         sanitize_buffer(&mut mono);
-        dc.process(&mut mono);
         assembler.push(&mono, |_| {})?;
         delay.process(&mono, &mut delayed)?;
-        model.process_frame(&mono, &mut model_output)?;
+        model_input.copy_from_slice(&mono);
+        dc.process(&mut model_input);
+        let stats = model.process_frame(&model_input, &mut model_output)?;
+        speech_strength.begin_frame(pending_vad);
         let mut report = MixReport::default();
         for ((dry, wet), output) in delayed
             .iter()
             .zip(model_output.iter())
             .zip(mixed.iter_mut())
         {
-            *output = EqualPowerMixer::mix(*dry, *wet, 0.75, &mut report);
+            let strength = speech_strength.next(0.70);
+            *output = LinearMixer::mix(*dry, *wet, strength, &mut report);
         }
+        pending_vad = stats.vad_probability();
         fault_ramp.process(Some(&mixed), &mut safe_output)?;
         click_detector.observe(&mixed, &safe_output)?;
         meter.observe(&safe_output);
         meter.take_snapshot();
+        #[cfg(feature = "experimental-enhancement")]
+        enhanced_model.process_frame(&input, &mut enhanced_output)?;
     }
     let change = region.change();
 

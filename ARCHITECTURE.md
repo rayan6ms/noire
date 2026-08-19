@@ -57,7 +57,9 @@ abandoned client identities. Daemon ownership loss enters a capped 250 ms to
 | `noire-core` | Platform-independent domain types, state, and policy |
 | `noire-dsp` | Allocation-free framing and signal processing |
 | `noire-model` | Real-time denoising model contracts |
-| `noire-model-rnnoise` | The RNNoise implementation of those contracts |
+| `noire-model-fastenhancer` | The qualified FastEnhancer-B 48 kHz adapter |
+| `noire-model-fastenhancer-sys` | Private native runtime and FFI boundary |
+| `noire-model-rnnoise` | Retained RNNoise backup and experiments |
 | `noire-pipewire` | Registry, stream, graph, and fixed-ring platform adapter |
 | `noire-config` | Versioned schema, migration, and atomic persistence |
 | `noire-ipc` | Shared D-Bus data types plus service/client adapters |
@@ -67,7 +69,7 @@ abandoned client identities. Daemon ownership loss enters a capped 250 ms to
 | `noire-test-support` | Shared fakes, fixtures, and test harnesses |
 
 Dependencies point toward contracts and domain types. Core, DSP, and model
-contracts never import GTK, D-Bus, Tokio, or PipeWire. The RNNoise pipeline sees
+contracts never import GTK, D-Bus, Tokio, or PipeWire. The live pipeline sees
 the model contract, not a concrete implementation. Tokio is restricted to the
 daemon control plane and IPC; GTK is restricted to `noire-ui`.
 
@@ -80,20 +82,20 @@ capture buffers and source requests for deterministic tests.
 ## Audio and control planes
 
 PipeWire owns two process callbacks: capture produces processed audio and the
-virtual source consumes it. RNNoise runs inline in capture on exact mono,
-48-kHz, 480-sample frames. PipeWire is asked to provide 48 kHz; an in-process
+virtual source consumes it. FastEnhancer-B runs inline in capture on exact mono,
+48-kHz, 512-sample frames. PipeWire is asked to provide 48 kHz; an in-process
 resampler is not part of 1.0 unless supported-system evidence and a new ADR
 justify one.
 
 `noire-dsp` defines that canonical domain and keeps its processors independent
 of PipeWire, the denoising model, and the UI. The implemented boundary utilities
 sanitize non-finite values and flush subnormals, prefer declared mono/front-
-center channels or use a headroom-preserving equal-contribution downmix, block
-DC near 20 Hz, assemble arbitrary bounded quanta into exact 480-sample frames,
-smooth wet/dry strength over at least 20 ms, accumulate bounded peak/RMS meter
-windows, and delay dry audio by an exact configured sample count. Processing is
-allocation-free after construction; only the fixed dry-delay storage is heap-
-allocated before activation.
+center channels or use a headroom-preserving equal-contribution downmix, assemble
+arbitrary bounded quanta into exact
+512-sample frames, smooth wet/dry strength over at least 20 ms, accumulate bounded
+peak/RMS meter windows, and delay unfiltered dry audio by an exact configured
+sample count. Processing is allocation-free after construction; only the fixed
+dry-delay storage is heap-allocated before activation.
 
 All callback capacities are fixed before stream activation. Process callbacks
 may use bounded slice operations, arithmetic, model inference with a measured
@@ -116,19 +118,24 @@ Descriptor access and steady-state frame processing are allocation-free. Reset
 is deterministic and synchronous but may rebuild adapter-owned state, so it runs
 only after processing is deactivated and never inside a callback.
 
-`noire-model-rnnoise` provides the sole 1.0 adapter behind its explicit
-`rnnoise` feature. It uses `nnnoiseless`'s embedded default weights, converts
-between normalized audio and the model's signed-16 numeric scale, reports VAD as
-telemetry, and declares the measured one-frame (480-sample) startup/history
-delay. Factory creation warms lazy model/FFT state and returns a clean instance;
-the daemon must create it on the eventual processing thread before activation.
-This implementation remains subject to the Phase-2 quality, provenance,
-allocation, and timing gates. Its P2-06 automated selection evidence passes the
-frozen-corpus objective thresholds and the pinned C-reference comparison; the
-independent QG-004 listening result remains explicitly outstanding.
-After same-thread warm-up, allocator instrumentation covers the production DSP
-stages and model call; P2-07 records zero steady-state allocation calls and a
-reference-host model p99 below the 0.75 ms gate.
+`noire-model-fastenhancer` is the sole production adapter. It embeds the
+FastEnhancer-B 48 kHz weights behind a small safe Rust adapter and confines the
+vendored MIT C runtime and unsafe FFI to `noire-model-fastenhancer-sys`. It
+declares a 512-sample hop and history delay, emits finite normalized audio, and
+provides bounded output-energy activity telemetry. The qualified default is a
+fixed 55% wet mix; the fully wet endpoint remains available but is deliberately
+not the default because stress evaluation found it too aggressive. Allocator
+instrumentation records zero steady-state allocation calls, while the reference
+host measured 2.23 ms typical inference and 2.75 ms p99 against a 4 ms gate.
+
+`noire-model-rnnoise` retains the former adapter, quality-v1 weights, and a
+separate `experimental-enhancement` factory with causal late-tail prediction.
+It declares the same 480-sample delay and zero lookahead, and is neither selected
+by daemon composition nor eligible for promotion without the frozen hard-case,
+clean-speech, listening, allocation, clipping, CPU, percentile, and latency
+gates in `tests/quality/enhancement`. The generic and future personalized paths
+use confidence-weighted sample-smooth blending; enrollment and embedding work
+remain outside callback execution.
 
 `noire-pipewire` owns all thread-affine native objects. `PipewireConnection`
 connects one main loop, context, core, and registry; copies core failures/runtime
@@ -151,40 +158,40 @@ plane. Allocator instrumentation records zero calls in warmed capture and bypass
 callbacks; a disposable native session exercises the same boundary against a
 deterministic 44.1 kHz source and verifies PipeWire presents canonical 48 kHz.
 
-The Phase-4 bypass uses one generation-tagged 9,152-sample SPSC ring. Capture
+The bypass uses one generation-tagged 9,216-sample SPSC ring. Capture
 writes only complete callback blocks; overload drops the new block, advances the
 generation, and forces bounded resynchronization. The source holds deliberate
-silence until it has exactly one 480-sample model-frame lead plus three current
-graph quanta, then applies the shared 5 ms recovery ramp. At a 128-frame quantum
-the observed 896-sample (18.667 ms) delay remains inside NFR-001 while absorbing
-independent-stream scheduling jitter. Unexpected shortages
+silence until it has exactly one 512-sample model-frame lead plus three current
+graph quanta, then applies the shared 5 ms recovery ramp. The low profile uses a
+256-frame quantum; the balanced profile uses 512 frames for extra scheduling
+headroom. Unexpected shortages
 advance generation and fade to silence without replaying stale samples. Queue,
 fault, boundary, and high-water counters are atomic snapshots outside callbacks.
 
-The Phase-5 live graph injects a preconstructed `Denoiser` trait object rather
-than importing the concrete RNNoise adapter into the PipeWire crate. Capture
-sanitizes and DC-blocks bounded chunks, assembles exact 480-sample frames, runs
-the model inline, aligns dry audio to the declared model delay, applies a
-minimum-20-ms equal-power strength ramp and transparent ceiling, meters output,
-and writes only complete processed frames to the same generation-tagged ring.
-Model creation, destruction, and reset remain deactivated control-plane work.
+The live graph injects a preconstructed `Denoiser` trait object rather than
+importing a concrete adapter into the PipeWire crate. Capture sanitizes and
+assembles bounded chunks into exact 512-sample frames, preserves
+an unfiltered latency-aligned dry frame and runs the model inline. A minimum-20-ms
+user ramp feeds a linear
+correlated-signal mix and transparent ceiling before metering and complete-frame transport. Model
+creation, destruction, and reset remain deactivated control-plane work.
 
 Strength, enable, explicit fail mode, and diagnostic timing use a cache-line-
 aligned atomic epoch snapshot read only at frame boundaries. Default model
 failure is fail-closed: the producer stops, already-processed ring audio drains,
 and the source's bounded fault ramp reaches silence. Fail-open delayed dry audio
-requires an explicit control choice. Five sampled 0.75-ms model deadline misses
+requires an explicit control choice. Five sampled 4-ms model deadline misses
 inside ten seconds expose `DegradedPerformance`; suppression is never silently
-disabled. VAD, peak, RMS, model/callback timing histograms, deadline misses,
+disabled. The output-energy activity proxy, peak, RMS, model/callback timing
+histograms, deadline misses,
 hard-ceiling events, model errors/resets, and transport high water are fixed
 atomics read without locking the callback.
 
 Live startup does not advance the published timeline while the first processed
 frame is unavailable. Once ready, the source emits exactly one negotiated
-quantum of leading silence and begins draining. This retains RNNoise's complete
-frame reserve without adding another model frame. In the release native graph,
-100 correlation trials measured 608 samples (12.667 ms) p95 with zero transport
-faults. The Phase-4 raw-bypass startup policy remains unchanged.
+quantum of leading silence and begins draining. This retains the model's complete
+frame reserve without adding another model frame. Native-session latency is
+requalified for every release candidate.
 
 `VirtualSourceStream` publishes exactly one non-lingering `Audio/Source` named
 `io.github.rayan6ms.Noire.Microphone`, described as **Noire Microphone**, in

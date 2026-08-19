@@ -5,7 +5,7 @@ use std::time::Instant;
 use crate::{
     BypassTelemetry, CaptureStreamError, CaptureStreamState, ConsumerDemand, DemandTransition,
     LiveControl, LivePipelineError, LiveTelemetry, NativeCaptureStream, NegotiatedFormatEvent,
-    PipewireConnection, SourceStreamError, SourceStreamState, VirtualSourceStream,
+    PipewireConnection, SourceStreamError, SourceStreamState, StreamLatency, VirtualSourceStream,
     create_bypass_channel, create_live_channel,
 };
 use noire_model::Denoiser;
@@ -219,6 +219,20 @@ impl LiveGraph {
         selected_node_name: &str,
         model: Box<dyn Denoiser>,
     ) -> Result<Self, LiveGraphError> {
+        Self::connect_with_latency(connection, selected_node_name, model, StreamLatency::Low)
+    }
+
+    /// Connects a live graph using the requested PipeWire scheduling profile.
+    ///
+    /// # Errors
+    ///
+    /// Returns a model-pipeline, source-selection, or native stream error.
+    pub fn connect_with_latency(
+        connection: &PipewireConnection,
+        selected_node_name: &str,
+        model: Box<dyn Denoiser>,
+        latency: StreamLatency,
+    ) -> Result<Self, LiveGraphError> {
         let (sink, output, control, telemetry) =
             create_live_channel(model).map_err(LiveGraphError::Pipeline)?;
         let selected_node_id = connection
@@ -230,16 +244,17 @@ impl LiveGraph {
             .ok_or_else(|| {
                 LiveGraphError::SelectedSourceUnavailable(selected_node_name.to_owned())
             })?;
-        let capture = NativeCaptureStream::connect_with_sink_to_id(
+        let capture = NativeCaptureStream::connect_with_sink_to_id_and_latency(
             connection,
             selected_node_name,
             selected_node_id,
             sink,
             false,
+            latency,
         )
         .map_err(LiveGraphError::Capture)?;
-        let source =
-            VirtualSourceStream::connect(connection, output).map_err(LiveGraphError::Source)?;
+        let source = VirtualSourceStream::connect_with_latency(connection, output, latency)
+            .map_err(LiveGraphError::Source)?;
         Ok(Self {
             capture,
             source,

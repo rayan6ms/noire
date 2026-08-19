@@ -1,6 +1,6 @@
 //! Feature-gated `nnnoiseless` default-model implementation.
 
-use nnnoiseless::DenoiseState;
+use nnnoiseless::{DenoiseState, RnnModel};
 use noire_model::{
     CreateError, Denoiser, DenoiserFactory, FrameStats, ModelDescriptor, ModelDescriptorSpec,
     ProcessError, finalize_process_output, prepare_process_frame,
@@ -19,6 +19,10 @@ pub const RNNOISE_DELAY_SAMPLES: usize = RNNOISE_FRAME_SAMPLES;
 pub const DEFAULT_WEIGHTS_SHA256: &str =
     "e6de5fbfadf7ec91d1b24d6a6ccfd0290cb4d8bf555c5eab3ce41506f67a58b1";
 
+/// SHA-256 of Noire's opt-in `VoiceBank` quality candidate.
+pub const QUALITY_V1_WEIGHTS_SHA256: &str =
+    "2f0958c50378499cbd8869723b7dc214a65873304ec81856d3c084c08c0e9048";
+
 const MODEL_INPUT_POSITIVE_SCALE: f32 = 32_767.0;
 const MODEL_INPUT_NEGATIVE_SCALE: f32 = 32_768.0;
 const MODEL_VERSION: &str = "nnnoiseless-0.5.2/default-e6de5fbfadf7ec91";
@@ -27,6 +31,78 @@ const MODEL_VERSION: &str = "nnnoiseless-0.5.2/default-e6de5fbfadf7ec91";
 #[derive(Clone, Copy, Debug)]
 pub struct RnnoiseFactory {
     descriptor: ModelDescriptor,
+}
+
+/// An opt-in factory for evaluating versioned, `nnnoiseless`-compatible weights.
+///
+/// This does not alter [`RnnoiseFactory`] or its embedded production fallback.
+/// Candidate bytes are parsed and owned on the control path before any audio
+/// callback is activated.
+#[derive(Clone)]
+pub struct RnnoiseCandidateFactory {
+    descriptor: ModelDescriptor,
+    model: RnnModel,
+}
+
+impl RnnoiseCandidateFactory {
+    /// Parses one candidate in `nnnoiseless`'s compact binary format.
+    ///
+    /// The provisional license expression records the implementation license
+    /// and the CC BY 4.0 VoiceBank--DEMAND source data used by Noire's current
+    /// training experiment. A promoted model must replace the generic version
+    /// with its immutable content hash and complete provenance record.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CreateError::InvalidModel`] if `bytes` do not contain one
+    /// complete model with dimensions accepted by `nnnoiseless`.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, CreateError> {
+        let model = RnnModel::from_bytes(bytes).ok_or(CreateError::InvalidModel)?;
+        let descriptor = ModelDescriptor::new(ModelDescriptorSpec {
+            id: "org.noire.experimental.rnnoise-candidate",
+            name: "Noire RNNoise training candidate",
+            version: "unqualified-local-candidate",
+            license: "BSD-3-Clause AND CC-BY-4.0",
+            sample_rate_hz: RNNOISE_SAMPLE_RATE_HZ,
+            channels: 1,
+            frame_samples: RNNOISE_FRAME_SAMPLES,
+            hop_samples: RNNOISE_FRAME_SAMPLES,
+            lookahead_samples: 0,
+            delay_samples: RNNOISE_DELAY_SAMPLES,
+        })
+        .map_err(|_| CreateError::InitializationFailed)?;
+        Ok(Self { descriptor, model })
+    }
+
+    /// Loads the immutable Noire quality-v1 candidate embedded with this crate.
+    ///
+    /// This remains explicitly opt-in: `VoiceBank` speech-quality results improve,
+    /// while the registered stress suite still shows a small mean STOI regression
+    /// concentrated in procedural music. [`RnnoiseFactory`] therefore continues
+    /// to provide the default and fallback model.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CreateError::InvalidModel`] if the embedded artifact is not a
+    /// complete model accepted by `nnnoiseless`.
+    pub fn quality_v1() -> Result<Self, CreateError> {
+        let model = RnnModel::from_static_bytes(include_bytes!("../models/rnnoise-quality-v1.rnn"))
+            .ok_or(CreateError::InvalidModel)?;
+        let descriptor = ModelDescriptor::new(ModelDescriptorSpec {
+            id: "org.noire.experimental.rnnoise-quality-v1",
+            name: "Noire RNNoise quality v1 (opt-in)",
+            version: "voicebank-quality-v1-2f0958c50378",
+            license: "BSD-3-Clause AND CC-BY-4.0",
+            sample_rate_hz: RNNOISE_SAMPLE_RATE_HZ,
+            channels: 1,
+            frame_samples: RNNOISE_FRAME_SAMPLES,
+            hop_samples: RNNOISE_FRAME_SAMPLES,
+            lookahead_samples: 0,
+            delay_samples: RNNOISE_DELAY_SAMPLES,
+        })
+        .map_err(|_| CreateError::InitializationFailed)?;
+        Ok(Self { descriptor, model })
+    }
 }
 
 impl RnnoiseFactory {
@@ -77,8 +153,37 @@ impl DenoiserFactory for RnnoiseFactory {
     }
 }
 
+impl DenoiserFactory for RnnoiseCandidateFactory {
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
+    }
+
+    fn create(&self) -> Result<Box<dyn Denoiser>, CreateError> {
+        let mut warming_state = DenoiseState::from_model(self.model.clone());
+        let silence = [0.0; RNNOISE_FRAME_SAMPLES];
+        let mut discarded = [0.0; RNNOISE_FRAME_SAMPLES];
+        let _ = warming_state.process_frame(&mut discarded, &silence);
+
+        Ok(Box::new(RnnoiseCandidateDenoiser {
+            descriptor: self.descriptor,
+            model: self.model.clone(),
+            state: DenoiseState::from_model(self.model.clone()),
+            model_input: [0.0; RNNOISE_FRAME_SAMPLES],
+            model_output: [0.0; RNNOISE_FRAME_SAMPLES],
+        }))
+    }
+}
+
 struct RnnoiseDenoiser {
     descriptor: ModelDescriptor,
+    state: Box<DenoiseState<'static>>,
+    model_input: [f32; RNNOISE_FRAME_SAMPLES],
+    model_output: [f32; RNNOISE_FRAME_SAMPLES],
+}
+
+struct RnnoiseCandidateDenoiser {
+    descriptor: ModelDescriptor,
+    model: RnnModel,
     state: Box<DenoiseState<'static>>,
     model_input: [f32; RNNOISE_FRAME_SAMPLES],
     model_output: [f32; RNNOISE_FRAME_SAMPLES],
@@ -121,6 +226,38 @@ impl Denoiser for RnnoiseDenoiser {
     }
 }
 
+impl Denoiser for RnnoiseCandidateDenoiser {
+    fn descriptor(&self) -> &ModelDescriptor {
+        &self.descriptor
+    }
+
+    fn reset(&mut self) {
+        self.state = DenoiseState::from_model(self.model.clone());
+        self.model_input.fill(0.0);
+        self.model_output.fill(0.0);
+    }
+
+    fn process_frame(
+        &mut self,
+        input: &[f32],
+        output: &mut [f32],
+    ) -> Result<FrameStats, ProcessError> {
+        prepare_process_frame(&self.descriptor, input, output)?;
+        for (source, destination) in input.iter().zip(self.model_input.iter_mut()) {
+            *destination = normalized_to_model_scale(*source);
+        }
+        let vad_probability = self
+            .state
+            .process_frame(&mut self.model_output, &self.model_input);
+        let stats = FrameStats::new(vad_probability)?;
+        finalize_process_output(&mut self.model_output, stats)?;
+        for (source, destination) in self.model_output.iter().zip(output.iter_mut()) {
+            *destination = model_to_normalized_scale(*source);
+        }
+        finalize_process_output(output, stats)
+    }
+}
+
 fn normalized_to_model_scale(sample: f32) -> f32 {
     let sample = sample.clamp(-1.0, 1.0);
     if sample.is_sign_negative() {
@@ -149,10 +286,33 @@ mod tests {
     use noire_model::{DenoiserFactory, ProcessError};
 
     use super::{
-        DEFAULT_WEIGHTS_SHA256, MODEL_VERSION, RNNOISE_DELAY_SAMPLES, RNNOISE_FRAME_SAMPLES,
-        RNNOISE_SAMPLE_RATE_HZ, RnnoiseFactory, model_to_normalized_scale,
-        normalized_to_model_scale,
+        DEFAULT_WEIGHTS_SHA256, MODEL_VERSION, QUALITY_V1_WEIGHTS_SHA256, RNNOISE_DELAY_SAMPLES,
+        RNNOISE_FRAME_SAMPLES, RNNOISE_SAMPLE_RATE_HZ, RnnoiseCandidateFactory, RnnoiseFactory,
+        model_to_normalized_scale, normalized_to_model_scale,
     };
+
+    #[test]
+    fn malformed_candidate_weights_are_rejected_before_activation() {
+        assert!(RnnoiseCandidateFactory::from_bytes(&[]).is_err());
+        assert!(RnnoiseCandidateFactory::from_bytes(&[0; 128]).is_err());
+    }
+
+    #[test]
+    fn quality_v1_is_qualified_and_remains_distinct_from_the_default() -> Result<(), Box<dyn Error>>
+    {
+        let factory = RnnoiseCandidateFactory::quality_v1()?;
+        let descriptor = factory.descriptor();
+        assert_eq!(descriptor.id(), "org.noire.experimental.rnnoise-quality-v1");
+        assert_eq!(descriptor.version(), "voicebank-quality-v1-2f0958c50378");
+        assert_eq!(descriptor.license(), "BSD-3-Clause AND CC-BY-4.0");
+        assert_eq!(QUALITY_V1_WEIGHTS_SHA256.len(), 64);
+        let mut model = factory.create()?;
+        let mut output = [0.0; RNNOISE_FRAME_SAMPLES];
+        let stats = model.process_frame(&deterministic_signal(), &mut output)?;
+        assert!(output.iter().all(|sample| sample.is_finite()));
+        assert!((0.0..=1.0).contains(&stats.vad_probability()));
+        Ok(())
+    }
 
     #[test]
     fn descriptor_pins_default_model_format_delay_and_provenance() -> Result<(), Box<dyn Error>> {

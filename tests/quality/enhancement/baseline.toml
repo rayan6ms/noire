@@ -1,0 +1,39 @@
+schema_version = 1
+status = "frozen-production-baseline"
+frozen_on = "2026-08-17"
+source_head = "24dfef862004966edaae9c48038baf298c7f0f57"
+notes = "The semantic production path is frozen even while the working tree contains the audited post-1.0 quality changes. Experimental factories and controllers are excluded."
+
+[model]
+factory = "noire_model_rnnoise::RnnoiseFactory"
+id = "org.rnnoise.nnnoiseless.default"
+version = "nnnoiseless-0.5.2/default-e6de5fbfadf7ec91"
+weights_sha256 = "e6de5fbfadf7ec91d1b24d6a6ccfd0290cb4d8bf555c5eab3ce41506f67a58b1"
+sample_rate_hz = 48000
+frame_samples = 480
+lookahead_samples = 0
+algorithmic_latency_samples = 480
+
+[live_policy]
+model_input_high_pass_hz = 60.0
+dry_path_high_pass_hz = 0.0
+default_strength = 0.70
+confident_speech_strength = 0.55
+vad_low = 0.20
+vad_high = 0.80
+speech_attack_ms = 10.0
+noise_release_ms = 100.0
+mix = "linear-correlated"
+strength_ramp_minimum_ms = 20.0
+
+[invariants]
+latency_matched_dry = true
+zero_callback_allocations = true
+fail_closed = true
+production_factory_unchanged = true
+experimental_enhancement_default = false
+
+[reproduction]
+quality_command = "cargo run --release -p noire-model-rnnoise --features offline-wav --bin noire-quality-lab -- --model-high-pass 60 --speech-strength 0.55 --noise-strength 0.70 --vad-low 0.20 --vad-high 0.80 INPUT.wav OUTPUT.wav"
+allocation_command = "cargo test --release -p noire-model-rnnoise --test allocation --features rnnoise --locked"
+model_timing_command = "cargo bench -p noire-model-rnnoise --bench model_frame --features rnnoise --locked"

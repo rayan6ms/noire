@@ -159,7 +159,7 @@ fn build_widgets() -> Widgets {
     label_accessible(
         &suppression,
         "Noise suppression",
-        "Enable RNNoise processing while retaining matched latency",
+        "Enable FastEnhancer-B processing while retaining matched latency",
     );
     settings.append(&setting_row(
         "Noise suppression",
@@ -975,8 +975,8 @@ mod tests {
             suppression_enabled: true,
             strength: 0.63,
             fail_mode: "closed".to_owned(),
-            model_id: "org.rnnoise.nnnoiseless.default".to_owned(),
-            model_delay_samples: 480,
+            model_id: "org.noire.fastenhancer.base-48khz".to_owned(),
+            model_delay_samples: 512,
             pipewire_version: "1.4.7".to_owned(),
             uptime_millis: 5,
             has_error: false,

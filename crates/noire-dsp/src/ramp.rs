@@ -2,6 +2,23 @@
 
 use crate::{MIN_STRENGTH_RAMP_SAMPLES, SanitizeReport, sanitize_sample};
 
+const SPEECH_VAD_LOW: f32 = 0.20;
+const SPEECH_VAD_HIGH: f32 = 0.80;
+const SPEECH_STRENGTH_RATIO: f32 = 0.55 / 0.70;
+const SPEECH_ATTACK_SECONDS: f32 = 0.010;
+const NOISE_RELEASE_SECONDS: f32 = 0.100;
+const ADAPTIVE_SPEECH_ATTACK_SECONDS: f32 = 0.005;
+const ADAPTIVE_NOISE_RELEASE_SECONDS: f32 = 0.150;
+const SPEECH_ENTER_PROBABILITY: f32 = 0.65;
+const SPEECH_EXIT_PROBABILITY: f32 = 0.25;
+const NON_SPEECH_CONFIRM_FRAMES: u8 = 3;
+
+const PERSONALIZED_ENTER_PROBABILITY: f32 = 0.80;
+const PERSONALIZED_EXIT_PROBABILITY: f32 = 0.55;
+const PERSONALIZED_EXIT_FRAMES: u8 = 3;
+const PERSONALIZED_ENGAGE_SECONDS: f32 = 0.080;
+const GENERIC_FALLBACK_SECONDS: f32 = 0.020;
+
 /// A strength ramp that always takes at least 20 ms for a nontrivial change.
 #[derive(Clone, Copy, Debug)]
 pub struct StrengthRamp {
@@ -74,6 +91,248 @@ impl StrengthRamp {
     }
 }
 
+/// Smoothly reduces wet strength while the model reports speech.
+///
+/// `RNNoise` remains at the requested strength for noise-only frames. During
+/// confident speech, the effective strength is reduced by at most about 21%
+/// to preserve voice detail. The asymmetric envelope reacts quickly to speech
+/// and returns slowly enough to avoid audible pumping.
+#[derive(Clone, Copy, Debug)]
+pub struct SpeechPreservingStrength {
+    factor: f32,
+    target_factor: f32,
+    attack_coefficient: f32,
+    release_coefficient: f32,
+}
+
+impl Default for SpeechPreservingStrength {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SpeechPreservingStrength {
+    /// Creates a controller settled at the unmodified requested strength.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            factor: 1.0,
+            target_factor: 1.0,
+            attack_coefficient: smoothing_coefficient(SPEECH_ATTACK_SECONDS),
+            release_coefficient: smoothing_coefficient(NOISE_RELEASE_SECONDS),
+        }
+    }
+
+    /// Sets the frame-level VAD probability used by subsequent samples.
+    pub fn begin_frame(&mut self, vad_probability: f32) {
+        let probability = finite_unit(vad_probability);
+        let position =
+            ((probability - SPEECH_VAD_LOW) / (SPEECH_VAD_HIGH - SPEECH_VAD_LOW)).clamp(0.0, 1.0);
+        let speech = position * position * (3.0 - 2.0 * position);
+        self.target_factor = 1.0 + (SPEECH_STRENGTH_RATIO - 1.0) * speech;
+    }
+
+    /// Returns the next effective strength for a requested base strength.
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self, base_strength: f32) -> f32 {
+        let base_strength = finite_unit(base_strength);
+        let coefficient = if self.target_factor < self.factor {
+            self.attack_coefficient
+        } else {
+            self.release_coefficient
+        };
+        self.factor = self.target_factor + coefficient * (self.factor - self.target_factor);
+        if base_strength <= 0.0 || base_strength >= 1.0 {
+            base_strength
+        } else {
+            base_strength * self.factor
+        }
+    }
+
+    /// Clears the speech envelope without changing its policy.
+    pub const fn reset(&mut self) {
+        self.factor = 1.0;
+        self.target_factor = 1.0;
+    }
+}
+
+/// Opt-in next-generation suppression controller with pause hysteresis.
+///
+/// Unlike [`SpeechPreservingStrength`], which remains the frozen production
+/// behavior, this prototype backs off within 5 ms on confident speech and
+/// takes 150 ms to restore pause attenuation after three confirmed non-speech
+/// frames. Keeping the policies as separate types makes baseline A/B runs
+/// explicit and prevents an unevaluated controller from silently shipping.
+#[derive(Clone, Copy, Debug)]
+pub struct AdaptiveSuppressionController {
+    factor: f32,
+    target_factor: f32,
+    attack_coefficient: f32,
+    release_coefficient: f32,
+    speech_active: bool,
+    non_speech_frames: u8,
+}
+
+impl Default for AdaptiveSuppressionController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AdaptiveSuppressionController {
+    /// Creates a controller settled at full requested suppression.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            factor: 1.0,
+            target_factor: 1.0,
+            attack_coefficient: smoothing_coefficient(ADAPTIVE_SPEECH_ATTACK_SECONDS),
+            release_coefficient: smoothing_coefficient(ADAPTIVE_NOISE_RELEASE_SECONDS),
+            speech_active: false,
+            non_speech_frames: 0,
+        }
+    }
+
+    /// Updates the delay-aligned frame-level speech probability.
+    pub fn begin_frame(&mut self, vad_probability: f32) {
+        let probability = finite_unit(vad_probability);
+        if probability >= SPEECH_ENTER_PROBABILITY {
+            self.speech_active = true;
+            self.non_speech_frames = 0;
+        } else if self.speech_active && probability <= SPEECH_EXIT_PROBABILITY {
+            self.non_speech_frames = self.non_speech_frames.saturating_add(1);
+            if self.non_speech_frames >= NON_SPEECH_CONFIRM_FRAMES {
+                self.speech_active = false;
+                self.non_speech_frames = 0;
+            }
+        } else {
+            self.non_speech_frames = 0;
+        }
+
+        let position =
+            ((probability - SPEECH_VAD_LOW) / (SPEECH_VAD_HIGH - SPEECH_VAD_LOW)).clamp(0.0, 1.0);
+        let mut speech = position * position * (3.0 - 2.0 * position);
+        if self.speech_active {
+            speech = speech.max(0.25);
+        }
+        self.target_factor = 1.0 + (SPEECH_STRENGTH_RATIO - 1.0) * speech;
+    }
+
+    /// Returns the next smoothly adjusted suppression strength.
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self, base_strength: f32) -> f32 {
+        let base_strength = finite_unit(base_strength);
+        let coefficient = if self.target_factor < self.factor {
+            self.attack_coefficient
+        } else {
+            self.release_coefficient
+        };
+        self.factor = self.target_factor + coefficient * (self.factor - self.target_factor);
+        if base_strength <= 0.0 || base_strength >= 1.0 {
+            base_strength
+        } else {
+            base_strength * self.factor
+        }
+    }
+
+    /// Clears the adaptive state without changing its policy.
+    pub const fn reset(&mut self) {
+        self.factor = 1.0;
+        self.target_factor = 1.0;
+        self.speech_active = false;
+        self.non_speech_frames = 0;
+    }
+}
+
+/// Confidence-weighted crossfade between generic and personalized processing.
+///
+/// Invalid or falling confidence always moves toward the generic path. Three
+/// consecutive low-confidence frames are required to leave personalized mode,
+/// and both directions remain sample-smoothed. The type contains no model or
+/// enrollment logic; it is a safe transition primitive for a future optional
+/// target-speaker path.
+#[derive(Clone, Copy, Debug)]
+pub struct ConfidenceWeightedBlend {
+    mix: f32,
+    target_mix: f32,
+    personalized_active: bool,
+    low_confidence_frames: u8,
+    engage_coefficient: f32,
+    fallback_coefficient: f32,
+}
+
+impl Default for ConfidenceWeightedBlend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConfidenceWeightedBlend {
+    /// Creates a blend settled on generic enhancement.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            mix: 0.0,
+            target_mix: 0.0,
+            personalized_active: false,
+            low_confidence_frames: 0,
+            engage_coefficient: smoothing_coefficient(PERSONALIZED_ENGAGE_SECONDS),
+            fallback_coefficient: smoothing_coefficient(GENERIC_FALLBACK_SECONDS),
+        }
+    }
+
+    /// Updates the target-speaker confidence for subsequent samples.
+    pub fn begin_frame(&mut self, confidence: f32) {
+        let confidence = if confidence.is_finite() {
+            confidence.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        if confidence >= PERSONALIZED_ENTER_PROBABILITY {
+            self.personalized_active = true;
+            self.low_confidence_frames = 0;
+        } else if self.personalized_active && confidence <= PERSONALIZED_EXIT_PROBABILITY {
+            self.low_confidence_frames = self.low_confidence_frames.saturating_add(1);
+            if self.low_confidence_frames >= PERSONALIZED_EXIT_FRAMES {
+                self.personalized_active = false;
+                self.low_confidence_frames = 0;
+            }
+        } else {
+            self.low_confidence_frames = 0;
+        }
+
+        self.target_mix = if self.personalized_active {
+            smoothstep(
+                PERSONALIZED_EXIT_PROBABILITY,
+                PERSONALIZED_ENTER_PROBABILITY,
+                confidence,
+            )
+        } else {
+            0.0
+        };
+    }
+
+    /// Returns the next personalized-path contribution in `[0, 1]`.
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> f32 {
+        let coefficient = if self.target_mix > self.mix {
+            self.engage_coefficient
+        } else {
+            self.fallback_coefficient
+        };
+        self.mix = self.target_mix + coefficient * (self.mix - self.target_mix);
+        self.mix
+    }
+
+    /// Clears hysteresis and returns immediately to generic processing.
+    pub const fn reset(&mut self) {
+        self.mix = 0.0;
+        self.target_mix = 0.0;
+        self.personalized_active = false;
+        self.low_confidence_frames = 0;
+    }
+}
+
 /// Counts sanitization and transparent hard-ceiling events during mixing.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MixReport {
@@ -83,11 +342,15 @@ pub struct MixReport {
     pub hard_ceiling: u64,
 }
 
-/// A stateless equal-power wet/dry mixer.
+/// A stateless linear wet/dry mixer for latency-aligned, correlated signals.
+///
+/// A linear blend is intentionally used here: dry speech and denoised speech
+/// are strongly correlated, so an equal-power crossfade would add gain at
+/// intermediate strengths and could clip otherwise valid samples.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct EqualPowerMixer;
+pub struct LinearMixer;
 
-impl EqualPowerMixer {
+impl LinearMixer {
     /// Mixes one latency-aligned dry/wet sample at a strength in `[0, 1]`.
     ///
     /// Strength zero returns dry exactly and strength one returns wet exactly.
@@ -102,7 +365,7 @@ impl EqualPowerMixer {
         } else if strength >= 1.0 {
             wet
         } else {
-            dry * (1.0 - strength).sqrt() + wet * strength.sqrt()
+            dry * (1.0 - strength) + wet * strength
         };
         let mixed = sanitize_sample(mixed, &mut report.sanitized);
         let limited = mixed.clamp(-1.0, 1.0);
@@ -112,6 +375,10 @@ impl EqualPowerMixer {
         limited
     }
 }
+
+/// Compatibility alias retained for downstream users of the phase-2 API.
+#[doc(hidden)]
+pub type EqualPowerMixer = LinearMixer;
 
 fn finite_unit(value: f32) -> f32 {
     if value.is_finite() {
@@ -126,18 +393,31 @@ fn duration_as_f32(duration: u32) -> f32 {
     duration as f32
 }
 
+fn smoothing_coefficient(seconds: f32) -> f32 {
+    debug_assert_eq!(crate::SAMPLE_RATE_HZ, 48_000);
+    (-1.0 / (seconds * 48_000.0)).exp()
+}
+
+fn smoothstep(low: f32, high: f32, value: f32) -> f32 {
+    let position = ((value - low) / (high - low)).clamp(0.0, 1.0);
+    position * position * (3.0 - 2.0 * position)
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::cast_precision_loss, clippy::float_cmp)]
 
-    use super::{EqualPowerMixer, MixReport, StrengthRamp};
-    use crate::{DryDelay, MIN_STRENGTH_RAMP_SAMPLES, SAMPLE_RATE_HZ};
+    use super::{
+        AdaptiveSuppressionController, ConfidenceWeightedBlend, LinearMixer, MixReport,
+        SpeechPreservingStrength, StrengthRamp,
+    };
+    use crate::{DryDelay, MIN_STRENGTH_RAMP_SAMPLES, MODEL_FRAME_SAMPLES, SAMPLE_RATE_HZ};
 
     #[test]
     fn strength_endpoints_are_exact() {
         let mut report = MixReport::default();
-        assert_eq!(EqualPowerMixer::mix(0.25, -0.75, 0.0, &mut report), 0.25);
-        assert_eq!(EqualPowerMixer::mix(0.25, -0.75, 1.0, &mut report), -0.75);
+        assert_eq!(LinearMixer::mix(0.25, -0.75, 0.0, &mut report), 0.25);
+        assert_eq!(LinearMixer::mix(0.25, -0.75, 1.0, &mut report), -0.75);
     }
 
     #[test]
@@ -155,10 +435,92 @@ mod tests {
     #[test]
     fn mixer_sanitizes_and_limits_only_out_of_range_results() {
         let mut report = MixReport::default();
-        assert_eq!(EqualPowerMixer::mix(f32::NAN, 0.5, 0.0, &mut report), 0.0);
-        assert_eq!(EqualPowerMixer::mix(1.0, 1.0, 0.5, &mut report), 1.0);
+        assert_eq!(LinearMixer::mix(f32::NAN, 0.5, 0.0, &mut report), 0.0);
+        assert_eq!(LinearMixer::mix(1.0, 1.0, 0.5, &mut report), 1.0);
         assert_eq!(report.sanitized.non_finite, 1);
-        assert_eq!(report.hard_ceiling, 1);
+        assert_eq!(report.hard_ceiling, 0);
+    }
+
+    #[test]
+    fn correlated_inputs_do_not_gain_or_hit_the_ceiling() {
+        let mut report = MixReport::default();
+        for strength in [0.25, 0.5, 0.75] {
+            assert_eq!(LinearMixer::mix(0.9, 0.9, strength, &mut report), 0.9);
+        }
+        assert_eq!(report.hard_ceiling, 0);
+    }
+
+    #[test]
+    fn confident_speech_converges_to_the_audited_default_strength() {
+        let mut controller = SpeechPreservingStrength::new();
+        controller.begin_frame(1.0);
+        let mut effective = 0.0;
+        for _ in 0..48_000 {
+            effective = controller.next(0.70);
+        }
+        assert!((effective - 0.55).abs() < 1.0e-4);
+    }
+
+    #[test]
+    fn speech_controller_is_bounded_and_handles_invalid_inputs() {
+        let mut controller = SpeechPreservingStrength::new();
+        controller.begin_frame(f32::NAN);
+        assert!((controller.next(0.70) - 0.70).abs() < 1.0e-6);
+        controller.begin_frame(1.0);
+        for _ in 0..4_800 {
+            let value = controller.next(f32::INFINITY);
+            assert_eq!(value, 0.0);
+        }
+        assert_eq!(controller.next(1.0), 1.0);
+        controller.reset();
+        assert!((controller.next(1.0) - 1.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn speech_backoff_is_fast_and_pause_recovery_is_hysteretic() {
+        let mut controller = AdaptiveSuppressionController::new();
+        controller.begin_frame(1.0);
+        let after_five_ms = (0..240).fold(0.70, |_, _| controller.next(0.70));
+        assert!(after_five_ms < 0.61);
+
+        for _ in 0..2 {
+            controller.begin_frame(0.0);
+            for _ in 0..MODEL_FRAME_SAMPLES {
+                controller.next(0.70);
+            }
+        }
+        let held = controller.next(0.70);
+        assert!(held < 0.64);
+
+        controller.begin_frame(0.0);
+        let recovered = (0..7_200).fold(held, |_, _| controller.next(0.70));
+        assert!(recovered > held);
+        assert!(recovered < 0.70);
+    }
+
+    #[test]
+    fn personalized_blend_uses_hysteresis_and_smooth_generic_fallback() {
+        let mut blend = ConfidenceWeightedBlend::new();
+        blend.begin_frame(1.0);
+        let engaged = (0..4_800).fold(0.0, |_, _| blend.next());
+        assert!(engaged > 0.70 && engaged < 1.0);
+
+        for _ in 0..2 {
+            blend.begin_frame(0.0);
+            for _ in 0..MODEL_FRAME_SAMPLES {
+                blend.next();
+            }
+        }
+        let held = blend.next();
+        assert!(held > 0.0);
+
+        blend.begin_frame(0.0);
+        let first_fallback = blend.next();
+        assert!(first_fallback > 0.0 && first_fallback < held);
+        let generic = (0..4_800).fold(first_fallback, |_, _| blend.next());
+        assert!(generic < 0.01);
+        blend.reset();
+        assert_eq!(blend.next(), 0.0);
     }
 
     #[test]
@@ -189,7 +551,7 @@ mod tests {
                 .iter()
                 .zip(output[offset..end].iter_mut())
             {
-                *destination = EqualPowerMixer::mix(*dry, -*dry, 0.0, &mut report);
+                *destination = LinearMixer::mix(*dry, -*dry, 0.0, &mut report);
             }
             assert_eq!(report.hard_ceiling, 0);
             offset = end;

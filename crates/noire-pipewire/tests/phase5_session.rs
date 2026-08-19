@@ -1,4 +1,4 @@
-//! Phase-5 live `RNNoise` acceptance in a disposable `PipeWire` graph.
+//! Live `FastEnhancer-B` acceptance in a disposable `PipeWire` graph.
 
 #![cfg(feature = "native-test")]
 #![allow(
@@ -18,7 +18,7 @@ use std::{
 };
 
 use noire_model::DenoiserFactory;
-use noire_model_rnnoise::RnnoiseFactory;
+use noire_model_fastenhancer::FastEnhancerFactory;
 use noire_pipewire::{
     CaptureSink, CaptureStreamState, ConsumerDemand, InputGeneration, LiveGraph, LiveState,
     NativeCaptureStream, PipewireConnection, SourceStreamState, SyntheticSource,
@@ -52,7 +52,8 @@ impl CaptureSink for RecordingSink {
 
 #[test]
 #[ignore = "requires a disposable native PipeWire and WirePlumber session"]
-fn live_rnnoise_graph_meets_latency_demand_and_transport_gates() -> Result<(), Box<dyn Error>> {
+fn live_fastenhancer_graph_meets_latency_demand_and_transport_gates() -> Result<(), Box<dyn Error>>
+{
     let connection = PipewireConnection::connect_default()?;
     let selected = SyntheticSource::connect_with_spec(
         &connection,
@@ -75,7 +76,7 @@ fn live_rnnoise_graph_meets_latency_demand_and_transport_gates() -> Result<(), B
             .any(|node| node.node_name == SELECTED_SOURCE)
     })?;
 
-    let factory = RnnoiseFactory::new()?;
+    let factory = FastEnhancerFactory::new()?;
     let graph = LiveGraph::connect(&connection, selected.node_name(), factory.create()?)?;
     graph.control().set_strength(0.0);
     graph.control().set_diagnostic_timing(true);

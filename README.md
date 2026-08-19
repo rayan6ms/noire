@@ -1,7 +1,7 @@
 # Noire
 
 Noire is a native Linux microphone noise-reduction service. It captures a
-physical microphone through PipeWire, processes it with RNNoise, and publishes
+physical microphone through PipeWire, processes it with FastEnhancer-B 48 kHz, and publishes
 **Noire Microphone** for applications such as browsers, voice clients, and OBS.
 
 The current stable release is [Noire 1.0.0](https://github.com/rayan6ms/noire/releases/tag/v1.0.0).
@@ -14,6 +14,32 @@ notes document the accepted qualification limitations for 1.0.0.
 Download the Debian/Ubuntu or Fedora packages and their signed checksum manifest
 from [GitHub Releases](https://github.com/rayan6ms/noire/releases/latest), then
 follow the [user guide](USER_GUIDE.md) to verify and install them.
+
+## Recommended quality setup
+
+For the best general speech/noise balance, start with:
+
+```sh
+noirectl set strength 0.55
+noirectl set latency-profile low
+noirectl set fail-mode closed
+```
+
+`0.55` is the default and qualified everyday strength. Against the improved
+RNNoise backup on 824 frozen utterances, this FastEnhancer-B mix gained about
+`+0.0048` median STOI and `+1.95 dB` median SI-SDR while causing effectively
+zero clean-speech damage. It also completed the 952-case stress suite without
+new clipping or non-finite output. Use `1.0` only when maximum removal matters
+more than naturalness; the fully wet model is substantially more aggressive.
+The explicit endpoints `0.0` and `1.0` remain exact.
+
+Keep the `low` latency profile when audio is stable. Switch to `balanced` only
+if the system produces underruns, dropouts, or breakup under load; it adds
+scheduling headroom without changing the denoising model. Set the physical
+microphone gain high enough for clear speech while retaining headroom—peaks
+below roughly -6 dBFS when measurable—and normally disable additional noise
+suppression in the receiving application so the same signal is not processed
+twice.
 
 ## Workspace
 

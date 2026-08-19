@@ -426,8 +426,8 @@ mod native {
 
     use super::{CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata, InputGeneration};
     use crate::{
-        CaptureFormat, NegotiatedFormatError, PipewireConnection, build_capture_format_pod,
-        parse_negotiated_format,
+        CaptureFormat, NegotiatedFormatError, PipewireConnection, StreamLatency,
+        build_capture_format_pod, parse_negotiated_format,
     };
 
     #[derive(Debug)]
@@ -551,7 +551,14 @@ mod native {
             sink: S,
             initially_active: bool,
         ) -> Result<Self, CaptureStreamError> {
-            Self::connect_with_sink_at(connection, target_node_name, None, sink, initially_active)
+            Self::connect_with_sink_at(
+                connection,
+                target_node_name,
+                None,
+                sink,
+                initially_active,
+                StreamLatency::Low,
+            )
         }
 
         pub(crate) fn connect_with_sink_to_id<S: CaptureSink + 'static>(
@@ -561,12 +568,31 @@ mod native {
             sink: S,
             initially_active: bool,
         ) -> Result<Self, CaptureStreamError> {
+            Self::connect_with_sink_to_id_and_latency(
+                connection,
+                target_node_name,
+                target_node_id,
+                sink,
+                initially_active,
+                StreamLatency::Low,
+            )
+        }
+
+        pub(crate) fn connect_with_sink_to_id_and_latency<S: CaptureSink + 'static>(
+            connection: &PipewireConnection,
+            target_node_name: &str,
+            target_node_id: u32,
+            sink: S,
+            initially_active: bool,
+            latency: StreamLatency,
+        ) -> Result<Self, CaptureStreamError> {
             Self::connect_with_sink_at(
                 connection,
                 target_node_name,
                 Some(target_node_id),
                 sink,
                 initially_active,
+                latency,
             )
         }
 
@@ -576,13 +602,14 @@ mod native {
             target_node_id: Option<u32>,
             sink: S,
             initially_active: bool,
+            latency: StreamLatency,
         ) -> Result<Self, CaptureStreamError> {
             let properties = properties! {
                 *keys::MEDIA_TYPE => "Audio",
                 *keys::MEDIA_CATEGORY => "Capture",
                 *keys::MEDIA_ROLE => "Communication",
                 "target.object" => target_node_name,
-                *keys::NODE_LATENCY => "128/48000",
+                *keys::NODE_LATENCY => latency.node_property(),
             };
             let stream = StreamRc::new(connection.core_clone(), "noire-capture", properties)?;
             let control = Rc::new(RefCell::new(ControlState::default()));

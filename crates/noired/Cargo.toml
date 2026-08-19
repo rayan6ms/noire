@@ -14,7 +14,7 @@ noire-config.workspace = true
 noire-core.workspace = true
 noire-ipc.workspace = true
 noire-model.workspace = true
-noire-model-rnnoise = { workspace = true, optional = true, features = ["rnnoise"] }
+noire-model-fastenhancer = { workspace = true, optional = true }
 noire-pipewire.workspace = true
 tokio = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
@@ -28,7 +28,7 @@ proptest.workspace = true
 
 [features]
 default = ["runtime"]
-pipewire-backend = ["noire-pipewire/pipewire-backend", "dep:noire-model-rnnoise"]
+pipewire-backend = ["noire-pipewire/pipewire-backend", "dep:noire-model-fastenhancer"]
 native-test = ["pipewire-backend", "noire-pipewire/native-test"]
 runtime = ["dep:anyhow", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:zbus", "noire-ipc/dbus"]
 

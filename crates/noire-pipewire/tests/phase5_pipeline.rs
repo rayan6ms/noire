@@ -1,4 +1,4 @@
-//! Phase-5 live `RNNoise` fixture and reference-host performance acceptance.
+//! Live `FastEnhancer-B` fixture and reference-host performance acceptance.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -16,16 +16,16 @@ use noire_dsp::{
     ChannelMap, ChannelPosition, ChannelSelection, MODEL_FRAME_SAMPLES, SAMPLE_RATE_HZ,
 };
 use noire_model::DenoiserFactory;
-use noire_model_rnnoise::RnnoiseFactory;
+use noire_model_fastenhancer::FastEnhancerFactory;
 use noire_pipewire::{
     BYPASS_RING_CAPACITY, CaptureSink, InputGeneration, LiveState, create_live_channel,
 };
 
 const PERFORMANCE_MODEL_FRAMES: usize = 60_000;
-const MODEL_FRAMES_PER_AUDIO_HOUR: usize = 360_000;
+const MODEL_FRAMES_PER_AUDIO_HOUR: usize = 337_500;
 
-fn rnnoise() -> Result<Box<dyn noire_model::Denoiser>, Box<dyn Error>> {
-    Ok(RnnoiseFactory::new()?.create()?)
+fn fastenhancer() -> Result<Box<dyn noire_model::Denoiser>, Box<dyn Error>> {
+    Ok(FastEnhancerFactory::new()?.create()?)
 }
 
 fn fixture(name: &str, frames: usize) -> Vec<f32> {
@@ -71,7 +71,7 @@ fn fixture(name: &str, frames: usize) -> Vec<f32> {
 #[test]
 fn real_model_fixture_matrix_is_finite_bounded_and_metered() -> Result<(), Box<dyn Error>> {
     for name in ["silence", "speech", "music", "keyboard", "fan", "clipping"] {
-        let (mut sink, mut output, control, telemetry) = create_live_channel(rnnoise()?)?;
+        let (mut sink, mut output, control, telemetry) = create_live_channel(fastenhancer()?)?;
         control.set_strength(1.0);
         let samples = fixture(name, MODEL_FRAME_SAMPLES * 20);
         let mut rendered = Vec::with_capacity(samples.len());
@@ -97,7 +97,7 @@ fn real_model_fixture_matrix_is_finite_bounded_and_metered() -> Result<(), Box<d
         );
     }
 
-    let (mut sink, _output, _control, telemetry) = create_live_channel(rnnoise()?)?;
+    let (mut sink, _output, _control, telemetry) = create_live_channel(fastenhancer()?)?;
     let mut invalid = [0.0; MODEL_FRAME_SAMPLES];
     invalid[17] = f32::NAN;
     invalid[81] = f32::INFINITY;
@@ -126,9 +126,9 @@ fn real_model_fixture_matrix_is_finite_bounded_and_metered() -> Result<(), Box<d
 
 #[test]
 #[ignore = "reference-host release performance and ten-minute-equivalent RSS run"]
-fn live_rnnoise_meets_cpu_deadline_callback_and_rss_gates() -> Result<(), Box<dyn Error>> {
+fn live_fastenhancer_meets_cpu_deadline_callback_and_rss_gates() -> Result<(), Box<dyn Error>> {
     let rss_before_kib = resident_kib()?;
-    let (mut sink, mut output, control, telemetry) = create_live_channel(rnnoise()?)?;
+    let (mut sink, mut output, control, telemetry) = create_live_channel(fastenhancer()?)?;
     control.set_diagnostic_timing(true);
     let input = fixture("speech", MODEL_FRAME_SAMPLES);
     let mut rendered = [0.0; MODEL_FRAME_SAMPLES];
@@ -148,19 +148,21 @@ fn live_rnnoise_meets_cpu_deadline_callback_and_rss_gates() -> Result<(), Box<dy
     let snapshot = telemetry.snapshot();
     let audio_ns = u64::try_from(PERFORMANCE_MODEL_FRAMES)
         .unwrap_or(u64::MAX)
-        .saturating_mul(10_000_000);
+        .saturating_mul(u64::try_from(MODEL_FRAME_SAMPLES).unwrap_or(u64::MAX))
+        .saturating_mul(1_000_000_000)
+        / u64::from(SAMPLE_RATE_HZ);
     let active_cpu_percent = snapshot.callback_timing.total_ns as f64 * 100.0 / audio_ns as f64;
     let model_p99_ns = snapshot.model_timing.percentile_ns(99);
     let callback_p99_ns = snapshot.callback_timing.percentile_ns(99);
     let rss_growth_kib = rss_after_kib.saturating_sub(rss_before_kib);
 
     assert!(
-        active_cpu_percent < 5.0,
+        active_cpu_percent < 30.0,
         "active CPU was {active_cpu_percent}%"
     );
-    assert!(model_p99_ns <= 750_000, "model p99 was {model_p99_ns} ns");
+    assert!(model_p99_ns <= 4_000_000, "model p99 was {model_p99_ns} ns");
     assert!(
-        callback_p99_ns < 2_670_000,
+        callback_p99_ns < 4_000_000,
         "callback p99 was {callback_p99_ns} ns"
     );
     assert_eq!(snapshot.deadline_misses, 0);
@@ -171,7 +173,7 @@ fn live_rnnoise_meets_cpu_deadline_callback_and_rss_gates() -> Result<(), Box<dy
     assert!(rss_growth_kib < 5 * 1_024, "RSS grew {rss_growth_kib} KiB");
     println!(
         "NOIRE_PHASE5_PERFORMANCE model_frames={PERFORMANCE_MODEL_FRAMES} audio_seconds={} wall_ms={} active_cpu_percent={active_cpu_percent:.3} model_p99_ns={model_p99_ns} model_max_ns={} callback_p99_ns={callback_p99_ns} callback_max_ns={} rss_before_kib={rss_before_kib} rss_after_kib={rss_after_kib} rss_growth_kib={rss_growth_kib}",
-        PERFORMANCE_MODEL_FRAMES / 100,
+        audio_ns / 1_000_000_000,
         wall.as_millis(),
         snapshot.model_timing.maximum_ns,
         snapshot.callback_timing.maximum_ns,
@@ -192,7 +194,7 @@ fn release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded()
     let pace_realtime = std::env::var("NOIRE_PHASE7_SOAK_REALTIME").is_ok_and(|value| value == "1");
     let rss_before_kib = resident_kib()?;
     let mut peak_rss_kib = rss_before_kib;
-    let (mut sink, mut output, control, telemetry) = create_live_channel(rnnoise()?)?;
+    let (mut sink, mut output, control, telemetry) = create_live_channel(fastenhancer()?)?;
     let input = fixture("speech", MODEL_FRAME_SAMPLES);
     let mut rendered = [0.0; MODEL_FRAME_SAMPLES];
     let mut generation = InputGeneration::INITIAL;
@@ -233,7 +235,12 @@ fn release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded()
         }
         if pace_realtime {
             let completed_frames = u64::try_from(frame.saturating_add(1)).unwrap_or(u64::MAX);
-            let due = started + Duration::from_millis(completed_frames.saturating_mul(10));
+            let completed_samples = completed_frames
+                .saturating_mul(u64::try_from(MODEL_FRAME_SAMPLES).unwrap_or(u64::MAX));
+            let due = started
+                + Duration::from_nanos(
+                    completed_samples.saturating_mul(1_000_000_000) / u64::from(SAMPLE_RATE_HZ),
+                );
             thread::sleep(due.saturating_duration_since(Instant::now()));
         }
     }
@@ -286,7 +293,7 @@ fn release_audio_time_soak_keeps_memory_queues_and_fault_counters_bounded()
         } else {
             "accelerated"
         },
-        model_frames / 100,
+        model_frames.saturating_mul(MODEL_FRAME_SAMPLES) / SAMPLE_RATE_HZ as usize,
         wall.as_millis(),
         generation.get(),
         snapshot.model_resets,

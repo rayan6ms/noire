@@ -21,11 +21,11 @@ REPOSITORY = "https://github.com/rayan6ms/noire"
 TARGET = "x86_64-unknown-linux-gnu"
 ROOT_PACKAGES = frozenset({"noired", "noirectl", "noire-ui"})
 ARTIFACT_SUFFIXES = (".deb", ".rpm", ".tar.gz", ".tar.xz", ".tar.zst")
-MODEL_ID = "org.rnnoise.nnnoiseless.default"
-MODEL_VERSION = "nnnoiseless-0.5.2/default-e6de5fbfadf7ec91"
-MODEL_LICENSE = "BSD-3-Clause"
-MODEL_SHA256 = "e6de5fbfadf7ec91d1b24d6a6ccfd0290cb4d8bf555c5eab3ce41506f67a58b1"
-MODEL_SOURCE = "nnnoiseless 0.5.2 src/weights.rnn"
+MODEL_ID = "org.noire.fastenhancer.base-48khz"
+MODEL_VERSION = "fastenhancer-b-48khz-a3f475e6ae0c"
+MODEL_LICENSE = "MIT"
+MODEL_SHA256 = "a3f475e6ae0cfbe337a411f4f2d01b0cdc49a3fbf1eed02ad46dd355074d0071"
+MODEL_SOURCE = "fastenhancer-web 1bfc497df7a5 fe_base_48k.bin; FastEnhancer onnx-48khz-v1"
 SPDX_VERSION = "SPDX-2.3"
 SLSA_PREDICATE = "https://slsa.dev/provenance/v1"
 BUILD_TYPE = f"{REPOSITORY}/blob/main/packaging/release-metadata-build-v1.md"
@@ -174,16 +174,16 @@ def verify_embedded_model(packages: list[dict[str, Any]]) -> None:
     matches = [
         package
         for package in packages
-        if package["name"] == "nnnoiseless" and package["version"] == "0.5.2"
+        if package["name"] == "noire-model-fastenhancer" and package["version"] == "1.1.0"
     ]
     if len(matches) != 1:
-        raise MetadataError("expected exactly one nnnoiseless 0.5.2 package")
-    weights = Path(matches[0]["manifest_path"]).parent / "src" / "weights.rnn"
+        raise MetadataError("expected exactly one Noire FastEnhancer adapter package")
+    weights = Path(matches[0]["manifest_path"]).parent / "models" / "fe_base_48k.bin"
     if not weights.is_file() or weights.is_symlink():
-        raise MetadataError(f"embedded RNNoise weights are unavailable: {weights}")
+        raise MetadataError(f"embedded FastEnhancer-B weights are unavailable: {weights}")
     actual = sha256_file(weights)
     if actual != MODEL_SHA256:
-        raise MetadataError(f"embedded RNNoise weights digest mismatch: {actual}")
+        raise MetadataError(f"embedded FastEnhancer-B weights digest mismatch: {actual}")
 
 
 def collect_artifacts(directories: list[Path]) -> dict[str, Path]:
@@ -307,7 +307,7 @@ def build_spdx(
             }
         )
 
-    model_id = "SPDXRef-Package-RNNoise-Embedded-Model"
+    model_id = "SPDXRef-Package-FastEnhancer-B-Embedded-Model"
     spdx_packages.append(
         {
             "SPDXID": model_id,
@@ -383,7 +383,8 @@ def build_notices(version: str, packages: list[dict[str, Any]]) -> bytes:
         f"- License: `{MODEL_LICENSE}`",
         f"- SHA-256: `{MODEL_SHA256}`",
         f"- Source: `{MODEL_SOURCE}`",
-        "- Upstream: https://github.com/jneem/nnnoiseless",
+        "- Model upstream: https://github.com/aask1357/fastenhancer",
+        "- Native runtime: https://github.com/ryyr-ry/fastenhancer-web",
         "",
         "## Rust packages",
         "",
@@ -563,7 +564,10 @@ def verify_release(version: str, directories: list[Path], metadata_dir: Path) ->
     if len(package_ids) != len(set(package_ids)):
         raise MetadataError("SBOM contains duplicate package SPDX identifiers")
     indexed_packages = {entry.get("SPDXID"): entry for entry in package_entries}
-    expected_package_ids = {"SPDXRef-Package-Noire", "SPDXRef-Package-RNNoise-Embedded-Model"}
+    expected_package_ids = {
+        "SPDXRef-Package-Noire",
+        "SPDXRef-Package-FastEnhancer-B-Embedded-Model",
+    }
     expected_package_ids.update(package_spdx_id(package) for package in packages)
     if set(indexed_packages) != expected_package_ids:
         raise MetadataError("SBOM package inventory does not match the locked release dependency graph")
@@ -587,7 +591,13 @@ def verify_release(version: str, directories: list[Path], metadata_dir: Path) ->
         raise MetadataError("SBOM embedded-model identity is missing or incorrect")
 
     notices = (metadata_dir / notices_name).read_text(encoding="utf-8")
-    for required_notice in (MODEL_ID, MODEL_VERSION, MODEL_LICENSE, MODEL_SHA256, "nnnoiseless"):
+    for required_notice in (
+        MODEL_ID,
+        MODEL_VERSION,
+        MODEL_LICENSE,
+        MODEL_SHA256,
+        "fastenhancer-web",
+    ):
         if required_notice not in notices:
             raise MetadataError(f"third-party notices omit {required_notice}")
     if notices.encode() != build_notices(version, packages):

@@ -1,0 +1,23 @@
+[package]
+name = "noire-model-fastenhancer"
+description = "FastEnhancer-B 48 kHz model adapter for Noire"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+noire-model.workspace = true
+noire-model-fastenhancer-sys.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+stats_alloc.workspace = true
+
+[[bench]]
+name = "model_frame"
+harness = false
+
+[lints]
+workspace = true

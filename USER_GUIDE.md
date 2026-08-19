@@ -72,7 +72,7 @@ global PipeWire/WirePlumber configuration.
 These CLI commands map to the GTK controls:
 
 ```sh
-noirectl set strength 0.75
+noirectl set strength 0.55
 noirectl set enabled false
 noirectl set enabled true
 noirectl set latency-profile balanced
@@ -81,10 +81,20 @@ noirectl retry
 noirectl stop
 ```
 
-Suppression strength is from `0.0` through `1.0`. Disabling suppression publishes
-latency-matched dry microphone audio; it does not mute. The `low` latency profile
-is the default. Try `balanced` when the system is scheduling-sensitive or audio
-breaks up under load.
+Suppression strength is from `0.0` through `1.0`. The default `0.55` is the
+qualified FastEnhancer-B speech/noise balance and preserves the latency-matched
+dry signal. The exact `0.0` and `1.0` endpoints remain fully dry and fully wet.
+Use `1.0` only for maximum removal of steady noise; it is more aggressive and
+can sound less natural.
+Disabling suppression publishes latency-matched dry microphone audio; it does
+not mute.
+
+The `low` latency profile requests a 256-sample PipeWire quantum and is the
+recommended default when audio is stable. `balanced` requests 512 samples for
+more scheduling headroom when audio breaks up under load; it does not change
+the denoising model. Keep physical microphone peaks below roughly -6 dBFS when
+you can measure them, and normally disable additional noise suppression in the
+receiving application.
 
 Noire fails closed by default: an unsafe model failure fades output to silence.
 The following explicit opt-in instead permits delayed dry microphone audio after

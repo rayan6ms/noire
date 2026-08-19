@@ -261,8 +261,8 @@ impl Daemon {
                 FailMode::Open => "open",
             }
             .to_owned(),
-            model_id: "org.rnnoise.nnnoiseless.default".to_owned(),
-            model_delay_samples: 480,
+            model_id: "org.noire.fastenhancer.base-48khz".to_owned(),
+            model_delay_samples: 512,
             pipewire_version: self.observation.pipewire_version.clone(),
             uptime_millis: u64::try_from(self.started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
             has_error: self.last_error.is_some(),
@@ -784,7 +784,7 @@ mod tests {
             Err(ControlError::Invalid(_))
         ));
         assert_eq!(daemon.snapshot().revision, 1);
-        assert!((daemon.snapshot().strength - 1.0).abs() < f64::EPSILON);
+        assert!((daemon.snapshot().strength - 0.55).abs() < f64::EPSILON);
         if root.exists() {
             fs::remove_dir_all(root)?;
         }

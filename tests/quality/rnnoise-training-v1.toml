@@ -1,0 +1,92 @@
+schema_version = 1
+experiment_id = "rnnoise-voicebank-finetune-v1"
+status = "completed-quality-v1"
+production_model_unchanged = true
+sample_rate_hz = 48000
+channels = 1
+
+[initial_model]
+implementation = "nnnoiseless-0.5.2"
+weights_sha256 = "e6de5fbfadf7ec91d1b24d6a6ccfd0290cb4d8bf555c5eab3ce41506f67a58b1"
+immutable_fallback = true
+
+[source]
+name = "VoiceBank-DEMAND 28-speaker training set"
+publisher = "University of Edinburgh DataShare"
+landing_page = "https://datashare.ed.ac.uk/handle/10283/2791"
+doi = "10.7488/ds/2117"
+license = "CC-BY-4.0"
+paired_utterances = 11572
+duration_hours = 9.3912306192
+
+[source.clean_archive]
+filename = "clean_trainset_28spk_wav.zip"
+data_share_uuid = "245452b6-6235-44b6-a6f9-e7eb19797769"
+bytes = 2486057279
+sha256 = "dbb13b9ffe752c58764d75de272706a2b467744f33455cec6deb2b12ca01df66"
+
+[source.noisy_archive]
+filename = "noisy_trainset_28spk_wav.zip"
+data_share_uuid = "ecb5a102-bb00-46d3-8af5-40c79823b837"
+bytes = 2830205201
+sha256 = "a656af041f5a8931b02077331281c2b82ebc35b38dc83ff92935015bcd7920b4"
+
+[split]
+train_speakers = ["p227", "p228", "p230", "p231", "p233", "p236", "p239", "p243", "p244", "p250", "p254", "p256", "p258", "p259", "p267", "p268", "p269", "p270", "p273", "p274", "p276", "p277", "p278", "p279", "p282", "p286"]
+development_speakers = ["p226", "p287"]
+frozen_test_speakers = ["p232", "p257"]
+rule = "Development speakers are excluded from feature generation; frozen test speakers are absent from the 28-speaker source and remain untouched during selection."
+
+[augmentation]
+recombine_speech_and_residual_noise = true
+residual_alignment = "least-squares noisy = alpha * clean + residual after DC removal"
+residual_scale_sha256 = "a81de48e453bf8e7dc31a1f7af59c3e93eaed403c9249da151daf11083ca8f30"
+residual_scale_minimum = 0.400258856042557
+residual_scale_median = 0.999824408758131
+residual_scale_maximum = 1.081783662592396
+corrected_residual_correlation_maximum_absolute = 7.69682223770821e-15
+pair_count_above_1_percent_scale_correction = 1781
+pair_count_above_3_percent_scale_correction = 196
+pair_count_above_10_percent_scale_correction = 39
+clean_fraction = 0.20
+noise_only_fraction = 0.10
+spectral_coloration = true
+level_variation = true
+bandwidth_variation = true
+deterministic_seed = 5642809475817688654
+
+[resource_limits]
+tensorflow_device = "cpu"
+threads = 4
+maximum_threads = 8
+sequence_frames = 400
+batch_size = 64
+gpu_reason = "RX 6600M is not in AMD's supported ROCm Radeon matrix; do not risk an unsupported system install."
+
+[selection]
+development_case_count = 770
+balanced_by = ["speaker", "noise", "snr_db"]
+required_checks = ["stoi", "si_sdr", "segmental_snr", "clean_stoi_damage", "clipping", "finite_output"]
+frozen_test_after_selection_only = true
+blinded_listening_before_promotion = true
+
+[features.training]
+rows = 3000000
+sha256 = "12d8a0e245a547f5494ad0f6d8ee9589b89f5e5ab6ae15b38c606e4a860234a7"
+finite = true
+targets_in_range = true
+
+[features.validation]
+rows = 200000
+sha256 = "4d18d34019f584a8e666d81d4a5a0e21217a889d28d206d26e067e85a2b887d8"
+finite = true
+targets_in_range = true
+
+[winner]
+name = "rnnoise-quality-v1"
+weights_sha256 = "2f0958c50378499cbd8869723b7dc214a65873304ec81856d3c084c08c0e9048"
+trainable_profile = "denoise-output"
+epoch = 3
+epochs_screened = 4
+learning_rate = 0.00002
+speech_gain_blend = 0.50

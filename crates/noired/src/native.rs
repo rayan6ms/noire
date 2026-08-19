@@ -6,13 +6,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-use noire_config::{Config, FailMode as ConfigFailMode, InputMode};
+use noire_config::{Config, FailMode as ConfigFailMode, InputMode, LatencyProfile};
 use noire_ipc::{InputDescriptor, Metrics};
 use noire_model::DenoiserFactory;
-use noire_model_rnnoise::RnnoiseFactory;
+use noire_model_fastenhancer::FastEnhancerFactory;
 use noire_pipewire::{
     DeviceAvailability, FailMode, GraphHealthIssue, InputResolution, LiveGraph, LiveState,
-    PipewireConnection, RegistrySnapshot, SelectionPolicy,
+    PipewireConnection, RegistrySnapshot, SelectionPolicy, StreamLatency,
 };
 
 use crate::{
@@ -438,26 +438,33 @@ fn apply_native(
                 });
             }
         };
-        let factory = RnnoiseFactory::new().map_err(|error| EngineError {
+        let factory = FastEnhancerFactory::new().map_err(|error| EngineError {
             code: "model-initialization-failed",
-            message: format!("the bundled RNNoise model could not initialize: {error}"),
+            message: format!("the bundled FastEnhancer-B model could not initialize: {error}"),
             recovery: "restart Noire; reinstall if the condition persists",
             retryable: true,
         })?;
         let model = factory.create().map_err(|error| EngineError {
             code: "model-initialization-failed",
-            message: format!("the bundled RNNoise model could not initialize: {error}"),
+            message: format!("the bundled FastEnhancer-B model could not initialize: {error}"),
             recovery: "restart Noire; reinstall if the condition persists",
             retryable: true,
         })?;
         *graph = Some(
-            LiveGraph::connect(connection, &selected.node_name, model).map_err(|error| {
-                EngineError {
-                    code: "audio-graph-unavailable",
-                    message: format!("the live PipeWire graph could not start: {error}"),
-                    recovery: "verify PipeWire and the selected input, then retry",
-                    retryable: true,
-                }
+            LiveGraph::connect_with_latency(
+                connection,
+                &selected.node_name,
+                model,
+                match config.output.latency_profile {
+                    LatencyProfile::Low => StreamLatency::Low,
+                    LatencyProfile::Balanced => StreamLatency::Balanced,
+                },
+            )
+            .map_err(|error| EngineError {
+                code: "audio-graph-unavailable",
+                message: format!("the live PipeWire graph could not start: {error}"),
+                recovery: "verify PipeWire and the selected input, then retry",
+                retryable: true,
             })?,
         );
         selected.label

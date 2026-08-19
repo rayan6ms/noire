@@ -21,18 +21,35 @@ stats_alloc.workspace = true
 
 [features]
 default = []
-offline-wav = ["rnnoise", "dep:hound", "dep:noire-dsp"]
+experimental-enhancement = ["rnnoise", "dep:noire-dsp"]
+offline-wav = ["experimental-enhancement", "dep:hound"]
 rnnoise = ["dep:nnnoiseless"]
+training-tools = ["rnnoise", "dep:hound"]
 
 [[bin]]
 name = "noire-denoise-wav"
 path = "src/bin/noire-denoise-wav.rs"
 required-features = ["offline-wav"]
 
+[[bin]]
+name = "noire-quality-lab"
+path = "src/bin/noire-quality-lab.rs"
+required-features = ["offline-wav"]
+
+[[bin]]
+name = "noire-rnnoise-features"
+path = "src/bin/noire-rnnoise-features.rs"
+required-features = ["training-tools"]
+
 [[bench]]
 name = "model_frame"
 harness = false
 required-features = ["rnnoise"]
+
+[[bench]]
+name = "enhanced_frame"
+harness = false
+required-features = ["experimental-enhancement"]
 
 [lints]
 workspace = true

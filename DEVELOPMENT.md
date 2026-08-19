@@ -32,7 +32,7 @@ Run the control plane on a user session bus, then query it from another shell:
 cargo run -p noired
 cargo run -p noirectl -- --json status
 cargo run -p noirectl -- devices
-cargo run -p noirectl -- set strength 0.75
+cargo run -p noirectl -- set strength 0.55
 ```
 
 With GTK 4.10 or newer installed, run the optional settings and status client
@@ -72,7 +72,7 @@ asked to start audio. Add `--features pipewire-backend` for the native live grap
 Configuration is owned by the daemon at `$XDG_CONFIG_HOME/noire/config.toml` or
 the standard home fallback; do not edit it concurrently with D-Bus mutations.
 
-The development-only offline adapter runner accepts mono 48 kHz signed 16-bit
+The development-only RNNoise backup/evaluation runner accepts mono 48 kHz signed 16-bit
 PCM or 32-bit float WAV input and writes latency-compensated 32-bit float WAV:
 
 ```bash
@@ -80,12 +80,42 @@ cargo run -p noire-model-rnnoise --features offline-wav \
   --bin noire-denoise-wav -- input.wav output.wav
 ```
 
-Pass `--live` before the input path to include the production live path's DC
-blocker. This is the runner used for Phase-5 frozen-corpus evidence:
+Pass `--live` before the input path to include the production model-input DC
+blocker. This runner exercises fully wet model output; use the separate
+`noire-quality-lab` binary for wet/dry quality experiments:
 
 ```bash
 cargo run --release -p noire-model-rnnoise --features offline-wav \
   --bin noire-denoise-wav -- --live input.wav output.wav
+```
+
+The superseded RNNoise quality-v1 baseline can be reproduced with:
+
+```bash
+cargo run --release -p noire-model-rnnoise --features offline-wav \
+  --bin noire-quality-lab -- --model-high-pass 60 --speech-strength 0.55 \
+  --noise-strength 0.70 --vad-low 0.20 --vad-high 0.80 input.wav output.wav
+```
+
+Keep that command as the frozen backup baseline. The opt-in causal multi-frame
+dereverberation prototype can be rendered alongside it with:
+
+```bash
+cargo run --release -p noire-model-rnnoise --features offline-wav \
+  --bin noire-quality-lab -- --enhanced --dereverb-strength 0.35 \
+  --model-high-pass 60 --speech-strength 0.55 --noise-strength 0.70 \
+  --vad-low 0.20 --vad-high 0.80 input.wav enhanced.wav
+```
+
+The prototype is not used by the daemon. Qualification policy, hard-case corpus
+layout, model/training direction, and report comparison are documented in
+[`ENHANCEMENT.md`](ENHANCEMENT.md) and
+[`tests/quality/enhancement/README.md`](tests/quality/enhancement/README.md).
+Run the machine-readable promotion comparator with:
+
+```bash
+python3 .github/scripts/compare_enhancement.py baseline.json candidate.json \
+  --output qualification.json
 ```
 
 This feature is for deterministic offline testing only. WAV I/O is not linked
@@ -300,7 +330,7 @@ cargo test --release -p noire-pipewire --test capture_allocation \
   ten_million_live_callback_invocations_have_zero_allocator_calls \
   --locked -- --ignored --nocapture
 cargo test --release -p noire-pipewire --test phase5_pipeline \
-  live_rnnoise_meets_cpu_deadline_callback_and_rss_gates \
+  live_fastenhancer_meets_cpu_deadline_callback_and_rss_gates \
   --locked -- --ignored --nocapture
 ```
 
@@ -325,12 +355,12 @@ run are recorded as owner-accepted waivers in
 `tests/release/qualification-decision-1.0.0.toml`. Do not run another 1.0.0 soak
 or describe the waived gate as passed.
 
-Phase-2 offline allocation and timing checks use the release profile:
+Production model allocation and timing checks use the release profile:
 
 ```bash
-cargo test -p noire-model-rnnoise --test allocation --features rnnoise --release --locked
+cargo test -p noire-model-fastenhancer --test allocation --release --locked
 cargo bench -p noire-dsp --bench dsp_stages --locked
-cargo bench -p noire-model-rnnoise --bench model_frame --features rnnoise --locked
+cargo bench -p noire-model-fastenhancer --bench model_frame --locked
 ```
 
 The model benchmark enforces the recorded reference-host p99 gate before it

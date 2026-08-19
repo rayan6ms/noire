@@ -1,0 +1,75 @@
+schema_version = 1
+candidate = "rnnoise-quality-v1"
+status = "qualified-repository-backup-superseded-by-fastenhancer-b"
+decision = "Retain quality-v1 and the original RNNoise adapter for reproducible experiments, but exclude both from shipped binaries after FastEnhancer-B won the frozen and stress comparison."
+
+[artifact]
+path = "crates/noire-model-rnnoise/models/rnnoise-quality-v1.rnn"
+bytes = 87521
+sha256 = "2f0958c50378499cbd8869723b7dc214a65873304ec81856d3c084c08c0e9048"
+base_sha256 = "e6de5fbfadf7ec91d1b24d6a6ccfd0290cb4d8bf555c5eab3ce41506f67a58b1"
+bytes_different_from_base = 1882
+modified_network_region = "final 22-band denoise gain output head only"
+
+[evaluation]
+model_high_pass_hz = 60
+speech_strength = 0.55
+noise_strength = 0.70
+vad_low = 0.20
+vad_high = 0.80
+newly_clipped_files = 0
+non_finite_samples = 0
+
+[development]
+dataset = "VoiceBank-DEMAND training speakers p226 and p287"
+cases = 770
+stoi_delta_mean = 0.00036053005384230466
+stoi_delta_median = 0.00031760121991525336
+stoi_delta_p05 = -0.000622935365851529
+stoi_delta_mean_bootstrap_ci95_low = 0.0003167
+stoi_delta_mean_bootstrap_ci95_high = 0.0004050
+stoi_cases_improved = 566
+stoi_cases_regressed = 204
+si_sdr_delta_db_mean = -0.022323388157948442
+si_sdr_delta_db_median = -0.022756691880921665
+clean_stoi_damage_delta_mean = -0.000026510447784754235
+clean_stoi_damage_delta_median = -0.000059183041824173444
+
+[frozen_voicebank_test]
+dataset = "VoiceBank-DEMAND test speakers p232 and p257"
+cases = 824
+candidate_stoi_improvement_median = 0.00440449202047366
+default_stoi_improvement_median = 0.004044181497014354
+stoi_delta_mean = 0.0002524285199985257
+stoi_delta_median = 0.00017622195841154875
+stoi_delta_p05 = -0.0006294570673091415
+stoi_delta_mean_bootstrap_ci95_low = 0.0002105
+stoi_delta_mean_bootstrap_ci95_high = 0.0002953
+stoi_cases_improved = 604
+stoi_cases_regressed = 220
+candidate_si_sdr_improvement_db_median = 2.916740588865963
+default_si_sdr_improvement_db_median = 2.953035528735905
+si_sdr_delta_db_mean = -0.007964206547554894
+si_sdr_delta_db_median = -0.003333829263929111
+clean_stoi_damage_delta_mean = -0.00011890799950339127
+clean_stoi_damage_delta_median = -0.00012244487399309945
+clean_stoi_damage_cases_improved = 689
+clean_stoi_damage_cases_regressed = 135
+
+[stress_test]
+cases = 952
+stoi_delta_mean = -0.00005610830519926112
+stoi_delta_median = 0.000060936239407449744
+si_sdr_delta_db_mean = -0.01778669613634549
+si_sdr_delta_db_median = 0.012433515776537618
+segmental_snr_delta_db_mean = 0.016901491134180626
+segmental_snr_delta_db_median = 0.025998144068281936
+stoi_cases_improved = 560
+stoi_cases_regressed = 307
+si_sdr_cases_improved = 648
+si_sdr_cases_regressed = 304
+caveat = "Most median stress metrics improve, but mean STOI regresses, concentrated in procedural music, environmental sounds, and state transitions. This blocks replacing the default globally."
+
+[recommendation]
+next_data = ["independently licensed music", "non-speech environmental sounds", "speech/non-speech state transitions"]
+promotion_gate = "Repeat frozen speech and stress evaluations, require no material condition-level regression, then complete blinded listening."

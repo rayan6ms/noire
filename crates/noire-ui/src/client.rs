@@ -703,7 +703,7 @@ mod tests {
         channels.requests.blocking_send(Request::Refresh)?;
         let initial = state(receive_completed(&runtime, &channels)?)?;
         assert_eq!(initial.revision, 1);
-        assert_strength(initial.strength, 1.0);
+        assert_strength(initial.strength, 0.55);
 
         channels.requests.blocking_send(Request::Diagnostics)?;
         match receive_completed(&runtime, &channels)? {

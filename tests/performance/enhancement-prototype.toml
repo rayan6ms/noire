@@ -1,0 +1,68 @@
+schema_version = 1
+run_date = "2026-08-17"
+status = "experimental-not-promoted"
+profile = "release"
+
+[environment]
+os = "Fedora Linux 44, Linux 7.1.8-200.fc44.x86_64"
+architecture = "x86_64"
+cpu = "Intel Xeon E5-2697 v3 @ 2.60GHz"
+rust = "1.97.0"
+
+[baseline]
+factory = "RnnoiseFactory"
+p99_microseconds = 159.113
+criterion_median_microseconds = 129.46
+algorithmic_latency_samples = 480
+
+[enhanced]
+factory = "EnhancedRnnoiseFactory"
+dereverb_strength = 0.35
+p50_microseconds = 122.648
+p95_microseconds = 150.858
+p99_microseconds = 170.428
+criterion_median_microseconds = 140.16
+estimated_single_core_model_cpu_percent = 1.4016
+algorithmic_latency_samples = 480
+additional_lookahead_samples = 0
+additional_latency_samples = 0
+allocations = 0
+reallocations = 0
+deallocations = 0
+p99_below_500_microseconds = true
+estimated_model_cpu_below_4_percent = true
+
+[live_callback]
+model_frames = 60000
+equivalent_audio_seconds = 600
+wall_milliseconds = 10530
+active_cpu_percent = 1.723
+model_p50_microseconds_upper_bound = 200.0
+model_p95_microseconds_upper_bound = 200.0
+model_p99_microseconds_upper_bound = 250.0
+model_max_microseconds = 268.815
+callback_p50_microseconds_upper_bound = 200.0
+callback_p95_microseconds_upper_bound = 250.0
+callback_p99_microseconds_upper_bound = 250.0
+callback_max_microseconds = 285.704
+deadline_misses = 0
+hard_ceiling_samples = 0
+model_errors = 0
+underflows = 0
+overflows = 0
+rss_growth_kib = 1032
+
+[commands]
+allocation = "cargo test --release -p noire-model-rnnoise --test allocation --features offline-wav --locked -- --nocapture"
+live_callback_allocation = "cargo test --release -p noire-pipewire --test capture_allocation warmed_capture_and_bypass_callbacks_have_zero_allocator_calls --locked -- --nocapture"
+live_callback_timing = "cargo test --release -p noire-pipewire --test phase5_pipeline live_enhanced_meets_cpu_deadline_callback_and_rss_gates --locked -- --ignored --nocapture"
+baseline_timing = "cargo bench -p noire-model-rnnoise --bench model_frame --features rnnoise --locked -- --warm-up-time 1 --measurement-time 2 --sample-size 30"
+enhanced_timing = "cargo bench -p noire-model-rnnoise --bench enhanced_frame --features experimental-enhancement --locked -- --warm-up-time 1 --measurement-time 2 --sample-size 30"
+
+[qualification]
+quality_corpus_run_complete = false
+clean_speech_hard_gate_complete = false
+overlapping_speech_improvement_complete = false
+reverberation_improvement_complete = false
+listening_complete = false
+promoted = false

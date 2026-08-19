@@ -1,0 +1,87 @@
+schema_version = 1
+corpus_id = "noire-hard-cases-v1"
+sample_rate_hz = 48000
+channels = 1
+minimum_duration_seconds_per_bucket = 600
+split_by_speaker = true
+license_manifest_required = true
+immutable_content_hashes_required = true
+
+[layout]
+case_directory = "<corpus-root>/<bucket>/<case-id>/"
+required_files = ["mixture.wav", "target.wav", "transcript.txt", "metadata.toml"]
+optional_files = ["interferer.wav", "noise.wav", "rir.wav"]
+rule = "No speaker, room impulse response, or source segment may cross train/development/test splits."
+
+[[bucket]]
+id = "overlapping-speakers"
+purpose = "Measure target speech preservation and competing human-speech rejection."
+minimum_cases = 120
+required_axes = ["same-and-different-gender", "same-and-different-language", "sir=-5,0,5", "near-and-far-interferer", "alternating-and-simultaneous-turns"]
+
+[[bucket]]
+id = "reverberant-rooms"
+purpose = "Reduce late tails while retaining the direct path and useful early reflections."
+minimum_cases = 120
+required_axes = ["rt60=0.3,0.6,0.9,1.2", "distance=0.3m,1m,2m,4m", "measured-and-simulated-rir", "small-medium-large-room"]
+
+[[bucket]]
+id = "low-snr-speech"
+purpose = "Preserve intelligibility when target speech is near or below the noise floor."
+minimum_cases = 80
+required_axes = ["snr=-10,-5,0,5", "stationary-and-nonstationary-noise"]
+
+[[bucket]]
+id = "keyboard-and-transients-during-speech"
+purpose = "Reject impulses without deleting consonants or pumping around speech."
+minimum_cases = 80
+required_axes = ["mechanical-and-laptop-keyboard", "clicks", "desk-impacts", "target-active-at-transient"]
+
+[[bucket]]
+id = "music-and-television"
+purpose = "Reject structured non-target foreground audio, including speech from playback."
+minimum_cases = 80
+required_axes = ["instrumental", "vocals", "television-dialogue", "near-and-far-playback"]
+
+[[bucket]]
+id = "whispers"
+purpose = "Prevent low-energy target speech from being classified as removable noise."
+minimum_cases = 60
+required_axes = ["close-and-far-mic", "clean-and-noisy", "multiple-speakers"]
+
+[[bucket]]
+id = "shouting"
+purpose = "Preserve highly nonstationary speech without clipping or harsh nonlinear artifacts."
+minimum_cases = 60
+required_axes = ["clean-and-noisy", "analog-and-digital-headroom", "multiple-speakers"]
+
+[[bucket]]
+id = "cheap-microphones"
+purpose = "Remain robust to coloration, self-noise, AGC, and mild nonlinear distortion."
+minimum_cases = 80
+required_axes = ["usb-headset", "laptop-array-downmix", "phone-earbuds", "frequency-coloration", "agc"]
+
+[[bucket]]
+id = "codec-compressed-audio"
+purpose = "Avoid amplifying codec artifacts or confusing them with late reverberation."
+minimum_cases = 80
+required_axes = ["opus=12,24,48kbps", "aac", "packet-loss-concealment", "single-and-tandem-encode"]
+
+[[bucket]]
+id = "already-clean-speech"
+purpose = "Hard gate unnecessary modification of clean target speech."
+minimum_cases = 120
+required_axes = ["studio-and-close-talk", "whisper-normal-shout", "multiple-languages", "multiple-microphones"]
+
+[metrics]
+required_quality = ["wer", "substitutions", "insertions", "deletions", "stoi", "si_sdr", "dnsmos_sig", "dnsmos_bak", "dnsmos_ovrl"]
+required_safety = ["clipped_samples", "input_l1", "input_l2"]
+required_realtime = ["allocations", "cpu_percent", "p50_us", "p95_us", "p99_us", "algorithmic_latency_samples"]
+report_aggregate_and_per_bucket = true
+
+[training_mix]
+sources = ["clean-speech", "environmental-noise", "interfering-speakers", "room-impulse-responses", "microphone-coloration", "gain-variation", "dynamic-range-compression", "codec-artifacts", "mild-nonlinear-distortion"]
+clean_examples_minimum_fraction = 0.25
+clean_identity_loss_required = true
+curriculum = ["clean-identity", "single-noise", "reverberation", "speaker-overlap", "compound-degradation"]
+priority = "data-and-architecture-before-model-size"

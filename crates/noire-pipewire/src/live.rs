@@ -9,8 +9,8 @@ use std::{
 };
 
 use noire_dsp::{
-    DcBlocker, DryDelay, DryDelayError, EqualPowerMixer, FrameAssembler, MODEL_FRAME_SAMPLES,
-    Meter, MixReport, ModelFrame, SAMPLE_RATE_HZ, StrengthRamp,
+    DryDelay, DryDelayError, FrameAssembler, LinearMixer, MODEL_FRAME_SAMPLES, Meter, MixReport,
+    ModelFrame, SAMPLE_RATE_HZ, StrengthRamp, sanitize_buffer,
 };
 use noire_model::{Denoiser, ProcessError};
 
@@ -38,7 +38,7 @@ pub struct DeadlinePolicy {
 impl Default for DeadlinePolicy {
     fn default() -> Self {
         Self {
-            model_deadline: Duration::from_micros(750),
+            model_deadline: Duration::from_millis(4),
             misses_per_window: 5,
             window: Duration::from_secs(10),
         }
@@ -85,7 +85,7 @@ impl LiveState {
 /// Construction failure for the canonical live model path.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LivePipelineError {
-    /// The injected model does not implement mono 48-kHz, 480-sample frames.
+    /// The injected model does not implement mono 48-kHz, 512-sample frames.
     IncompatibleModel,
     /// The declared model delay exceeds the bounded dry-delay storage.
     DryDelay(DryDelayError),
@@ -400,7 +400,6 @@ pub struct LiveCaptureSink {
     transport: BypassCaptureSink,
     model: Box<dyn Denoiser>,
     assembler: FrameAssembler,
-    dc_blocker: DcBlocker,
     dry_delay: DryDelay,
     wet: ModelFrame,
     dry: ModelFrame,
@@ -452,7 +451,6 @@ impl LiveCaptureSink {
             transport,
             model,
             assembler: FrameAssembler::new(),
-            dc_blocker: DcBlocker::new(),
             dry_delay,
             wet: [0.0; MODEL_FRAME_SAMPLES],
             dry: [0.0; MODEL_FRAME_SAMPLES],
@@ -487,7 +485,6 @@ impl LiveCaptureSink {
 
     fn reset_signal_state(&mut self) {
         self.assembler.reset();
-        self.dc_blocker.reset();
         self.dry_delay.reset();
         self.wet.fill(0.0);
         self.dry.fill(0.0);
@@ -611,15 +608,14 @@ impl LiveCaptureSink {
                 return;
             }
         };
-        *pending_vad = stats.vad_probability();
-
         let mut mix_report = MixReport::default();
         for ((dry_sample, wet_sample), destination) in
             dry.iter().zip(wet.iter()).zip(mixed.iter_mut())
         {
             *destination =
-                EqualPowerMixer::mix(*dry_sample, *wet_sample, strength.next(), &mut mix_report);
+                LinearMixer::mix(*dry_sample, *wet_sample, strength.next(), &mut mix_report);
         }
+        *pending_vad = stats.vad_probability();
         shared
             .hard_ceiling_samples
             .fetch_add(mix_report.hard_ceiling, Ordering::Relaxed);
@@ -681,11 +677,11 @@ impl CaptureSink for LiveCaptureSink {
         self.load_parameters();
 
         self.callback_scratch[..samples.len()].copy_from_slice(samples);
-        let dc_report = self
-            .dc_blocker
-            .process(&mut self.callback_scratch[..samples.len()]);
+        let input_report = sanitize_buffer(&mut self.callback_scratch[..samples.len()]);
         self.shared.sanitized_samples.fetch_add(
-            dc_report.non_finite.saturating_add(dc_report.subnormal),
+            input_report
+                .non_finite
+                .saturating_add(input_report.subnormal),
             Ordering::Relaxed,
         );
 
@@ -913,9 +909,15 @@ mod tests {
             observed.extend_from_slice(&rendered);
         }
 
+        // The model delay need not be an integer number of tone periods, so
+        // compare against the tone's global adjacent-sample bound rather than
+        // unaligned same-index phases.
+        let source_step = input
+            .windows(2)
+            .map(|source| (source[1] - source[0]).abs())
+            .fold(0.0_f32, f32::max);
         let mut maximum_excess = 0.0_f32;
-        for (source, rendered) in input.windows(2).zip(observed.windows(2)) {
-            let source_step = (source[1] - source[0]).abs();
+        for rendered in observed.windows(2) {
             let rendered_step = (rendered[1] - rendered[0]).abs();
             maximum_excess = maximum_excess.max((rendered_step - source_step).max(0.0));
         }
@@ -923,6 +925,37 @@ mod tests {
             maximum_excess <= CLICK_EXCESS_THRESHOLD,
             "transition excess was {maximum_excess}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn settled_dry_bypass_preserves_unfiltered_input() -> Result<(), Box<dyn std::error::Error>> {
+        let (mut sink, mut output, control, _telemetry) =
+            create_live_channel(Box::new(TestModel::new(0.0)?))?;
+        control.set_strength(0.0);
+        let constant = [0.8; MODEL_FRAME_SAMPLES];
+        let mut rendered = [0.0; MODEL_FRAME_SAMPLES];
+        for _ in 0..12 {
+            sink.write(InputGeneration::INITIAL, &constant);
+            let _ = output.fill(&mut rendered)?;
+        }
+        assert!(rendered.iter().all(|sample| (*sample - 0.8).abs() < 1.0e-5));
+        Ok(())
+    }
+
+    #[test]
+    fn full_wet_model_input_matches_the_qualified_unfiltered_boundary()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (mut sink, mut output, control, _telemetry) =
+            create_live_channel(Box::new(TestModel::new(1.0)?))?;
+        control.set_strength(1.0);
+        let constant = [0.8; MODEL_FRAME_SAMPLES];
+        let mut rendered = [0.0; MODEL_FRAME_SAMPLES];
+        for _ in 0..12 {
+            sink.write(InputGeneration::INITIAL, &constant);
+            let _ = output.fill(&mut rendered)?;
+        }
+        assert!(rendered.iter().all(|sample| (*sample - 0.8).abs() < 1.0e-5));
         Ok(())
     }
 
