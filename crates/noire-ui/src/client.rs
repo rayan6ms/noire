@@ -1,4 +1,4 @@
-//! Background D-Bus worker isolated from the GTK main thread.
+//! Background D-Bus worker isolated from the GPUI main thread.
 
 use std::{
     sync::mpsc::{self, Receiver, SyncSender, TrySendError},

@@ -25,7 +25,7 @@ case "$rpm_release" in
     ''|*[!0-9]*) echo "invalid RPM release: $rpm_release" >&2; exit 2 ;;
 esac
 [ "$architecture" = x86_64 ] || {
-    echo "Noire 1.0 packaging supports only the x86_64 RPM architecture" >&2
+    echo "Noire packaging supports only the x86_64 RPM architecture" >&2
     exit 2
 }
 

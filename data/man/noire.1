@@ -1,13 +1,14 @@
-.TH NOIRE 1 "August 2026" "Noire 1.0.0" "User Commands"
+.TH NOIRE 1 "August 2026" "Noire 1.1.0" "User Commands"
 .SH NAME
-noire \- control Noire through its GTK interface
+noire \- control Noire through its GPUI interface
 .SH SYNOPSIS
 .B noire
 .RI [ options ]
 .SH DESCRIPTION
 .B noire
-opens the optional GTK4 control interface for the per-user Noire daemon.
-Closing the window does not stop the daemon or remove its virtual microphone.
+opens the dark GPUI control interface for the per-user Noire daemon.
+Closing the window keeps the controller in the system tray by default and never
+stops the daemon or removes its virtual microphone.
 .SH OPTIONS
 .TP
 .BR \-h ", " \-\-help
@@ -15,13 +16,16 @@ Show command help.
 .TP
 .BR \-V ", " \-\-version
 Show the installed version.
+.TP
+.BR \-\-minimized
+Start with the window hidden in the system tray.
 .SH FILES
 .TP
 .I ~/.config/noire/config.toml
 Per-user configuration. The package manager does not create or remove this file.
 .TP
-.I /usr/share/doc/noire-daemon/USER_GUIDE.md
-Installed user guide, including first use, privacy modes, and safe removal.
+.I ~/.config/noire/ui.toml
+Desktop-only start-minimized and close-to-tray preferences.
 .SH SEE ALSO
 .BR noirectl (1),
 .BR noired (1)

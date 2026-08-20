@@ -1,4 +1,4 @@
-//! Pure presentation state shared by GTK and headless tests.
+//! Pure presentation state shared by GPUI and headless tests.
 
 use noire_ipc::{InputDescriptor, Metrics, Snapshot};
 
@@ -51,7 +51,7 @@ pub struct UiState {
     client_error: Option<UserError>,
 }
 
-/// Fully derived text and action state for a GTK render pass.
+/// Fully derived text and action state for a GPUI render pass.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Presentation {
     /// Short status that never depends on color alone.

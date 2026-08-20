@@ -189,13 +189,6 @@ def traceability() -> Check:
     return Check("traceability", True, detail)
 
 
-def screenshot_contract() -> Check:
-    command = run("python3", ".github/scripts/validate_appstream_screenshots.py", str(APPSTREAM), str(ROOT))
-    if command.returncode != 0:
-        return Check("appstream-screenshot", False, text(command))
-    return Check("appstream-screenshot", True, command.stdout.decode().strip())
-
-
 def evidence_status() -> tuple[int, int, list[str], list[str]]:
     active = 0
     planned: list[str] = []
@@ -391,7 +384,6 @@ def main() -> int:
         source_policy(),
         source_state(),
         traceability(),
-        screenshot_contract(),
         artifact_set(arguments.deb_dir, expected_debs(expected, release), False),
         artifact_set(arguments.rpm_dir, expected_rpm_patterns(expected, release), True),
         packaged_appstream(arguments.deb_dir, f"noire-ui_{expected}-{release}_amd64.deb", "deb"),

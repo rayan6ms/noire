@@ -7,5 +7,4 @@ Icon=io.github.rayan6ms.Noire
 Terminal=false
 Categories=AudioVideo;Audio;
 Keywords=microphone;noise;audio;PipeWire;
-DBusActivatable=true
 StartupNotify=true

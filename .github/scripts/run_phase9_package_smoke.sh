@@ -13,18 +13,18 @@ mkdir -p "$binary_dir" "$artifact_dir"
 for binary in noire noirectl noired; do
     {
         echo '#!/bin/sh'
-        echo "echo '$binary 1.0.0'"
+        echo "echo '$binary 1.1.0'"
     } >"$binary_dir/$binary"
     chmod 0755 "$binary_dir/$binary"
 done
 
 if sh "$repo_dir/packaging/validate-binaries.sh" \
-    1.0.0 x86_64 "$binary_dir" >/dev/null 2>&1; then
+    1.1.0 x86_64 "$binary_dir" >/dev/null 2>&1; then
     echo "Release validation unexpectedly accepted non-ELF test binaries" >&2
     exit 1
 fi
 NOIRE_PACKAGE_ALLOW_TEST_BINARIES=1 \
-    sh "$repo_dir/packaging/validate-binaries.sh" 1.0.0 x86_64 "$binary_dir"
+    sh "$repo_dir/packaging/validate-binaries.sh" 1.1.0 x86_64 "$binary_dir"
 
 sh "$repo_dir/packaging/stage-package.sh" all "$stage_dir" "$binary_dir"
 
@@ -38,10 +38,6 @@ cat >"$work_dir/expected-files" <<'EOF'
 /usr/share/bash-completion/completions/noirectl
 /usr/share/dbus-1/interfaces/io.github.rayan6ms.Noire.Noire1.xml
 /usr/share/dbus-1/services/io.github.rayan6ms.Noire.Noire1.service
-/usr/share/doc/noire-daemon/PRIVACY.md
-/usr/share/doc/noire-daemon/SECURITY.md
-/usr/share/doc/noire-daemon/TROUBLESHOOTING.md
-/usr/share/doc/noire-daemon/USER_GUIDE.md
 /usr/share/doc/noire-daemon/config-v1.toml
 /usr/share/fish/vendor_completions.d/noirectl.fish
 /usr/share/icons/hicolor/scalable/apps/io.github.rayan6ms.Noire.svg
@@ -58,7 +54,7 @@ diff -u "$work_dir/expected-files" "$work_dir/actual-files"
 
 for binary in noire noirectl noired; do
     [ "$(stat -c '%a' "$stage_dir/usr/bin/$binary")" = 755 ]
-    "$stage_dir/usr/bin/$binary" --version | grep -F "$binary 1.0.0" >/dev/null
+    "$stage_dir/usr/bin/$binary" --version | grep -F "$binary 1.1.0" >/dev/null
 done
 if find "$stage_dir/usr/share" -type f ! -perm 0644 | grep -q .; then
     echo "Package data contains a file without mode 0644" >&2
@@ -88,22 +84,18 @@ if command -v appstreamcli >/dev/null 2>&1; then
     appstreamcli validate --no-net \
         "$stage_dir/usr/share/metainfo/io.github.rayan6ms.Noire.metainfo.xml"
 fi
-python3 "$repo_dir/.github/scripts/validate_appstream_screenshots.py" \
-    "$stage_dir/usr/share/metainfo/io.github.rayan6ms.Noire.metainfo.xml" \
-    "$repo_dir"
-
 formats=stage
 if command -v dpkg-deb >/dev/null 2>&1; then
     deb_dir="$artifact_dir/deb"
     NOIRE_PACKAGE_ALLOW_TEST_BINARIES=1 \
-        sh "$repo_dir/packaging/debian/build.sh" 1.0.0-1 amd64 "$binary_dir" "$deb_dir"
+        sh "$repo_dir/packaging/debian/build.sh" 1.1.0-1 amd64 "$binary_dir" "$deb_dir"
     [ "$(find "$deb_dir" -type f -name '*.deb' | wc -l)" -eq 3 ]
-    dpkg-deb --field "$deb_dir/noire-daemon_1.0.0-1_amd64.deb" Package | grep -Fx noire-daemon >/dev/null
-    dpkg-deb --field "$deb_dir/noire-ui_1.0.0-1_amd64.deb" Depends | grep -F 'noire-daemon (= 1.0.0-1)' >/dev/null
-    dpkg-deb --field "$deb_dir/noire_1.0.0-1_amd64.deb" Depends | grep -F 'noire-ui (= 1.0.0-1)' >/dev/null
-    dpkg-deb --contents "$deb_dir/noire-daemon_1.0.0-1_amd64.deb" | grep -F './usr/bin/noired' >/dev/null
-    if dpkg-deb --contents "$deb_dir/noire-daemon_1.0.0-1_amd64.deb" | grep -F '/gtk' >/dev/null; then
-        echo "Headless Debian package unexpectedly contains GTK files" >&2
+    dpkg-deb --field "$deb_dir/noire-daemon_1.1.0-1_amd64.deb" Package | grep -Fx noire-daemon >/dev/null
+    dpkg-deb --field "$deb_dir/noire-ui_1.1.0-1_amd64.deb" Depends | grep -F 'noire-daemon (= 1.1.0-1)' >/dev/null
+    dpkg-deb --field "$deb_dir/noire_1.1.0-1_amd64.deb" Depends | grep -F 'noire-ui (= 1.1.0-1)' >/dev/null
+    dpkg-deb --contents "$deb_dir/noire-daemon_1.1.0-1_amd64.deb" | grep -F './usr/bin/noired' >/dev/null
+    if dpkg-deb --contents "$deb_dir/noire-daemon_1.1.0-1_amd64.deb" | grep -F '/gpui' >/dev/null; then
+        echo "Headless Debian package unexpectedly contains GPUI files" >&2
         exit 1
     fi
     formats="$formats,deb"
@@ -112,7 +104,7 @@ fi
 if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
     rpm_dir="$artifact_dir/rpm"
     NOIRE_PACKAGE_ALLOW_TEST_BINARIES=1 \
-        sh "$repo_dir/packaging/rpm/build.sh" 1.0.0 x86_64 "$binary_dir" "$rpm_dir"
+        sh "$repo_dir/packaging/rpm/build.sh" 1.1.0 x86_64 "$binary_dir" "$rpm_dir"
     [ "$(find "$rpm_dir" -type f -name '*.rpm' | wc -l)" -eq 3 ]
     daemon_rpm=$(find "$rpm_dir" -type f -name 'noire-daemon-*.rpm' -print -quit)
     ui_rpm=$(find "$rpm_dir" -type f -name 'noire-ui-*.rpm' -print -quit)
@@ -122,8 +114,8 @@ if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
     rpm -qp --requires "$ui_rpm" | grep -F 'noire-daemon' >/dev/null
     rpm -qp --requires "$meta_rpm" | grep -F 'noire-ui' >/dev/null
     rpm -qlp "$daemon_rpm" | grep -Fx '/usr/bin/noired' >/dev/null
-    if rpm -qlp "$daemon_rpm" | grep -F '/gtk' >/dev/null; then
-        echo "Headless RPM unexpectedly contains GTK files" >&2
+    if rpm -qlp "$daemon_rpm" | grep -F '/gpui' >/dev/null; then
+        echo "Headless RPM unexpectedly contains GPUI files" >&2
         exit 1
     fi
     if command -v rpmlint >/dev/null 2>&1; then

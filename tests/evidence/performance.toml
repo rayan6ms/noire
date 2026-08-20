@@ -24,11 +24,11 @@ owner = "rayan6ms"
 requirements = ["NFR-001", "NFR-002", "NFR-004", "NFR-005"]
 observable = "The release live-model path meets native p95 latency, reference-host CPU/model/callback deadlines, ten-minute-equivalent RSS, and ten-million-callback zero-allocation thresholds while source audit rejects callback lock, I/O, logging, or unwind adapters."
 test_ids = ["T-RT-LATENCY-CPU-CALLBACK"]
-commands = ["cargo test --release -p noire-pipewire --test capture_allocation ten_million_live_callback_invocations_have_zero_allocator_calls --locked -- --ignored --nocapture", "cargo test --release -p noire-pipewire --test phase5_pipeline live_rnnoise_meets_cpu_deadline_callback_and_rss_gates --locked -- --ignored --nocapture", ".github/scripts/run_pipewire_session.sh"]
+commands = ["cargo test --release -p noire-pipewire --test capture_allocation ten_million_live_callback_invocations_have_zero_allocator_calls --locked -- --ignored --nocapture", "cargo test --release -p noire-pipewire --test phase5_pipeline live_fastenhancer_meets_cpu_deadline_callback_and_rss_gates --locked -- --ignored --nocapture", ".github/scripts/run_pipewire_session.sh"]
 fixtures = ["128-frame native loopback with 100 correlation trials", "60,000 real RNNoise frames", "10,000,000 one-sample synthetic callback invocations"]
 environments = ["Recorded x86_64 reference hardware", "Disposable Ubuntu 24.04 PipeWire 1.0.5 release session"]
 result_artifacts = ["tests/performance/phase5-live.toml", "NOIRE_PHASE5_ALLOCATION", "NOIRE_PHASE5_PERFORMANCE", "NOIRE_PHASE5_NATIVE"]
-sources = ["crates/noire-pipewire/tests/capture_allocation.rs::fn ten_million_live_callback_invocations_have_zero_allocator_calls", "crates/noire-pipewire/tests/phase5_pipeline.rs::fn live_rnnoise_meets_cpu_deadline_callback_and_rss_gates", "crates/noire-pipewire/tests/phase5_session.rs::fn live_rnnoise_graph_meets_latency_demand_and_transport_gates", "crates/noire-pipewire/tests/release_policy.rs::fn release_profile_aborts_and_callback_sources_contain_no_unwind_adapter"]
+sources = ["crates/noire-pipewire/tests/capture_allocation.rs::fn ten_million_live_callback_invocations_have_zero_allocator_calls", "crates/noire-pipewire/tests/phase5_pipeline.rs::fn live_fastenhancer_meets_cpu_deadline_callback_and_rss_gates", "crates/noire-pipewire/tests/phase5_session.rs::fn live_fastenhancer_graph_meets_latency_demand_and_transport_gates", "crates/noire-pipewire/tests/release_policy.rs::fn release_profile_aborts_and_callback_sources_contain_no_unwind_adapter"]
 
 [[template]]
 id = "AT-IDLE-RESOURCE"

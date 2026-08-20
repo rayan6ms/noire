@@ -65,9 +65,9 @@ evidence = ["AT-CONFIG-MIGRATION", "AT-FUZZ-HARDENING"]
 
 [[requirement]]
 id = "FR-011"
-summary = "Provide a GTK4 settings and status UI"
+summary = "Provide a GPUI settings, status, and tray application"
 priority = "must"
-evidence = ["AT-GTK-UI", "AT-STATE-CONVERGENCE", "MX-ACCESSIBILITY", "MX-ERROR-USABILITY"]
+evidence = ["AT-GPUI-UI", "AT-STATE-CONVERGENCE", "MX-ACCESSIBILITY", "MX-ERROR-USABILITY"]
 
 [[requirement]]
 id = "FR-012"
@@ -83,7 +83,7 @@ evidence = ["AT-SYSTEMD-MANAGER", "AT-SYSTEMD-USER-SERVICE", "AT-PACKAGE-LIFECYC
 
 [[requirement]]
 id = "FR-014"
-summary = "Build and run daemon and CLI without GTK or a graphical session"
+summary = "Build and run daemon and CLI without GPUI or a graphical session"
 priority = "must"
 evidence = ["AT-HEADLESS-BUILD"]
 

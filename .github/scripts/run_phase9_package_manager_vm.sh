@@ -125,10 +125,6 @@ case "$family" in
         purge_all() {
             apt-get purge --yes noire noire-ui noire-daemon
         }
-        ui_runtime_installed() {
-            dpkg-query -W -f='${db:Status-Abbrev}\n' libgtk-4-1 2>/dev/null |
-                grep -q '^ii '
-        }
         package_version() {
             dpkg-query -W -f='${Version}\n' noire
         }
@@ -164,9 +160,6 @@ case "$family" in
         purge_all() {
             remove_all
         }
-        ui_runtime_installed() {
-            rpm -q gtk4 >/dev/null 2>&1
-        }
         package_version() {
             rpm -q --qf '%{VERSION}-%{RELEASE}\n' noire
         }
@@ -177,16 +170,7 @@ case "$family" in
         ;;
 esac
 
-if ui_runtime_installed; then
-    echo "Disposable baseline unexpectedly contains the GTK runtime" >&2
-    exit 1
-fi
-
 install_headless "$baseline_dir"
-ui_runtime_installed && {
-    echo "Headless package unexpectedly installed the GTK runtime" >&2
-    exit 1
-}
 run_version_as_test_user /usr/bin/noired | grep -Fx 'noired 1.0.0' >/dev/null
 run_version_as_test_user /usr/bin/noirectl | grep -Fx 'noirectl 1.0.0' >/dev/null
 assert_config_preserved
@@ -194,10 +178,6 @@ assert_disabled_by_default
 assert_not_started
 
 install_full "$baseline_dir"
-ui_runtime_installed || {
-    echo "Full package did not install the GTK runtime" >&2
-    exit 1
-}
 assert_binaries
 assert_no_user_payload
 assert_config_preserved

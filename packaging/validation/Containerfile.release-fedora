@@ -4,11 +4,17 @@ FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
 RUN dnf install --assumeyes --setopt=install_weak_deps=False \
         clang-devel \
         gcc \
-        gtk4-devel \
+        fontconfig-devel \
+        libxkbcommon-devel \
+        libxkbcommon-x11-devel \
+        libxcb-devel \
+        mesa-libEGL-devel \
         pipewire-devel \
         pkgconf-pkg-config \
         rpm-build \
         rpmlint \
+        vulkan-loader-devel \
+        wayland-devel \
     && dnf clean all
 
 WORKDIR /workspace

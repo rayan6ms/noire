@@ -32,10 +32,6 @@ stage_daemon() {
     install_file 0644 "$repo_dir/data/dbus-1/services/io.github.rayan6ms.Noire.Noire1.service" /usr/share/dbus-1/services/io.github.rayan6ms.Noire.Noire1.service
     install_file 0644 "$repo_dir/data/dbus-1/interfaces/io.github.rayan6ms.Noire.Noire1.xml" /usr/share/dbus-1/interfaces/io.github.rayan6ms.Noire.Noire1.xml
     install_file 0644 "$repo_dir/data/config/config-v1.toml" /usr/share/doc/noire-daemon/config-v1.toml
-    install_file 0644 "$repo_dir/USER_GUIDE.md" /usr/share/doc/noire-daemon/USER_GUIDE.md
-    install_file 0644 "$repo_dir/TROUBLESHOOTING.md" /usr/share/doc/noire-daemon/TROUBLESHOOTING.md
-    install_file 0644 "$repo_dir/PRIVACY.md" /usr/share/doc/noire-daemon/PRIVACY.md
-    install_file 0644 "$repo_dir/SECURITY.md" /usr/share/doc/noire-daemon/SECURITY.md
     install_file 0644 "$repo_dir/LICENSE" /usr/share/licenses/noire-daemon/LICENSE
     install_file 0644 "$repo_dir/data/man/noired.1" /usr/share/man/man1/noired.1
     install_file 0644 "$repo_dir/data/man/noirectl.1" /usr/share/man/man1/noirectl.1
@@ -52,13 +48,6 @@ stage_ui() {
     install_file 0644 "$repo_dir/LICENSE" /usr/share/licenses/noire-ui/LICENSE
     install_file 0644 "$repo_dir/icons/LICENSE" /usr/share/licenses/noire-ui/icon-LICENSE
     install_file 0644 "$repo_dir/data/man/noire.1" /usr/share/man/man1/noire.1
-    if [ -d "$repo_dir/po/locale" ]; then
-        find "$repo_dir/po/locale" -type f -path '*/LC_MESSAGES/noire.mo' -print |
-            while IFS= read -r catalog; do
-                relative=${catalog#"$repo_dir/po/locale/"}
-                install_file 0644 "$catalog" "/usr/share/locale/$relative"
-            done
-    fi
 }
 
 case "$component" in

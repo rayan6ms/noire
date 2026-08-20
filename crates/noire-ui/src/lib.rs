@@ -1,17 +1,19 @@
-//! GTK presentation and asynchronous daemon control for Noire.
+//! GPUI presentation and asynchronous daemon control for Noire.
 
 #![forbid(unsafe_code)]
 
-#[cfg(feature = "gtk-ui")]
+#[cfg(feature = "gpui-ui")]
 mod app;
-#[cfg(feature = "gtk-ui")]
+#[cfg(feature = "gpui-ui")]
 mod client;
-#[cfg(feature = "gtk-ui")]
-mod i18n;
+#[cfg(feature = "gpui-ui")]
+mod preferences;
 pub mod state;
+#[cfg(feature = "gpui-ui")]
+mod tray;
 
-/// Runs the GTK application until its final window closes.
-#[cfg(feature = "gtk-ui")]
-pub fn run() {
-    app::run();
+/// Runs the GPUI application until the user exits it.
+#[cfg(feature = "gpui-ui")]
+pub fn run(start_minimized: bool) {
+    app::run(start_minimized);
 }
