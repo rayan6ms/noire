@@ -8,3 +8,4 @@ Terminal=false
 Categories=AudioVideo;Audio;
 Keywords=microphone;noise;audio;PipeWire;
 StartupNotify=true
+StartupWMClass=io.github.rayan6ms.Noire

@@ -35,6 +35,13 @@ impl ksni::Tray for NoireTray {
         "io.github.rayan6ms.Noire".to_owned()
     }
 
+    fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+        [22, 32, 64]
+            .into_iter()
+            .map(|size| tray_icon(size, self.active))
+            .collect()
+    }
+
     fn activate(&mut self, _x: i32, _y: i32) {
         let _ignored = self.commands.send(TrayCommand::Show);
     }
@@ -78,6 +85,48 @@ impl ksni::Tray for NoireTray {
     }
 }
 
+fn tray_icon(requested_size: i32, active: bool) -> ksni::Icon {
+    let dimension = u16::try_from(requested_size).unwrap_or(32);
+    let pixel_count = usize::from(dimension).pow(2);
+    let scale = f32::from(dimension);
+    let mut data = Vec::with_capacity(pixel_count * 4);
+    let center = (scale - 1.0) / 2.0;
+    let radius = scale * 0.47;
+    for y in 0..dimension {
+        for x in 0..dimension {
+            let dx = f32::from(x) - center;
+            let dy = f32::from(y) - center;
+            let inside_badge = dx.mul_add(dx, dy * dy) <= radius * radius;
+            let microphone = dx.abs() <= scale * 0.115 && dy >= -scale * 0.27 && dy <= scale * 0.12;
+            let stem = dx.abs() <= scale * 0.035 && dy >= scale * 0.12 && dy <= scale * 0.29;
+            let base = dy >= scale * 0.27 && dy <= scale * 0.33 && dx.abs() <= scale * 0.16;
+            let wave = (dy.abs() <= scale * 0.035 && dx.abs() >= scale * 0.2)
+                || ((dy - dx.abs() * 0.23).abs() <= scale * 0.045
+                    && dx.abs() >= scale * 0.15
+                    && dx.abs() <= scale * 0.34);
+            let (alpha, red, green, blue) = if microphone || stem || base {
+                (255, 14, 16, 20)
+            } else if wave && inside_badge {
+                if active {
+                    (255, 103, 170, 249)
+                } else {
+                    (255, 32, 36, 43)
+                }
+            } else if inside_badge {
+                (255, 135, 140, 148)
+            } else {
+                (0, 0, 0, 0)
+            };
+            data.extend_from_slice(&[alpha, red, green, blue]);
+        }
+    }
+    ksni::Icon {
+        width: i32::from(dimension),
+        height: i32::from(dimension),
+        data,
+    }
+}
+
 /// Owns the tray service and its receiving side for the application's lifetime.
 pub(crate) struct TrayRuntime {
     pub commands: Receiver<TrayCommand>,
@@ -118,5 +167,24 @@ impl Drop for TrayRuntime {
         if let Some(handle) = self.handle.take() {
             handle.shutdown().wait();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tray_icon;
+
+    #[test]
+    fn embedded_tray_icon_has_valid_argb_pixels() {
+        let icon = tray_icon(32, false);
+
+        assert_eq!((icon.width, icon.height), (32, 32));
+        assert_eq!(icon.data.len(), 32 * 32 * 4);
+        assert!(icon.data.chunks_exact(4).any(|pixel| pixel[0] != 0));
+    }
+
+    #[test]
+    fn active_tray_icon_has_a_distinct_accent() {
+        assert_ne!(tray_icon(32, false).data, tray_icon(32, true).data);
     }
 }

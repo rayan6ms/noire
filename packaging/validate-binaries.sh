@@ -51,3 +51,10 @@ for name in noire noirectl noired; do
         exit 1
     }
 done
+
+if [ "${NOIRE_PACKAGE_ALLOW_TEST_BINARIES:-0}" != 1 ]; then
+    "$binary_dir/noired" --verify-native-backend 2>/dev/null | grep -Fx pipewire-backend >/dev/null || {
+        echo "noired does not contain the production PipeWire backend" >&2
+        exit 1
+    }
+fi

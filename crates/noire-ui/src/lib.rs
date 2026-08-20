@@ -5,6 +5,8 @@
 #[cfg(feature = "gpui-ui")]
 mod app;
 #[cfg(feature = "gpui-ui")]
+mod assets;
+#[cfg(feature = "gpui-ui")]
 mod client;
 #[cfg(feature = "gpui-ui")]
 mod preferences;

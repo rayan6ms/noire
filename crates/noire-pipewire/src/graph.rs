@@ -222,7 +222,7 @@ impl LiveGraph {
         Self::connect_with_latency(connection, selected_node_name, model, StreamLatency::Low)
     }
 
-    /// Connects a live graph using the requested PipeWire scheduling profile.
+    /// Connects a live graph using the requested `PipeWire` scheduling profile.
     ///
     /// # Errors
     ///

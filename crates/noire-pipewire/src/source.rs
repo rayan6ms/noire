@@ -28,7 +28,7 @@ const BYTES_PER_SAMPLE: usize = size_of::<f32>();
 /// Delay before the last consumer pauses physical capture.
 pub const CONSUMER_IDLE_DEBOUNCE: Duration = Duration::from_millis(500);
 
-/// Requested PipeWire graph quantum for capture and publication streams.
+/// Requested `PipeWire` graph quantum for capture and publication streams.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum StreamLatency {
     /// Lowest qualified quantum: 256 samples at 48 kHz.
@@ -39,7 +39,7 @@ pub enum StreamLatency {
 }
 
 impl StreamLatency {
-    /// PipeWire `node.latency` value shared by both ends of the graph.
+    /// `PipeWire` `node.latency` value shared by both ends of the graph.
     #[must_use]
     pub const fn node_property(self) -> &'static str {
         match self {

@@ -27,7 +27,7 @@ futures-util.workspace = true
 proptest.workspace = true
 
 [features]
-default = ["runtime"]
+default = ["runtime", "pipewire-backend"]
 pipewire-backend = ["noire-pipewire/pipewire-backend", "dep:noire-model-fastenhancer"]
 native-test = ["pipewire-backend", "noire-pipewire/native-test"]
 runtime = ["dep:anyhow", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:zbus", "noire-ipc/dbus"]

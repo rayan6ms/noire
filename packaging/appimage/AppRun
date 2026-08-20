@@ -6,6 +6,24 @@ export PATH="$app_dir/usr/bin${PATH:+:$PATH}"
 export LD_LIBRARY_PATH="$app_dir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export XDG_DATA_DIRS="$app_dir/usr/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
 
+# Desktop shells do not inherit an AppImage's XDG_DATA_DIRS. Install the tiny
+# icon and launcher metadata in the user's data directory so Wayland app-id and
+# X11 WM_CLASS lookup both resolve to Noire instead of a generic application.
+if [ -n "${HOME:-}" ]; then
+    user_data_dir=${XDG_DATA_HOME:-"$HOME/.local/share"}
+    icon_dir="$user_data_dir/icons/hicolor/scalable/apps"
+    application_dir="$user_data_dir/applications"
+    mkdir -p "$icon_dir" "$application_dir"
+    cp "$app_dir/usr/share/icons/hicolor/scalable/apps/io.github.rayan6ms.Noire.svg" \
+        "$icon_dir/io.github.rayan6ms.Noire.svg"
+    if [ -n "${APPIMAGE:-}" ]; then
+        escaped_appimage=$(printf '%s' "$APPIMAGE" | sed 's/[\\&|]/\\&/g; s/"/\\"/g')
+        sed "s|^Exec=noire$|Exec=\"${escaped_appimage}\"|" \
+            "$app_dir/usr/share/applications/io.github.rayan6ms.Noire.desktop" \
+            >"$application_dir/io.github.rayan6ms.Noire.desktop"
+    fi
+fi
+
 # Informational commands do not need the audio service and may exit before the
 # AppImage runtime has mounted long enough for a background daemon to remain.
 case "${1:-}" in

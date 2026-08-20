@@ -24,8 +24,11 @@ included in the production daemon dependency graph.
 
 ## Desktop application
 
-The home screen contains only the live state, start/stop action, input meters,
-and active engine. A separate settings view provides:
+The compact home screen keeps the live state, animated start/stop action, input
+meter, and signal path together in one coherent surface. A fixed branded header,
+custom rounded title bar, subtle window border, native light/dark themes, and
+bottom-center transient notifications keep controls stable while content changes.
+A separate scrollable settings view provides:
 
 - physical microphone selection;
 - suppression strength and latency profile;
@@ -35,7 +38,8 @@ and active engine. A separate settings view provides:
 - privacy-safe diagnostics.
 
 Closing the window keeps the controller in the freedesktop system tray by
-default. It does not stop microphone processing. Desktop-only preferences are
+default, using Noire's own active/inactive tray artwork. It does not stop
+microphone processing. Desktop-only preferences are
 stored in `~/.config/noire/ui.toml`; audio configuration remains in
 `~/.config/noire/config.toml`.
 

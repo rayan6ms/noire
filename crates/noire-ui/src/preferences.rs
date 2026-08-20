@@ -11,6 +11,8 @@ const CONFIG_FILE: &str = "ui.toml";
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(default)]
 pub(crate) struct DesktopPreferences {
+    /// Use Noire's near-black palette instead of the optional light palette.
+    pub dark_theme: bool,
     /// Hide the initial window and leave the tray item running.
     pub start_minimized: bool,
     /// Keep Noire running in the tray when the window is closed.
@@ -20,6 +22,7 @@ pub(crate) struct DesktopPreferences {
 impl Default for DesktopPreferences {
     fn default() -> Self {
         Self {
+            dark_theme: true,
             start_minimized: false,
             close_to_tray: true,
         }
@@ -76,6 +79,7 @@ mod tests {
     #[test]
     fn defaults_keep_close_safe_and_window_visible() {
         let preferences = DesktopPreferences::default();
+        assert!(preferences.dark_theme);
         assert!(!preferences.start_minimized);
         assert!(preferences.close_to_tray);
     }
@@ -83,6 +87,7 @@ mod tests {
     #[test]
     fn missing_fields_receive_defaults() -> Result<(), toml::de::Error> {
         let preferences: DesktopPreferences = toml::from_str("start_minimized = true")?;
+        assert!(preferences.dark_theme);
         assert!(preferences.start_minimized);
         assert!(preferences.close_to_tray);
         Ok(())
