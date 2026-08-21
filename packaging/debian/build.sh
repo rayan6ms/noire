@@ -93,9 +93,9 @@ add_debian_docs() {
     {
         echo "noire ($version) unstable; urgency=medium"
         echo
-        echo "  * Initial stable release candidate."
+        echo "  * Release Noire 1.1.0 with the GPUI interface and FastEnhancer-B."
         echo
-        echo " -- rayan6ms  Thu, 13 Aug 2026 00:00:00 +0000"
+        echo " -- rayan6ms  Fri, 21 Aug 2026 00:00:00 +0000"
     } | gzip -9n >"$root/usr/share/doc/$package/changelog.Debian.gz"
     if [ -d "$root/usr/share/man" ]; then
         find "$root/usr/share/man" -type f -name '*.1' -exec gzip -9n '{}' \;

@@ -20,7 +20,15 @@ ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = "https://github.com/rayan6ms/noire"
 TARGET = "x86_64-unknown-linux-gnu"
 ROOT_PACKAGES = frozenset({"noired", "noirectl", "noire-ui"})
-ARTIFACT_SUFFIXES = (".deb", ".rpm", ".tar.gz", ".tar.xz", ".tar.zst")
+ARTIFACT_SUFFIXES = (
+    ".AppImage",
+    ".deb",
+    ".flatpak",
+    ".rpm",
+    ".tar.gz",
+    ".tar.xz",
+    ".tar.zst",
+)
 MODEL_ID = "org.noire.fastenhancer.base-48khz"
 MODEL_VERSION = "fastenhancer-b-48khz-a3f475e6ae0c"
 MODEL_LICENSE = "MIT"

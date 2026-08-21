@@ -30,9 +30,14 @@
   <url type="homepage">https://github.com/rayan6ms/noire</url>
   <url type="bugtracker">https://github.com/rayan6ms/noire/issues</url>
   <releases>
-    <release version="1.1.0" date="2026-08-19" type="development">
+    <release version="1.1.0" date="2026-08-21" type="stable">
       <description>
-        <p>Replaces the GTK interface with a dark GPUI controller and adds DEB, RPM, Flatpak, and AppImage packaging.</p>
+        <p>Replaces the GTK interface with a native GPUI controller and ships FastEnhancer-B noise reduction.</p>
+        <ul>
+          <li>Adds dark and gray light themes, microphone metering, tray controls, and persistent desktop preferences.</li>
+          <li>Publishes the virtual input as Noire Microphone ☾ and improves physical-device selection.</li>
+          <li>Adds DEB, RPM, Flatpak, and AppImage packages.</li>
+        </ul>
       </description>
     </release>
     <release version="1.0.0" date="2026-08-14" type="stable">

@@ -73,7 +73,7 @@ cp -a %{noire_ui_stage}/. %{buildroot}/
 /usr/share/man/man1/noire.1*
 
 %changelog
-* Wed Aug 19 2026 rayan6ms - 1.1.0-1
+* Fri Aug 21 2026 rayan6ms - 1.1.0-1
 - Replace GTK4 interface with GPUI and ship FastEnhancer-B 48 kHz
 
 * Thu Aug 13 2026 rayan6ms - 1.0.0-1
