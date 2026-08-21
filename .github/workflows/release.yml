@@ -210,7 +210,6 @@ jobs:
           }
           install_flatpak_ref org.freedesktop.Platform//25.08
           install_flatpak_ref org.freedesktop.Sdk//25.08
-          install_flatpak_ref org.freedesktop.Sdk.Extension.rust-stable//25.08
 
       - name: Build Flatpak bundle
         run: packaging/flatpak/build.sh dist/flatpak

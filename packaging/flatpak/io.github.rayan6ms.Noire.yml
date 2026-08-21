@@ -2,8 +2,6 @@ app-id: io.github.rayan6ms.Noire
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
-sdk-extensions:
-  - org.freedesktop.Sdk.Extension.rust-stable
 command: noire-wrapper
 finish-args:
   - --share=ipc
@@ -19,11 +17,13 @@ modules:
   - name: noire
     buildsystem: simple
     build-options:
-      append-path: /usr/lib/sdk/rust-stable/bin
       build-args:
         - --share=network
     build-commands:
-      - cargo build --locked --release --package noired --package noirectl --package noire-ui
+      - mkdir -p rust-toolchain-source rust-toolchain
+      - tar -xJf rust-1.97.0-x86_64-unknown-linux-gnu.tar.xz -C rust-toolchain-source --strip-components=1
+      - rust-toolchain-source/install.sh --prefix="$PWD/rust-toolchain" --without=rust-docs
+      - PATH="$PWD/rust-toolchain/bin:$PATH" cargo build --locked --release --package noired --package noirectl --package noire-ui
       - install -Dm755 target/release/noire /app/bin/noire
       - install -Dm755 target/release/noired /app/bin/noired
       - install -Dm755 target/release/noirectl /app/bin/noirectl
@@ -35,3 +35,6 @@ modules:
     sources:
       - type: dir
         path: ../..
+      - type: file
+        url: https://static.rust-lang.org/dist/2026-07-09/rust-1.97.0-x86_64-unknown-linux-gnu.tar.xz
+        sha256: 1cf17e4905b841d4c8e3f76467ac148d55fb3f54bf213c86f0d287a36471d904
