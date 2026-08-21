@@ -1,0 +1,335 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v<version> tag to publish or repair
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Validate release tag
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+
+      - name: Validate tag, version, and main ancestry
+        id: release
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          test "$RELEASE_TAG" = "v$version"
+          test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor HEAD origin/main
+          printf 'tag=%s\nversion=%s\n' "$RELEASE_TAG" "$version" >>"$GITHUB_OUTPUT"
+
+  deb-appimage-source:
+    name: DEB, AppImage, and source
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install build requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            build-essential ca-certificates clang curl dpkg-dev file libclang-dev \
+            libegl1-mesa-dev libfontconfig-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libvulkan-dev libwayland-dev libx11-xcb-dev libxcb1-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev pkg-config xz-utils
+          rustup toolchain install 1.97.0 --profile minimal --no-self-update
+
+      - name: Restore Cargo sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git/db
+          key: cargo-sources-v1-release-ubuntu-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build release binaries
+        run: |
+          cargo +1.97.0 build --release --locked \
+            --package noired --package noirectl --package noire-ui
+
+      - name: Build Debian packages
+        run: |
+          packaging/debian/build.sh \
+            "${{ needs.prepare.outputs.version }}-1" amd64 target/release dist/deb
+
+      - name: Fetch and verify appimagetool
+        run: |
+          mkdir -p "$RUNNER_TEMP/noire-tools"
+          curl --proto '=https' --tlsv1.2 --retry 3 --fail --silent --show-error \
+            --location --output "$RUNNER_TEMP/noire-tools/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          printf '%s  %s\n' \
+            a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0 \
+            "$RUNNER_TEMP/noire-tools/appimagetool" | sha256sum --check --strict
+          chmod 0755 "$RUNNER_TEMP/noire-tools/appimagetool"
+          curl --proto '=https' --tlsv1.2 --retry 3 --fail --silent --show-error \
+            --location --output "$RUNNER_TEMP/noire-tools/runtime-x86_64" \
+            https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+          printf '%s  %s\n' \
+            1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf \
+            "$RUNNER_TEMP/noire-tools/runtime-x86_64" | sha256sum --check --strict
+
+      - name: Build AppImage and source archive
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NOIRE_APPIMAGE_RUNTIME: ${{ runner.temp }}/noire-tools/runtime-x86_64
+          NOIRE_APPIMAGETOOL: ${{ runner.temp }}/noire-tools/appimagetool
+        run: |
+          packaging/appimage/build.sh \
+            "${{ needs.prepare.outputs.version }}" x86_64 target/release dist/appimage
+          mkdir -p dist/source
+          git archive --format=tar \
+            --prefix="noire-${{ needs.prepare.outputs.version }}/" HEAD | \
+            xz --threads=1 -9e >"dist/source/noire-${{ needs.prepare.outputs.version }}.tar.xz"
+
+      - name: Upload Debian packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-deb
+          path: dist/deb/*.deb
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-appimage
+          path: dist/appimage/*.AppImage
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload source archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-source
+          path: dist/source/*.tar.xz
+          if-no-files-found: error
+          retention-days: 7
+
+  rpm:
+    name: RPM on Fedora 43
+    needs: prepare
+    runs-on: ubuntu-24.04
+    container: registry.fedoraproject.org/fedora:43
+    steps:
+      - name: Install build requirements
+        run: |
+          dnf install --assumeyes --setopt=install_weak_deps=False \
+            ca-certificates clang-devel gcc git fontconfig-devel \
+            libxkbcommon-devel libxkbcommon-x11-devel libxcb-devel \
+            mesa-libEGL-devel pipewire-devel pkgconf-pkg-config rpm-build \
+            rustup vulkan-loader-devel wayland-devel
+          dnf clean all
+          rustup-init -y --profile minimal --default-toolchain 1.97.0
+          printf '%s\n' "$HOME/.cargo/bin" >>"$GITHUB_PATH"
+
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Build Fedora-floor binaries and RPMs
+        run: |
+          cargo +1.97.0 build --release --locked \
+            --package noired --package noirectl --package noire-ui
+          packaging/rpm/build.sh \
+            "${{ needs.prepare.outputs.version }}" x86_64 target/release dist/rpm
+
+      - name: Upload RPM packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-rpm
+          path: dist/rpm/*.rpm
+          if-no-files-found: error
+          retention-days: 7
+
+  flatpak:
+    name: Flatpak
+    needs: prepare
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Flatpak build environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes flatpak flatpak-builder
+          sudo flatpak remote-add --if-not-exists flathub \
+            https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install --noninteractive flathub \
+            org.freedesktop.Platform//25.08 \
+            org.freedesktop.Sdk//25.08 \
+            org.freedesktop.Sdk.Extension.rust-stable//25.08
+
+      - name: Build Flatpak bundle
+        run: packaging/flatpak/build.sh dist/flatpak
+
+      - name: Upload Flatpak bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-flatpak
+          path: dist/flatpak/*.flatpak
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Verify, attest, and publish
+    needs: [prepare, deb-appimage-source, rpm, flatpak]
+    runs-on: ubuntu-24.04
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install verification requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            dpkg-dev flatpak rpm xz-utils
+          rustup toolchain install 1.97.0 --profile minimal --no-self-update
+
+      - name: Restore Cargo sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git/db
+          key: cargo-sources-v1-release-metadata-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-deb
+          path: dist/deb
+
+      - name: Download RPM packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-rpm
+          path: dist/rpm
+
+      - name: Download Flatpak bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-flatpak
+          path: dist/flatpak
+
+      - name: Download AppImage
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-appimage
+          path: dist/appimage
+
+      - name: Download source archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-source
+          path: dist/source
+
+      - name: Verify exact artifact set
+        run: |
+          packaging/verify-release-artifacts.sh \
+            "${{ needs.prepare.outputs.version }}" 1 \
+            dist/deb dist/rpm dist/flatpak dist/appimage dist/source
+
+      - name: Generate and independently verify release metadata
+        run: |
+          cargo +1.97.0 fetch --locked --target x86_64-unknown-linux-gnu
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          export SOURCE_DATE_EPOCH
+          packaging/generate-release-metadata.py generate \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --artifact-dir dist/deb \
+            --artifact-dir dist/rpm \
+            --artifact-dir dist/flatpak \
+            --artifact-dir dist/appimage \
+            --artifact-dir dist/source \
+            --output-dir dist/release-metadata
+          packaging/generate-release-metadata.py verify \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --artifact-dir dist/deb \
+            --artifact-dir dist/rpm \
+            --artifact-dir dist/flatpak \
+            --artifact-dir dist/appimage \
+            --artifact-dir dist/source \
+            --metadata-dir dist/release-metadata
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@8beda2b7ed98355c0e97c0a63bec38ae472e66c4 # v4.2.2
+        with:
+          subject-path: |
+            dist/deb/*.deb
+            dist/rpm/*.rpm
+            dist/flatpak/*.flatpak
+            dist/appimage/*.AppImage
+            dist/source/*.tar.xz
+            dist/release-metadata/*
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          files=(
+            dist/deb/*.deb
+            dist/rpm/*.rpm
+            dist/flatpak/*.flatpak
+            dist/appimage/*.AppImage
+            dist/source/*.tar.xz
+            dist/release-metadata/*
+          )
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" --clobber "${files[@]}"
+            gh release edit "$RELEASE_TAG" --latest --title "Noire $VERSION"
+          else
+            gh release create "$RELEASE_TAG" "${files[@]}" \
+              --generate-notes --latest --title "Noire $VERSION" --verify-tag
+          fi

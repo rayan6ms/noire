@@ -26,6 +26,11 @@ fi
     echo "set NOIRE_APPIMAGETOOL to an executable appimagetool" >&2
     exit 1
 }
+runtime=${NOIRE_APPIMAGE_RUNTIME:-}
+if [ -n "$runtime" ] && { [ ! -f "$runtime" ] || [ -L "$runtime" ]; }; then
+    echo "NOIRE_APPIMAGE_RUNTIME must be a regular, non-symbolic-link file" >&2
+    exit 1
+fi
 
 mkdir -p "$output_dir"
 output_dir=$(CDPATH='' cd -- "$output_dir" && pwd)
@@ -73,7 +78,12 @@ while [ "$round" -lt 4 ]; do
 done
 
 output="$output_dir/Noire-${version}-${architecture}.AppImage"
-ARCH="$architecture" VERSION="$version" "$appimagetool" "$app_dir" "$output"
+if [ -n "$runtime" ]; then
+    ARCH="$architecture" VERSION="$version" \
+        "$appimagetool" --runtime-file "$runtime" "$app_dir" "$output"
+else
+    ARCH="$architecture" VERSION="$version" "$appimagetool" "$app_dir" "$output"
+fi
 chmod 0755 "$output"
 sha256sum "$output" >"$output.sha256"
 printf '%s\n' "$output"

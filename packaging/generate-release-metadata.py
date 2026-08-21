@@ -178,11 +178,11 @@ def release_packages(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     return result
 
 
-def verify_embedded_model(packages: list[dict[str, Any]]) -> None:
+def verify_embedded_model(packages: list[dict[str, Any]], version: str) -> None:
     matches = [
         package
         for package in packages
-        if package["name"] == "noire-model-fastenhancer" and package["version"] == "1.1.0"
+        if package["name"] == "noire-model-fastenhancer" and package["version"] == version
     ]
     if len(matches) != 1:
         raise MetadataError("expected exactly one Noire FastEnhancer adapter package")
@@ -475,7 +475,7 @@ def generate(arguments: argparse.Namespace) -> None:
     artifact_digests = {name: sha256_file(path) for name, path in artifacts.items()}
     metadata = cargo_metadata()
     packages = release_packages(metadata)
-    verify_embedded_model(packages)
+    verify_embedded_model(packages, arguments.version)
     lock_digest = sha256_file(ROOT / "Cargo.lock")
 
     identity = canonical_json(
@@ -544,7 +544,7 @@ def verify_release(version: str, directories: list[Path], metadata_dir: Path) ->
     artifacts = collect_artifacts(directories)
     artifact_digests = {name: sha256_file(path) for name, path in artifacts.items()}
     packages = release_packages(cargo_metadata())
-    verify_embedded_model(packages)
+    verify_embedded_model(packages, version)
     sums_name, spdx_name, notices_name, provenance_name = expected_names(version)
     required = [sums_name, spdx_name, notices_name, provenance_name]
     for name in required:

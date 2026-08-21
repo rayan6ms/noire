@@ -87,7 +87,11 @@ Artifacts are written below `dist/`. Native packages install the daemon as a
 systemd user service with D-Bus activation. The AppImage and Flatpak wrappers
 start their bundled daemon when no installed daemon is already available.
 
-No new public release is created by these scripts.
+Local build scripts never publish artifacts. A maintainer creates a public
+release by pushing an annotated `v<version>` tag that matches the workspace
+version. The release workflow rebuilds every format in clean environments,
+verifies the complete artifact set, generates checksums, SBOM and provenance,
+attests the files on GitHub, and only then publishes the release.
 
 ## Workspace
 

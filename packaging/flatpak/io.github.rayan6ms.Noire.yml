@@ -23,7 +23,7 @@ modules:
       build-args:
         - --share=network
     build-commands:
-      - cargo build --locked --release --workspace
+      - cargo build --locked --release --package noired --package noirectl --package noire-ui
       - install -Dm755 target/release/noire /app/bin/noire
       - install -Dm755 target/release/noired /app/bin/noired
       - install -Dm755 target/release/noirectl /app/bin/noirectl

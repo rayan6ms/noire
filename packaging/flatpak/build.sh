@@ -3,6 +3,7 @@ set -eu
 
 repo_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 output_dir=${1:-"$repo_dir/dist/flatpak"}
+version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$repo_dir/Cargo.toml" | head -n 1)
 command -v flatpak-builder >/dev/null 2>&1 || {
     echo "flatpak-builder is required" >&2
     exit 1
@@ -14,4 +15,4 @@ trap 'rm -rf -- "$build_dir"' EXIT HUP INT TERM
 flatpak-builder --force-clean --repo="$output_dir/repository" \
     "$build_dir" "$repo_dir/packaging/flatpak/io.github.rayan6ms.Noire.yml"
 flatpak build-bundle "$output_dir/repository" \
-    "$output_dir/Noire-1.1.0-x86_64.flatpak" io.github.rayan6ms.Noire
+    "$output_dir/Noire-${version}-x86_64.flatpak" io.github.rayan6ms.Noire

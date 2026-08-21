@@ -93,7 +93,7 @@ add_debian_docs() {
     {
         echo "noire ($version) unstable; urgency=medium"
         echo
-        echo "  * Release Noire 1.1.0 with the GPUI interface and FastEnhancer-B."
+        echo "  * Release Noire $binary_version."
         echo
         echo " -- rayan6ms  Fri, 21 Aug 2026 00:00:00 +0000"
     } | gzip -9n >"$root/usr/share/doc/$package/changelog.Debian.gz"
