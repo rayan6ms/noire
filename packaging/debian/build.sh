@@ -27,7 +27,7 @@ case "$version" in
     ''|*[!0-9A-Za-z.+:~-]*) echo "invalid Debian version: $version" >&2; exit 2 ;;
 esac
 [ "$architecture" = amd64 ] || {
-    echo "Noire 1.0 packaging supports only the amd64 Debian architecture" >&2
+    echo "Noire packaging supports only the amd64 Debian architecture" >&2
     exit 2
 }
 binary_version=${version#*:}
@@ -93,9 +93,9 @@ add_debian_docs() {
     {
         echo "noire ($version) unstable; urgency=medium"
         echo
-        echo "  * Initial stable release candidate."
+        echo "  * Release Noire 1.1.0 with the GPUI interface and FastEnhancer-B."
         echo
-        echo " -- rayan6ms  Thu, 13 Aug 2026 00:00:00 +0000"
+        echo " -- rayan6ms  Fri, 21 Aug 2026 00:00:00 +0000"
     } | gzip -9n >"$root/usr/share/doc/$package/changelog.Debian.gz"
     if [ -d "$root/usr/share/man" ]; then
         find "$root/usr/share/man" -type f -name '*.1' -exec gzip -9n '{}' \;
@@ -136,10 +136,12 @@ if [ -z "$daemon_shlibs" ]; then
     daemon_shlibs="libpipewire-0.3-0"
 fi
 if [ -z "$ui_shlibs" ]; then
-    ui_shlibs="libgtk-4-1 (>= 4.10)"
-else
-    ui_shlibs=$(printf '%s\n' "$ui_shlibs" |
-        sed 's/libgtk-4-1 ([^)]*)/libgtk-4-1 (>= 4.10)/')
+    if [ "${NOIRE_PACKAGE_ALLOW_TEST_BINARIES:-0}" = 1 ]; then
+        ui_shlibs="libvulkan1"
+    else
+        echo "could not derive GPUI runtime dependencies" >&2
+        exit 1
+    fi
 fi
 
 add_debian_docs "$daemon_root" noire-daemon
@@ -147,7 +149,7 @@ add_debian_docs "$ui_root" noire-ui
 add_debian_docs "$meta_root" noire
 
 write_control "$daemon_root" noire-daemon "$daemon_shlibs" "Native per-user microphone noise-suppression daemon and CLI"
-write_control "$ui_root" noire-ui "noire-daemon (= $version), $ui_shlibs" "GTK4 interface for Noire microphone noise suppression"
+write_control "$ui_root" noire-ui "noire-daemon (= $version), $ui_shlibs" "GPUI interface for Noire microphone noise suppression"
 write_control "$meta_root" noire "noire-daemon (= $version), noire-ui (= $version)" "Complete Noire microphone noise-suppression application"
 
 for package in noire-daemon noire-ui noire; do

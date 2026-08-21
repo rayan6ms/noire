@@ -4,8 +4,8 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use noire_dsp::{
-    ChannelMap, ChannelPosition, ChannelSelection, DcBlocker, DryDelay, EqualPowerMixer,
-    FrameAssembler, MODEL_FRAME_SAMPLES, Meter, MixReport, sanitize_buffer,
+    ChannelMap, ChannelPosition, ChannelSelection, DcBlocker, DryDelay, FrameAssembler,
+    LinearMixer, MODEL_FRAME_SAMPLES, Meter, MixReport, SpeechPreservingStrength, sanitize_buffer,
 };
 
 fn dsp_stages(criterion: &mut Criterion) {
@@ -77,14 +77,17 @@ fn dsp_stages(criterion: &mut Criterion) {
     );
 
     let mut mixed = [0.0; MODEL_FRAME_SAMPLES];
+    let mut speech_strength = SpeechPreservingStrength::new();
     group.bench_function(
-        BenchmarkId::new("wet_dry_mix", MODEL_FRAME_SAMPLES),
+        BenchmarkId::new("speech_aware_wet_dry_mix", MODEL_FRAME_SAMPLES),
         |bencher| {
             bencher.iter(|| {
+                speech_strength.begin_frame(black_box(0.75));
                 let mut report = MixReport::default();
                 for ((dry, wet), output) in source.iter().zip(delayed.iter()).zip(mixed.iter_mut())
                 {
-                    *output = EqualPowerMixer::mix(*dry, *wet, 0.75, &mut report);
+                    let strength = speech_strength.next(black_box(0.70));
+                    *output = LinearMixer::mix(*dry, *wet, strength, &mut report);
                 }
                 black_box(report);
             });

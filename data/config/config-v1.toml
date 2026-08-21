@@ -13,7 +13,7 @@ latency_profile = "low"
 
 [suppression]
 enabled = true
-strength = 1.0
+strength = 0.55
 fail_mode = "closed"
 
 [diagnostics]

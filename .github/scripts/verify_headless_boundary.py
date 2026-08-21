@@ -31,6 +31,8 @@ FORBIDDEN_EXACT = frozenset(
         "gtk4",
         "gtk4-macros",
         "gtk4-sys",
+        "gpui",
+        "ksni",
         "noire-ui",
         "pango",
         "pango-sys",

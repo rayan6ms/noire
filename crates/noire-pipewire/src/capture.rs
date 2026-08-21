@@ -426,8 +426,8 @@ mod native {
 
     use super::{CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata, InputGeneration};
     use crate::{
-        CaptureFormat, NegotiatedFormatError, PipewireConnection, build_capture_format_pod,
-        parse_negotiated_format,
+        CaptureFormat, NegotiatedFormatError, PipewireConnection, StreamLatency,
+        build_capture_format_pod, parse_negotiated_format,
     };
 
     #[derive(Debug)]
@@ -551,7 +551,14 @@ mod native {
             sink: S,
             initially_active: bool,
         ) -> Result<Self, CaptureStreamError> {
-            Self::connect_with_sink_at(connection, target_node_name, None, sink, initially_active)
+            Self::connect_with_sink_at(
+                connection,
+                target_node_name,
+                None,
+                sink,
+                initially_active,
+                StreamLatency::Low,
+            )
         }
 
         pub(crate) fn connect_with_sink_to_id<S: CaptureSink + 'static>(
@@ -561,12 +568,31 @@ mod native {
             sink: S,
             initially_active: bool,
         ) -> Result<Self, CaptureStreamError> {
+            Self::connect_with_sink_to_id_and_latency(
+                connection,
+                target_node_name,
+                target_node_id,
+                sink,
+                initially_active,
+                StreamLatency::Low,
+            )
+        }
+
+        pub(crate) fn connect_with_sink_to_id_and_latency<S: CaptureSink + 'static>(
+            connection: &PipewireConnection,
+            target_node_name: &str,
+            target_node_id: u32,
+            sink: S,
+            initially_active: bool,
+            latency: StreamLatency,
+        ) -> Result<Self, CaptureStreamError> {
             Self::connect_with_sink_at(
                 connection,
                 target_node_name,
                 Some(target_node_id),
                 sink,
                 initially_active,
+                latency,
             )
         }
 
@@ -576,13 +602,14 @@ mod native {
             target_node_id: Option<u32>,
             sink: S,
             initially_active: bool,
+            latency: StreamLatency,
         ) -> Result<Self, CaptureStreamError> {
             let properties = properties! {
                 *keys::MEDIA_TYPE => "Audio",
                 *keys::MEDIA_CATEGORY => "Capture",
                 *keys::MEDIA_ROLE => "Communication",
                 "target.object" => target_node_name,
-                *keys::NODE_LATENCY => "128/48000",
+                *keys::NODE_LATENCY => latency.node_property(),
             };
             let stream = StreamRc::new(connection.core_clone(), "noire-capture", properties)?;
             let control = Rc::new(RefCell::new(ControlState::default()));
@@ -671,9 +698,15 @@ mod native {
                 ) {
                     Ok(_) => {
                         let generation = InputGeneration(next);
-                        self.processor
-                            .borrow_mut()
-                            .reset_input_generation(generation);
+                        // PipeWire may deliver a demand edge re-entrantly from the
+                        // source callback while the capture processor is still
+                        // handling a buffer. The atomic command is authoritative;
+                        // apply it eagerly only when the callback does not already
+                        // hold the processor borrow. Otherwise the next buffer
+                        // synchronizes the generation before accepting samples.
+                        if let Ok(mut processor) = self.processor.try_borrow_mut() {
+                            processor.reset_input_generation(generation);
+                        }
                         return generation;
                     }
                     Err(actual) => current = actual,
@@ -688,6 +721,15 @@ mod native {
         /// Returns the native stream error if the state change is rejected.
         pub fn set_active(&self, active: bool) -> Result<(), pipewire::Error> {
             self.stream.set_active(active)
+        }
+    }
+
+    impl Drop for NativeCaptureStream {
+        fn drop(&mut self) {
+            // Disconnect synchronously while the owning PipeWire core and
+            // listener are still alive. Relying only on the final proxy drop
+            // can leave a consumer link visible until a later main-loop turn.
+            let _ = self.stream.disconnect();
         }
     }
 

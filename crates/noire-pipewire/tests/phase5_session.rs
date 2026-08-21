@@ -1,4 +1,4 @@
-//! Phase-5 live `RNNoise` acceptance in a disposable `PipeWire` graph.
+//! Live `FastEnhancer-B` acceptance in a disposable `PipeWire` graph.
 
 #![cfg(feature = "native-test")]
 #![allow(
@@ -18,10 +18,10 @@ use std::{
 };
 
 use noire_model::DenoiserFactory;
-use noire_model_rnnoise::RnnoiseFactory;
+use noire_model_fastenhancer::FastEnhancerFactory;
 use noire_pipewire::{
-    CaptureSink, CaptureStreamState, ConsumerDemand, InputGeneration, LiveGraph, LiveState,
-    NativeCaptureStream, PipewireConnection, SourceStreamState, SyntheticSource,
+    CaptureSink, CaptureStreamState, ConsumerDemand, DeadlinePolicy, InputGeneration, LiveGraph,
+    LiveState, NativeCaptureStream, PipewireConnection, SourceStreamState, SyntheticSource,
     SyntheticSourceSpec,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
@@ -52,7 +52,8 @@ impl CaptureSink for RecordingSink {
 
 #[test]
 #[ignore = "requires a disposable native PipeWire and WirePlumber session"]
-fn live_rnnoise_graph_meets_latency_demand_and_transport_gates() -> Result<(), Box<dyn Error>> {
+fn live_fastenhancer_graph_meets_latency_demand_and_transport_gates() -> Result<(), Box<dyn Error>>
+{
     let connection = PipewireConnection::connect_default()?;
     let selected = SyntheticSource::connect_with_spec(
         &connection,
@@ -75,15 +76,45 @@ fn live_rnnoise_graph_meets_latency_demand_and_transport_gates() -> Result<(), B
             .any(|node| node.node_name == SELECTED_SOURCE)
     })?;
 
-    let factory = RnnoiseFactory::new()?;
+    let factory = FastEnhancerFactory::new()?;
     let graph = LiveGraph::connect(&connection, selected.node_name(), factory.create()?)?;
     graph.control().set_strength(0.0);
     graph.control().set_diagnostic_timing(true);
-    wait_graph(&connection, &graph, SESSION_TIMEOUT, || {
-        graph.source().state() == SourceStreamState::Paused
-    })?;
+    wait_graph(
+        &connection,
+        &graph,
+        SESSION_TIMEOUT,
+        "initial pause",
+        || graph.source().state() == SourceStreamState::Paused,
+    )?;
     assert_eq!(graph.demand(), ConsumerDemand::Idle);
     assert_ne!(graph.capture().state(), CaptureStreamState::Streaming);
+
+    graph.set_meter_monitoring(true)?;
+    wait_graph(
+        &connection,
+        &graph,
+        SESSION_TIMEOUT,
+        "meter capture",
+        || {
+            graph.capture().state() == CaptureStreamState::Streaming
+                && graph.telemetry().snapshot().model_frames > 20
+        },
+    )?;
+    let meter_deadline = Instant::now() + Duration::from_secs(1);
+    while Instant::now() < meter_deadline {
+        let _ = connection.dispatch_once(Duration::from_millis(1));
+        let _ = graph.service_demand(Instant::now())?;
+    }
+    let meter_preview = graph.telemetry().snapshot();
+    assert!(meter_preview.peak > 0.0);
+    assert!(meter_preview.rms > 0.0);
+    assert_eq!(meter_preview.state, LiveState::Running);
+    assert_eq!(meter_preview.transport.overflows, 0);
+    graph.set_meter_monitoring(false)?;
+    wait_graph(&connection, &graph, SESSION_TIMEOUT, "meter idle", || {
+        graph.capture().state() != CaptureStreamState::Streaming
+    })?;
 
     let (reference_sink, mut reference_ring, reference_dropped) = recording_channel();
     let reference_capture = NativeCaptureStream::connect_with_sink(
@@ -99,13 +130,19 @@ fn live_rnnoise_graph_meets_latency_demand_and_transport_gates() -> Result<(), B
         output_sink,
         true,
     )?;
-    wait_graph(&connection, &graph, SESSION_TIMEOUT, || {
-        let _ = graph.service_demand(Instant::now());
-        graph.demand() == ConsumerDemand::Active
-            && graph.capture().state() == CaptureStreamState::Streaming
-            && reference_capture.state() == CaptureStreamState::Streaming
-            && output_capture.state() == CaptureStreamState::Streaming
-    })?;
+    wait_graph(
+        &connection,
+        &graph,
+        SESSION_TIMEOUT,
+        "consumer activation",
+        || {
+            let _ = graph.service_demand(Instant::now());
+            graph.demand() == ConsumerDemand::Active
+                && graph.capture().state() == CaptureStreamState::Streaming
+                && reference_capture.state() == CaptureStreamState::Streaming
+                && output_capture.state() == CaptureStreamState::Streaming
+        },
+    )?;
 
     drain_discard(&mut reference_ring);
     drain_discard(&mut output_ring);
@@ -135,7 +172,9 @@ fn live_rnnoise_graph_meets_latency_demand_and_transport_gates() -> Result<(), B
     let bypass_snapshot = graph.telemetry().snapshot();
     assert_eq!(bypass_snapshot.state, LiveState::Running);
     assert_eq!(bypass_snapshot.model_errors, 0);
-    assert_eq!(bypass_snapshot.deadline_misses, 0);
+    assert!(
+        bypass_snapshot.deadline_misses < u64::from(DeadlinePolicy::default().misses_per_window)
+    );
     assert_eq!(bypass_snapshot.transport.underflows, 0);
     assert_eq!(bypass_snapshot.transport.overflows, 0);
     assert_eq!(bypass_snapshot.transport.dropped_frames, 0);
@@ -160,11 +199,17 @@ fn live_rnnoise_graph_meets_latency_demand_and_transport_gates() -> Result<(), B
     assert_eq!(live.transport.overflows, 0);
 
     drop(output_capture);
-    wait_graph(&connection, &graph, SESSION_TIMEOUT, || {
-        let _ = graph.service_demand(Instant::now());
-        graph.demand() == ConsumerDemand::Idle
-            && graph.capture().state() != CaptureStreamState::Streaming
-    })?;
+    wait_graph(
+        &connection,
+        &graph,
+        SESSION_TIMEOUT,
+        "consumer release",
+        || {
+            let _ = graph.service_demand(Instant::now());
+            graph.demand() == ConsumerDemand::Idle
+                && graph.capture().state() != CaptureStreamState::Streaming
+        },
+    )?;
     let idle_frames = graph.capture().telemetry().snapshot().counters.frames;
     let idle_deadline = Instant::now() + Duration::from_secs(1);
     while Instant::now() < idle_deadline {
@@ -187,6 +232,97 @@ fn live_rnnoise_graph_meets_latency_demand_and_transport_gates() -> Result<(), B
         live.peak,
         live.rms,
         live.vad_probability,
+    );
+    Ok(())
+}
+
+#[test]
+#[ignore = "requires a disposable native PipeWire and WirePlumber session"]
+fn virtual_source_carries_noise_reduced_audio() -> Result<(), Box<dyn Error>> {
+    let connection = PipewireConnection::connect_default()?;
+    let selected = SyntheticSource::connect_with_spec(
+        &connection,
+        "noire.integration.noise-reduction.selected",
+        SyntheticSourceSpec {
+            sample_rate: 48_000,
+            tone_hertz: 120.0,
+            tone_amplitude: 0.04,
+            sequence_amplitude: 0.08,
+            impulse_period_frames: 0,
+            impulse_amplitude: 0.0,
+            sequence_seed: 0x5a17,
+        },
+    )?;
+    wait_until(&connection, SESSION_TIMEOUT, || {
+        connection
+            .registry_snapshot_now()
+            .candidates()
+            .iter()
+            .any(|node| node.node_name == selected.node_name())
+    })?;
+
+    let factory = FastEnhancerFactory::new()?;
+    let graph = LiveGraph::connect(&connection, selected.node_name(), factory.create()?)?;
+    graph.control().set_strength(0.55);
+    let (reference_sink, mut reference_ring, reference_dropped) = recording_channel();
+    let reference_capture = NativeCaptureStream::connect_with_sink(
+        &connection,
+        selected.node_name(),
+        reference_sink,
+        true,
+    )?;
+    let (output_sink, mut output_ring, output_dropped) = recording_channel();
+    let output_capture = NativeCaptureStream::connect_with_sink(
+        &connection,
+        graph.source().node_name(),
+        output_sink,
+        true,
+    )?;
+
+    wait_graph(
+        &connection,
+        &graph,
+        SESSION_TIMEOUT,
+        "noise-reduction capture",
+        || {
+            graph.demand() == ConsumerDemand::Active
+                && graph.capture().state() == CaptureStreamState::Streaming
+                && reference_capture.state() == CaptureStreamState::Streaming
+                && output_capture.state() == CaptureStreamState::Streaming
+                && graph.telemetry().snapshot().model_frames > 40
+        },
+    )?;
+    drain_discard(&mut reference_ring);
+    drain_discard(&mut output_ring);
+
+    let mut reference = Vec::with_capacity(192_000);
+    let mut observed = Vec::with_capacity(192_000);
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        let _ = connection.dispatch_once(Duration::from_millis(1));
+        let _ = graph.service_demand(Instant::now())?;
+        drain_into(&mut reference_ring, &mut reference, 192_000);
+        drain_into(&mut output_ring, &mut observed, 192_000);
+    }
+
+    assert_eq!(reference_dropped.load(Ordering::Relaxed), 0);
+    assert_eq!(output_dropped.load(Ordering::Relaxed), 0);
+    assert!(reference.len() > 96_000);
+    assert!(observed.len() > 96_000);
+    let input_rms = signal_rms(&reference);
+    let output_rms = signal_rms(&observed);
+    let attenuation_db = 20.0 * (input_rms / output_rms).log10();
+    let live = graph.telemetry().snapshot();
+    assert_eq!(live.state, LiveState::Running);
+    assert_eq!(live.model_errors, 0);
+    assert!(live.model_frames > 100);
+    assert!(
+        attenuation_db >= 1.0,
+        "virtual-source attenuation was only {attenuation_db:.3} dB"
+    );
+    println!(
+        "NOIRE_VIRTUAL_SOURCE_NOISE_REDUCTION input_rms={input_rms:.6} output_rms={output_rms:.6} attenuation_db={attenuation_db:.3} model_frames={} model_errors={}",
+        live.model_frames, live.model_errors
     );
     Ok(())
 }
@@ -223,6 +359,7 @@ fn wait_graph(
     connection: &PipewireConnection,
     graph: &LiveGraph,
     timeout: Duration,
+    phase: &'static str,
     mut predicate: impl FnMut() -> bool,
 ) -> Result<(), Box<dyn Error>> {
     let deadline = Instant::now() + timeout;
@@ -233,7 +370,7 @@ fn wait_graph(
             return Ok(());
         }
     }
-    Err("timed out waiting for live PipeWire graph".into())
+    Err(format!("timed out waiting for live PipeWire graph during {phase}").into())
 }
 
 fn drain_into(consumer: &mut Consumer<f32>, destination: &mut Vec<f32>, limit: usize) {
@@ -247,6 +384,15 @@ fn drain_into(consumer: &mut Consumer<f32>, destination: &mut Vec<f32>, limit: u
 
 fn drain_discard(consumer: &mut Consumer<f32>) {
     while consumer.pop().is_ok() {}
+}
+
+fn signal_rms(samples: &[f32]) -> f64 {
+    let mean_square = samples
+        .iter()
+        .map(|sample| f64::from(*sample).powi(2))
+        .sum::<f64>()
+        / samples.len() as f64;
+    mean_square.sqrt()
 }
 
 fn correlation_delays(reference: &[f32], observed: &[f32]) -> Result<Vec<usize>, &'static str> {

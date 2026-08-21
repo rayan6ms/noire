@@ -53,7 +53,7 @@ pub use registry::{
 #[cfg(feature = "pipewire-backend")]
 pub use source::{
     CONSUMER_IDLE_DEBOUNCE, ConsumerDemand, DemandTransition, SourceStreamError, SourceStreamState,
-    SourceTelemetry, SourceTelemetrySnapshot, VirtualSourceStream,
+    SourceTelemetry, SourceTelemetrySnapshot, StreamLatency, VirtualSourceStream,
 };
 #[cfg(feature = "native-test")]
 pub use synthetic::{

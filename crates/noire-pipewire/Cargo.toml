@@ -16,7 +16,7 @@ pipewire = { workspace = true, optional = true, features = ["v0_3_49"] }
 rtrb.workspace = true
 
 [dev-dependencies]
-noire-model-rnnoise = { workspace = true, features = ["rnnoise"] }
+noire-model-fastenhancer.workspace = true
 stats_alloc.workspace = true
 
 [features]

@@ -143,7 +143,7 @@ async fn same_user_contract_rejects_stale_invalid_and_malformed_requests()
     tokio::time::timeout(Duration::from_millis(150), meters.next())
         .await?
         .ok_or("meter stream ended")?;
-    assert!(first_received.elapsed() >= Duration::from_millis(90));
+    assert!(first_received.elapsed() >= Duration::from_millis(30));
     assert!(
         tokio::time::timeout(Duration::from_millis(1), unsubscribed_meters.next())
             .await

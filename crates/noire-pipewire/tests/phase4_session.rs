@@ -110,7 +110,7 @@ fn virtual_source_bypass_meets_phase4_acceptance() -> Result<(), Box<dyn Error>>
     let source_node_id = graph.source().node_id();
     let initial_dump = pipewire_dump(&connection, Some(&graph), source_node_id)?;
     assert_eq!(node_name_occurrences(&initial_dump, RESERVED_NODE_NAME), 1);
-    assert!(initial_dump.contains("\"node.description\": \"Noire Microphone\""));
+    assert!(initial_dump.contains("\"node.description\": \"Noire Microphone ☾\""));
     assert!(initial_dump.contains("\"node.nick\": \"Noire\""));
     assert!(
         initial_dump.contains("\"node.virtual\": \"true\"")
@@ -221,7 +221,10 @@ fn virtual_source_bypass_meets_phase4_acceptance() -> Result<(), Box<dyn Error>>
     );
     assert!(
         impulse_matches >= 3,
-        "only {impulse_matches} impulses aligned"
+        "only {impulse_matches} impulses aligned at delay {}; reference impulses {:?}; observed impulses {:?}",
+        latency.median_samples,
+        impulse_indices(&reference),
+        impulse_indices(&observed),
     );
 
     let soak_started = Instant::now();
@@ -666,7 +669,7 @@ fn run_webrtc_client(
     let after = graph.telemetry().snapshot();
     assert!(
         result.contains("\"pass\":true")
-            && result.contains("Noire Microphone")
+            && result.contains("Noire Microphone ☾")
             && result.contains("\"recordedBytes\":"),
         "{client_name} rejected the virtual microphone: {result}"
     );
@@ -766,7 +769,7 @@ fn run_obs_client(
     obs.stop_process_group()?;
     let obs_log = fs::read_to_string(&log_path)?;
     assert!(
-        obs_log.contains(RESERVED_NODE_NAME) || obs_log.contains("Noire Microphone"),
+        obs_log.contains(RESERVED_NODE_NAME) || obs_log.contains("Noire Microphone ☾"),
         "OBS log did not name the configured source: {obs_log}"
     );
     let recorded_frames = parse_obs_recorded_frames(&obs_log).unwrap_or(0);
@@ -1146,6 +1149,15 @@ fn aligned_impulse_matches(reference: &[f32], observed: &[f32], delay: usize) ->
             observed[start..end].iter().any(|sample| *sample > 0.4)
         })
         .count()
+}
+
+fn impulse_indices(samples: &[f32]) -> Vec<usize> {
+    samples
+        .iter()
+        .enumerate()
+        .filter_map(|(index, sample)| (*sample > 0.4).then_some(index))
+        .take(8)
+        .collect()
 }
 
 fn percentile(samples: &[f64], quantile: f64) -> f64 {

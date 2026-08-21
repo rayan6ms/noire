@@ -28,6 +28,27 @@ const BYTES_PER_SAMPLE: usize = size_of::<f32>();
 /// Delay before the last consumer pauses physical capture.
 pub const CONSUMER_IDLE_DEBOUNCE: Duration = Duration::from_millis(500);
 
+/// Requested `PipeWire` graph quantum for capture and publication streams.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum StreamLatency {
+    /// Lowest qualified quantum: 256 samples at 48 kHz.
+    #[default]
+    Low,
+    /// More scheduling headroom: 512 samples at 48 kHz.
+    Balanced,
+}
+
+impl StreamLatency {
+    /// `PipeWire` `node.latency` value shared by both ends of the graph.
+    #[must_use]
+    pub const fn node_property(self) -> &'static str {
+        match self {
+            Self::Low => "256/48000",
+            Self::Balanced => "512/48000",
+        }
+    }
+}
+
 /// Virtual-source lifecycle state copied to the control plane.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SourceStreamState {
@@ -169,11 +190,25 @@ impl VirtualSourceStream {
         connection: &PipewireConnection,
         output: BypassOutput,
     ) -> Result<Self, SourceStreamError> {
+        Self::connect_with_latency(connection, output, StreamLatency::Low)
+    }
+
+    /// Creates and connects the canonical source with an explicit graph quantum.
+    ///
+    /// # Errors
+    ///
+    /// Returns a format serialization or native stream error.
+    pub fn connect_with_latency(
+        connection: &PipewireConnection,
+        output: BypassOutput,
+        latency: StreamLatency,
+    ) -> Result<Self, SourceStreamError> {
         let properties = properties! {
             *keys::NODE_NAME => RESERVED_NODE_NAME,
-            *keys::NODE_DESCRIPTION => "Noire Microphone",
+            *keys::NODE_DESCRIPTION => "Noire Microphone ☾",
             *keys::NODE_NICK => "Noire",
             *keys::NODE_VIRTUAL => "true",
+            *keys::NODE_PAUSE_ON_IDLE => "true",
             *keys::MEDIA_TYPE => "Audio",
             *keys::MEDIA_CATEGORY => "Capture",
             *keys::MEDIA_ROLE => "Communication",
@@ -181,7 +216,7 @@ impl VirtualSourceStream {
             "audio.rate" => "48000",
             *keys::AUDIO_CHANNELS => "1",
             "audio.position" => "[ MONO ]",
-            *keys::NODE_LATENCY => "128/48000",
+            *keys::NODE_LATENCY => latency.node_property(),
         };
         let stream = StreamRc::new(connection.core_clone(), "noire-virtual-source", properties)?;
         let control = Rc::new(RefCell::new(ControlState::default()));
@@ -459,8 +494,14 @@ mod tests {
 
     use super::{
         CONSUMER_IDLE_DEBOUNCE, ConsumerDemand, ControlState, DemandTransition, SourceStreamState,
-        resolve_demand_transition,
+        StreamLatency, resolve_demand_transition,
     };
+
+    #[test]
+    fn latency_profiles_request_distinct_bounded_quanta() {
+        assert_eq!(StreamLatency::Low.node_property(), "256/48000");
+        assert_eq!(StreamLatency::Balanced.node_property(), "512/48000");
+    }
 
     #[test]
     fn first_consumer_is_immediate_and_last_consumer_is_debounced() {

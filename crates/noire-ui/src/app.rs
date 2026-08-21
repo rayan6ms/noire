@@ -1,775 +1,393 @@
-//! GTK widgets and main-thread state rendering.
+//! Custom dark GPUI desktop shell for Noire.
 
 use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    sync::mpsc::TryRecvError,
-    time::Duration,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::TryRecvError,
+    },
+    time::{Duration, Instant},
 };
 
-use gtk::{Application, ApplicationWindow, accessible::Property, glib, prelude::*};
-use gtk4 as gtk;
+use gpui::{
+    AnyWindowHandle, App, Application, Bounds, Context, Div, Entity, FontWeight, IntoElement,
+    Render, ScrollHandle, SharedString, Styled as _, Timer, TitlebarOptions, Window,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
+    div, img, prelude::*, px, relative, rgb, size, svg,
+};
 use noire_ipc::DiagnosticReport;
 
 use crate::{
-    client::{self, Request, Response},
-    i18n::tr,
+    assets::Assets,
+    client::{self, Request, Response, WorkerChannels},
+    preferences::DesktopPreferences,
     state::{UiState, UserError},
+    tray::{TrayCommand, TrayRuntime},
 };
 
 const APPLICATION_ID: &str = "io.github.rayan6ms.Noire";
-const RESPONSE_INTERVAL: Duration = Duration::from_millis(20);
+const RESPONSE_INTERVAL: Duration = Duration::from_millis(33);
+const TOAST_LIFETIME: Duration = Duration::from_secs(6);
 
-#[derive(Clone)]
-struct Widgets {
-    root: gtk::ScrolledWindow,
-    status: gtk::Label,
-    detail: gtk::Label,
-    spinner: gtk::Spinner,
-    primary: gtk::Button,
-    error_revealer: gtk::Revealer,
-    error_text: gtk::Label,
-    retry: gtk::Button,
-    input_model: gtk::StringList,
-    input: gtk::DropDown,
-    suppression: gtk::Switch,
-    strength: gtk::Scale,
-    strength_value: gtk::Label,
-    latency: gtk::DropDown,
-    fail_mode: gtk::DropDown,
-    launch_at_login: gtk::Switch,
-    rms: gtk::LevelBar,
-    peak: gtk::LevelBar,
-    runtime: gtk::Label,
-    diagnostics: gtk::Button,
-    diagnostic_revealer: gtk::Revealer,
-    diagnostic_text: gtk::Label,
-    #[cfg(test)]
-    user_guide: gtk::LinkButton,
-    #[cfg(test)]
-    troubleshooting: gtk::LinkButton,
-    #[cfg(test)]
-    privacy: gtk::LinkButton,
-    about: gtk::Button,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Page {
+    Home,
+    Settings,
 }
 
-pub(crate) fn run() {
-    let application = Application::builder()
-        .application_id(APPLICATION_ID)
-        .build();
-    application.connect_activate(build_ui);
-    application.run();
+#[derive(Clone, Copy)]
+struct Palette {
+    surface: u32,
+    raised: u32,
+    hover: u32,
+    border: u32,
+    border_soft: u32,
+    text: u32,
+    muted: u32,
+    faint: u32,
+    accent: u32,
+    accent_soft: u32,
+    success: u32,
+    danger: u32,
+    danger_soft: u32,
 }
 
-fn build_ui(application: &Application) {
-    let channels = client::spawn();
-    let state = Rc::new(RefCell::new(UiState::default()));
-    let updating = Rc::new(Cell::new(false));
-    let outstanding = Rc::new(Cell::new(0_u32));
-    let widgets = build_widgets();
+#[allow(clippy::unreadable_literal)]
+impl Palette {
+    const fn dark() -> Self {
+        Self {
+            surface: 0x111111,
+            raised: 0x131313,
+            hover: 0x171717,
+            border: 0x1e1e1e,
+            border_soft: 0x1e1e1e,
+            text: 0xe8e8e8,
+            muted: 0xa0a0a0,
+            faint: 0x707070,
+            accent: 0x969696,
+            accent_soft: 0x1a1a1a,
+            success: 0x52c795,
+            danger: 0xf06f79,
+            danger_soft: 0x2a161a,
+        }
+    }
 
-    let title = gtk::Label::new(Some("Noire"));
-    title.add_css_class("title");
-    let header = gtk::HeaderBar::builder().title_widget(&title).build();
-    let window = ApplicationWindow::builder()
-        .application(application)
-        .title("Noire")
-        .default_width(640)
-        .default_height(760)
-        .width_request(420)
-        .child(&widgets.root)
-        .build();
-    window.set_titlebar(Some(&header));
-    wire_actions(
-        &widgets,
-        &window,
-        &channels.requests,
-        &state,
-        &updating,
-        &outstanding,
-    );
-    render(&widgets, &state.borrow(), &updating);
-
-    queue(
-        Request::Refresh,
-        &channels.requests,
-        &state,
-        &widgets,
-        &updating,
-        &outstanding,
-        false,
-    );
-    receive_responses(
-        channels.responses,
-        &state,
-        &widgets,
-        &updating,
-        &outstanding,
-    );
-
-    let shutdown = channels.requests.clone();
-    window.connect_close_request(move |_| {
-        let _ignored = shutdown.try_send(Request::Shutdown);
-        glib::Propagation::Proceed
-    });
-    window.present();
-}
-
-// Keeping the declarative widget hierarchy together makes its reading and
-// keyboard order directly auditable and lets the same widgets be verified with
-// deterministic daemon-state fixtures.
-#[allow(clippy::too_many_lines)]
-fn build_widgets() -> Widgets {
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 18);
-    content.set_margin_top(24);
-    content.set_margin_bottom(24);
-    content.set_margin_start(24);
-    content.set_margin_end(24);
-
-    let (status_card, status, detail, spinner, primary) = status_card();
-    content.append(&status_card);
-    let (error_revealer, error_text, retry) = error_card();
-    content.append(&error_revealer);
-    content.append(&section_heading("Settings"));
-    let settings = gtk::Box::new(gtk::Orientation::Vertical, 1);
-    settings.add_css_class("boxed-list");
-
-    let input_model = gtk::StringList::new(&["Follow system default"]);
-    let input = gtk::DropDown::builder()
-        .model(&input_model)
-        .enable_search(true)
-        .hexpand(true)
-        .focusable(true)
-        .build();
-    label_accessible(
-        &input,
-        "Microphone",
-        "Physical microphone processed by Noire",
-    );
-    settings.append(&setting_row(
-        "Microphone",
-        "Choose a physical input or follow the system default.",
-        &input,
-    ));
-
-    let suppression = gtk::Switch::builder()
-        .valign(gtk::Align::Center)
-        .focusable(true)
-        .build();
-    label_accessible(
-        &suppression,
-        "Noise suppression",
-        "Enable RNNoise processing while retaining matched latency",
-    );
-    settings.append(&setting_row(
-        "Noise suppression",
-        "Turn processing off for latency-matched dry audio.",
-        &suppression,
-    ));
-
-    let strength = gtk::Scale::with_range(gtk::Orientation::Horizontal, 0.0, 1.0, 0.01);
-    strength.set_hexpand(true);
-    strength.set_focusable(true);
-    strength.set_draw_value(false);
-    strength.set_accessible_role(gtk::AccessibleRole::Slider);
-    label_accessible(
-        &strength,
-        "Suppression strength",
-        "Amount of processed signal, from zero through one hundred percent",
-    );
-    let strength_value = gtk::Label::new(Some("0%"));
-    strength_value.set_width_chars(5);
-    let strength_control = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    strength_control.set_size_request(220, -1);
-    strength_control.append(&strength);
-    strength_control.append(&strength_value);
-    settings.append(&setting_row(
-        "Strength",
-        "Blend smoothly between delayed dry and processed audio.",
-        &strength_control,
-    ));
-
-    let latency = gtk::DropDown::from_strings(&["Low", "Balanced"]);
-    latency.set_focusable(true);
-    label_accessible(&latency, "Latency profile", "Audio buffering profile");
-    settings.append(&setting_row(
-        "Latency",
-        "Use Balanced if the system cannot sustain the Low profile.",
-        &latency,
-    ));
-
-    let fail_mode = gtk::DropDown::from_strings(&["Fail closed (recommended)", "Fail open"]);
-    fail_mode.set_focusable(true);
-    label_accessible(
-        &fail_mode,
-        "Failure behavior",
-        "Whether failures produce silence or explicitly allow delayed dry audio",
-    );
-    settings.append(&setting_row(
-        "Failure behavior",
-        "Fail open can expose unsuppressed microphone audio during a fault.",
-        &fail_mode,
-    ));
-
-    let launch_at_login = gtk::Switch::builder()
-        .valign(gtk::Align::Center)
-        .focusable(true)
-        .build();
-    label_accessible(
-        &launch_at_login,
-        "Launch at login",
-        "Start the Noire user service automatically after login",
-    );
-    settings.append(&setting_row(
-        "Launch at login",
-        "Enable Noire through the per-user systemd manager.",
-        &launch_at_login,
-    ));
-    content.append(&settings);
-
-    content.append(&section_heading("Live status"));
-    let rms = level_row(
-        &content,
-        "Signal level",
-        "Current root-mean-square output level",
-    );
-    let peak = level_row(&content, "Peak level", "Current peak output level");
-    let runtime = gtk::Label::new(Some("Waiting for daemon details…"));
-    runtime.set_xalign(0.0);
-    runtime.set_wrap(true);
-    runtime.add_css_class("dim-label");
-    runtime.set_accessible_role(gtk::AccessibleRole::Status);
-    runtime.update_property(&[Property::Label("Noire runtime details")]);
-    content.append(&runtime);
-
-    content.append(&section_heading(&tr("Information")));
-    let information = gtk::Box::new(gtk::Orientation::Vertical, 1);
-    information.add_css_class("boxed-list");
-    let diagnostics = gtk::Button::with_label(&tr("Load diagnostics"));
-    diagnostics.set_focusable(true);
-    label_accessible(
-        &diagnostics,
-        &tr("Load diagnostics"),
-        &tr("Read a sanitized local report containing no audio"),
-    );
-    information.append(&setting_row(
-        &tr("Diagnostics"),
-        &tr("Read versions, state, and recovery details without collecting audio."),
-        &diagnostics,
-    ));
-    let diagnostic_text = gtk::Label::new(None);
-    diagnostic_text.set_xalign(0.0);
-    diagnostic_text.set_wrap(true);
-    diagnostic_text.set_selectable(true);
-    diagnostic_text.add_css_class("monospace");
-    diagnostic_text.set_accessible_role(gtk::AccessibleRole::Status);
-    diagnostic_text.update_property(&[Property::Label(&tr("Noire diagnostics"))]);
-    let diagnostic_revealer = gtk::Revealer::builder()
-        .transition_type(gtk::RevealerTransitionType::SlideDown)
-        .child(&diagnostic_text)
-        .build();
-    information.append(&diagnostic_revealer);
-
-    let help = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let user_guide = local_help_link("USER_GUIDE.md", &tr("User guide"));
-    let troubleshooting = local_help_link("TROUBLESHOOTING.md", &tr("Troubleshooting"));
-    let privacy = local_help_link("PRIVACY.md", &tr("Privacy"));
-    help.append(&user_guide);
-    help.append(&troubleshooting);
-    help.append(&privacy);
-    information.append(&setting_row(
-        &tr("Help"),
-        &tr("Open the documentation installed with Noire."),
-        &help,
-    ));
-    let about = gtk::Button::with_label(&tr("About Noire"));
-    about.set_focusable(true);
-    label_accessible(
-        &about,
-        &tr("About Noire"),
-        &tr("Show version, authorship, license, and project website"),
-    );
-    information.append(&setting_row(
-        &tr("About"),
-        &tr("Version, credits, license, and project website."),
-        &about,
-    ));
-    content.append(&information);
-
-    let root = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .child(&content)
-        .build();
-    root.set_accessible_role(gtk::AccessibleRole::Main);
-    Widgets {
-        root,
-        status,
-        detail,
-        spinner,
-        primary,
-        error_revealer,
-        error_text,
-        retry,
-        input_model,
-        input,
-        suppression,
-        strength,
-        strength_value,
-        latency,
-        fail_mode,
-        launch_at_login,
-        rms,
-        peak,
-        runtime,
-        diagnostics,
-        diagnostic_revealer,
-        diagnostic_text,
-        #[cfg(test)]
-        user_guide,
-        #[cfg(test)]
-        troubleshooting,
-        #[cfg(test)]
-        privacy,
-        about,
+    const fn light() -> Self {
+        Self {
+            surface: 0x4d4d4d,
+            raised: 0x3a3a3a,
+            hover: 0x595959,
+            border: 0x555555,
+            border_soft: 0x484848,
+            text: 0xf1f1f1,
+            muted: 0xc8c8c8,
+            faint: 0xaaaaaa,
+            accent: 0x151515,
+            accent_soft: 0x252525,
+            success: 0x65d2a2,
+            danger: 0xff8d95,
+            danger_soft: 0x65484b,
+        }
     }
 }
 
-fn local_help_link(file: &str, label: &str) -> gtk::LinkButton {
-    let link = gtk::LinkButton::builder()
-        .label(label)
-        .uri(format!("file:///usr/share/doc/noire-daemon/{file}"))
-        .focusable(true)
-        .build();
-    label_accessible(
-        &link,
-        label,
-        &tr("Open the locally installed Noire documentation"),
-    );
-    link
+#[derive(Clone, Eq, PartialEq)]
+struct Toast {
+    cause: String,
+    recovery: String,
+    retryable: bool,
 }
 
-fn status_card() -> (
-    gtk::Frame,
-    gtk::Label,
-    gtk::Label,
-    gtk::Spinner,
-    gtk::Button,
-) {
-    let status = gtk::Label::new(Some("Connecting to the daemon…"));
-    status.set_xalign(0.0);
-    status.add_css_class("title-2");
-    status.set_accessible_role(gtk::AccessibleRole::Status);
-    status.update_property(&[Property::Label("Noire status")]);
-    let detail = gtk::Label::new(Some("Reading current state."));
-    detail.set_xalign(0.0);
-    detail.set_wrap(true);
-    detail.add_css_class("dim-label");
-    detail.update_property(&[Property::Label("Noire status detail")]);
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    labels.set_hexpand(true);
-    labels.append(&status);
-    labels.append(&detail);
-    let spinner = gtk::Spinner::new();
-    spinner.set_spinning(true);
-    let primary = gtk::Button::with_label("Start");
-    primary.add_css_class("suggested-action");
-    primary.set_tooltip_text(Some("Start or stop daemon-owned noise reduction"));
-    primary.update_property(&[Property::Label("Start noise reduction")]);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    row.set_margin_top(18);
-    row.set_margin_bottom(18);
-    row.set_margin_start(18);
-    row.set_margin_end(18);
-    row.append(&labels);
-    row.append(&spinner);
-    row.append(&primary);
-    let frame = gtk::Frame::new(None);
-    frame.set_child(Some(&row));
-    (frame, status, detail, spinner, primary)
+#[derive(Clone, Copy)]
+struct ProcessingTransition {
+    from: bool,
+    to: bool,
+    started: Instant,
 }
 
-fn error_card() -> (gtk::Revealer, gtk::Label, gtk::Button) {
-    let icon = gtk::Image::from_icon_name("dialog-warning-symbolic");
-    let text = gtk::Label::new(None);
-    text.set_xalign(0.0);
-    text.set_wrap(true);
-    text.set_hexpand(true);
-    text.set_accessible_role(gtk::AccessibleRole::Alert);
-    text.update_property(&[Property::Label("Noire error and recovery")]);
-    let retry = gtk::Button::with_label("Retry");
-    retry.set_tooltip_text(Some("Retry recovery using current daemon settings"));
-    retry.update_property(&[Property::Label("Retry daemon recovery")]);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    row.set_margin_top(12);
-    row.set_margin_bottom(12);
-    row.set_margin_start(12);
-    row.set_margin_end(12);
-    row.append(&icon);
-    row.append(&text);
-    row.append(&retry);
-    let frame = gtk::Frame::new(None);
-    frame.add_css_class("error");
-    frame.set_child(Some(&row));
-    let revealer = gtk::Revealer::builder()
-        .transition_type(gtk::RevealerTransitionType::SlideDown)
-        .child(&frame)
-        .build();
-    (revealer, text, retry)
-}
-
-fn section_heading(text: &str) -> gtk::Label {
-    let label = gtk::Label::new(Some(text));
-    label.set_xalign(0.0);
-    label.add_css_class("heading");
-    label
-}
-
-fn setting_row(title: &str, description: &str, control: &impl IsA<gtk::Widget>) -> gtk::Box {
-    let title = gtk::Label::new(Some(title));
-    title.set_xalign(0.0);
-    let description = gtk::Label::new(Some(description));
-    description.set_xalign(0.0);
-    description.set_wrap(true);
-    description.add_css_class("dim-label");
-    let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    labels.set_hexpand(true);
-    labels.append(&title);
-    labels.append(&description);
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 18);
-    row.set_margin_top(12);
-    row.set_margin_bottom(12);
-    row.set_margin_start(12);
-    row.set_margin_end(12);
-    row.append(&labels);
-    row.append(control);
-    row
-}
-
-fn level_row(content: &gtk::Box, title: &str, description: &str) -> gtk::LevelBar {
-    let level = gtk::LevelBar::for_interval(0.0, 1.0);
-    level.set_hexpand(true);
-    level.set_accessible_role(gtk::AccessibleRole::Meter);
-    level.update_property(&[Property::Label(title), Property::Description(description)]);
-    let row = setting_row(title, description, &level);
-    content.append(&row);
-    level
-}
-
-fn label_accessible(
-    widget: &(impl IsA<gtk::Accessible> + IsA<gtk::Widget>),
-    label: &str,
-    description: &str,
-) {
-    widget.update_property(&[Property::Label(label), Property::Description(description)]);
-    widget.set_tooltip_text(Some(description));
-}
-
-// Signal wiring mirrors the visible controls in one place so every mutation
-// shares the same asynchronous queue and convergence behavior.
-#[allow(clippy::too_many_lines)]
-fn wire_actions(
-    widgets: &Widgets,
-    window: &ApplicationWindow,
-    sender: &tokio::sync::mpsc::Sender<Request>,
-    state: &Rc<RefCell<UiState>>,
-    updating: &Rc<Cell<bool>>,
-    outstanding: &Rc<Cell<u32>>,
-) {
-    let sender_clone = sender.clone();
-    let state_clone = Rc::clone(state);
-    let widgets_clone = widgets.clone();
-    let updating_clone = Rc::clone(updating);
-    let outstanding_clone = Rc::clone(outstanding);
-    widgets.primary.connect_clicked(move |_| {
-        let active = state_clone
-            .borrow()
-            .snapshot()
-            .is_some_and(|snapshot| snapshot.active);
-        queue(
-            Request::SetActive(!active),
-            &sender_clone,
-            &state_clone,
-            &widgets_clone,
-            &updating_clone,
-            &outstanding_clone,
-            true,
-        );
-    });
-
-    connect_switch(
-        &widgets.suppression,
-        sender,
-        state,
-        widgets,
-        updating,
-        outstanding,
-        Request::SetSuppressionEnabled,
-    );
-    connect_switch(
-        &widgets.launch_at_login,
-        sender,
-        state,
-        widgets,
-        updating,
-        outstanding,
-        Request::SetLaunchAtLogin,
-    );
-
-    let sender_clone = sender.clone();
-    let state_clone = Rc::clone(state);
-    let widgets_clone = widgets.clone();
-    let updating_clone = Rc::clone(updating);
-    let outstanding_clone = Rc::clone(outstanding);
-    widgets.strength.connect_value_changed(move |scale| {
-        widgets_clone
-            .strength_value
-            .set_text(&format!("{:.0}%", scale.value() * 100.0));
-        if !updating_clone.get() {
-            queue(
-                Request::SetStrength(scale.value()),
-                &sender_clone,
-                &state_clone,
-                &widgets_clone,
-                &updating_clone,
-                &outstanding_clone,
-                true,
-            );
+impl From<&UserError> for Toast {
+    fn from(error: &UserError) -> Self {
+        Self {
+            cause: error.cause.clone(),
+            recovery: error.recovery.clone(),
+            retryable: error.retryable,
         }
-    });
+    }
+}
 
-    connect_dropdown(
-        &widgets.latency,
-        sender,
-        state,
-        widgets,
-        updating,
-        outstanding,
-        |selected| {
-            Request::SetLatencyProfile(if selected == 0 { "low" } else { "balanced" }.to_owned())
-        },
-    );
-    connect_dropdown(
-        &widgets.fail_mode,
-        sender,
-        state,
-        widgets,
-        updating,
-        outstanding,
-        |selected| Request::SetFailMode(if selected == 0 { "closed" } else { "open" }.to_owned()),
-    );
+struct AppRuntime {
+    tray: TrayRuntime,
+    window: Option<AnyWindowHandle>,
+    active: bool,
+    close_to_tray: Arc<AtomicBool>,
+    quit_requested: Arc<AtomicBool>,
+}
 
-    let sender_clone = sender.clone();
-    let state_clone = Rc::clone(state);
-    let widgets_clone = widgets.clone();
-    let updating_clone = Rc::clone(updating);
-    let outstanding_clone = Rc::clone(outstanding);
-    widgets.input.connect_selected_notify(move |dropdown| {
-        if updating_clone.get() {
-            return;
+impl AppRuntime {
+    fn new(
+        tray: TrayRuntime,
+        close_to_tray: Arc<AtomicBool>,
+        quit_requested: Arc<AtomicBool>,
+    ) -> Self {
+        let active = tray.active();
+        Self {
+            tray,
+            window: None,
+            active,
+            close_to_tray,
+            quit_requested,
         }
-        let choices = state_clone.borrow().input_choices();
-        if let Some(choice) = choices.get(dropdown.selected() as usize) {
-            queue(
-                Request::SelectInput(choice.stable_id.clone()),
-                &sender_clone,
-                &state_clone,
-                &widgets_clone,
-                &updating_clone,
-                &outstanding_clone,
-                true,
-            );
-        }
-    });
+    }
 
-    let sender_clone = sender.clone();
-    let state_clone = Rc::clone(state);
-    let widgets_clone = widgets.clone();
-    let updating_clone = Rc::clone(updating);
-    let outstanding_clone = Rc::clone(outstanding);
-    widgets.retry.connect_clicked(move |_| {
-        let request = if state_clone.borrow().snapshot().is_some() {
-            Request::Retry
-        } else {
-            Request::Refresh
-        };
-        queue(
-            request,
-            &sender_clone,
-            &state_clone,
-            &widgets_clone,
-            &updating_clone,
-            &outstanding_clone,
-            true,
-        );
-    });
+    fn tray_available(&self) -> bool {
+        self.tray.available()
+    }
 
-    let sender_clone = sender.clone();
-    let state_clone = Rc::clone(state);
-    let widgets_clone = widgets.clone();
-    let updating_clone = Rc::clone(updating);
-    let outstanding_clone = Rc::clone(outstanding);
-    widgets.diagnostics.connect_clicked(move |_| {
-        queue(
-            Request::Diagnostics,
-            &sender_clone,
-            &state_clone,
-            &widgets_clone,
-            &updating_clone,
-            &outstanding_clone,
-            true,
-        );
-    });
+    fn set_active(&mut self, active: bool) {
+        self.active = active;
+        self.tray.set_active(active);
+    }
 
-    let parent = window.clone();
-    widgets.about.connect_clicked(move |_| show_about(&parent));
-}
-
-fn about_dialog() -> gtk::AboutDialog {
-    gtk::AboutDialog::builder()
-        .modal(true)
-        .program_name("Noire")
-        .version(env!("CARGO_PKG_VERSION"))
-        .comments(tr("Native microphone noise suppression for PipeWire"))
-        .authors(["rayan6ms"])
-        .copyright("Copyright © 2026 rayan6ms")
-        .license_type(gtk::License::Gpl30)
-        .logo_icon_name(APPLICATION_ID)
-        .website(env!("CARGO_PKG_HOMEPAGE"))
-        .website_label(tr("Noire project website"))
-        .build()
-}
-
-fn show_about(parent: &ApplicationWindow) {
-    let dialog = about_dialog();
-    dialog.set_transient_for(Some(parent));
-    dialog.present();
-}
-
-fn connect_switch(
-    switch: &gtk::Switch,
-    sender: &tokio::sync::mpsc::Sender<Request>,
-    state: &Rc<RefCell<UiState>>,
-    widgets: &Widgets,
-    updating: &Rc<Cell<bool>>,
-    outstanding: &Rc<Cell<u32>>,
-    request: fn(bool) -> Request,
-) {
-    let sender = sender.clone();
-    let state = Rc::clone(state);
-    let widgets = widgets.clone();
-    let updating = Rc::clone(updating);
-    let outstanding = Rc::clone(outstanding);
-    switch.connect_active_notify(move |switch| {
-        if !updating.get() {
-            queue(
-                request(switch.is_active()),
-                &sender,
-                &state,
-                &widgets,
-                &updating,
-                &outstanding,
-                true,
-            );
-        }
-    });
-}
-
-fn connect_dropdown(
-    dropdown: &gtk::DropDown,
-    sender: &tokio::sync::mpsc::Sender<Request>,
-    state: &Rc<RefCell<UiState>>,
-    widgets: &Widgets,
-    updating: &Rc<Cell<bool>>,
-    outstanding: &Rc<Cell<u32>>,
-    request: impl Fn(u32) -> Request + 'static,
-) {
-    let sender = sender.clone();
-    let state = Rc::clone(state);
-    let widgets = widgets.clone();
-    let updating = Rc::clone(updating);
-    let outstanding = Rc::clone(outstanding);
-    dropdown.connect_selected_notify(move |dropdown| {
-        if !updating.get() {
-            queue(
-                request(dropdown.selected()),
-                &sender,
-                &state,
-                &widgets,
-                &updating,
-                &outstanding,
-                true,
-            );
-        }
-    });
-}
-
-#[allow(clippy::too_many_arguments)]
-fn queue(
-    request: Request,
-    sender: &tokio::sync::mpsc::Sender<Request>,
-    state: &Rc<RefCell<UiState>>,
-    widgets: &Widgets,
-    updating: &Rc<Cell<bool>>,
-    outstanding: &Rc<Cell<u32>>,
-    mutation: bool,
-) {
-    match sender.try_send(request) {
-        Ok(()) => {
-            outstanding.set(outstanding.get().saturating_add(1));
-            if mutation {
-                state.borrow_mut().set_request_pending(true);
-                render(widgets, &state.borrow(), updating);
+    fn drain_commands(&mut self, cx: &mut Context<Self>) {
+        while let Ok(command) = self.tray.try_recv() {
+            match command {
+                TrayCommand::Show => {
+                    self.show_window(cx);
+                }
+                TrayCommand::ToggleProcessing => {
+                    self.toggle_processing(cx);
+                }
+                TrayCommand::Quit => {
+                    self.quit_requested.store(true, Ordering::Relaxed);
+                    cx.quit();
+                }
             }
         }
-        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-            state.borrow_mut().reject(
-                UserError::new(
-                    "ui-request-queue-busy",
-                    "Noire is still handling the previous request.",
-                    "Wait for the current request to finish, then retry.",
-                    true,
-                ),
-                None,
-            );
-            render(widgets, &state.borrow(), updating);
+    }
+
+    fn toggle_processing(&mut self, cx: &mut Context<Self>) {
+        let desired = !self.active;
+        if let Some(handle) = self.show_window(cx) {
+            let _ignored = handle.update(cx, move |view, _, cx| {
+                if let Ok(view) = view.downcast::<NoireView>() {
+                    view.update(cx, |view, cx| {
+                        view.begin_active_change(desired, cx);
+                        cx.notify();
+                    });
+                }
+            });
         }
-        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-            state
-                .borrow_mut()
-                .reject(communication_stopped_error(), None);
-            render(widgets, &state.borrow(), updating);
+    }
+
+    fn show_window(&mut self, cx: &mut Context<Self>) -> Option<AnyWindowHandle> {
+        if let Some(handle) = self.window
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            return Some(handle);
+        }
+
+        let preferences = DesktopPreferences::load();
+        self.close_to_tray.store(
+            preferences.close_to_tray && self.tray.available(),
+            Ordering::Relaxed,
+        );
+        let close_flag = Arc::clone(&self.close_to_tray);
+        let runtime = cx.entity();
+        let runtime_for_close = runtime.clone();
+        let tray_available = self.tray.available();
+        let bounds = Bounds::centered(None, size(px(680.0), px(512.0)), cx);
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            titlebar: Some(TitlebarOptions {
+                title: Some("Noire".into()),
+                appears_transparent: true,
+                ..Default::default()
+            }),
+            show: true,
+            app_id: Some(APPLICATION_ID.to_owned()),
+            window_min_size: Some(size(px(500.0), px(480.0))),
+            window_background: WindowBackgroundAppearance::Transparent,
+            window_decorations: Some(WindowDecorations::Client),
+            ..Default::default()
+        };
+        match cx.open_window(options, move |window, cx| {
+            window.on_window_should_close(cx, move |window, cx| {
+                if close_flag.load(Ordering::Relaxed) {
+                    runtime_for_close.update(cx, |runtime, _| runtime.window = None);
+                    window.remove_window();
+                } else {
+                    cx.quit();
+                }
+                false
+            });
+            cx.new(|cx| NoireView::new(preferences, runtime, tray_available, cx))
+        }) {
+            Ok(handle) => {
+                let handle = AnyWindowHandle::from(handle);
+                self.window = Some(handle);
+                cx.activate(true);
+                Some(handle)
+            }
+            Err(error) => {
+                eprintln!("Noire could not create its GPUI window: {error}");
+                self.window = None;
+                None
+            }
         }
     }
 }
 
-fn receive_responses(
-    responses: std::sync::mpsc::Receiver<Response>,
-    state: &Rc<RefCell<UiState>>,
-    widgets: &Widgets,
-    updating: &Rc<Cell<bool>>,
-    outstanding: &Rc<Cell<u32>>,
-) {
-    let state_clone = Rc::clone(state);
-    let widgets_clone = widgets.clone();
-    let updating_clone = Rc::clone(updating);
-    let outstanding_clone = Rc::clone(outstanding);
-    glib::timeout_add_local(RESPONSE_INTERVAL, move || {
-        let mut disconnected = false;
+struct NoireView {
+    state: UiState,
+    channels: WorkerChannels,
+    outstanding: u32,
+    page: Page,
+    preferences: DesktopPreferences,
+    runtime: Entity<AppRuntime>,
+    settings_scroll: ScrollHandle,
+    diagnostics: Option<String>,
+    toast: Option<Toast>,
+    toast_expires: Option<Instant>,
+    last_daemon_error: Option<String>,
+    processing_transition: Option<ProcessingTransition>,
+    optimistic_active: Option<bool>,
+}
+
+impl Drop for NoireView {
+    fn drop(&mut self) {
+        let _ignored = self.channels.requests.try_send(Request::Shutdown);
+    }
+}
+
+impl NoireView {
+    fn new(
+        preferences: DesktopPreferences,
+        runtime: Entity<AppRuntime>,
+        tray_available: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        cx.spawn(async move |view, cx| {
+            loop {
+                Timer::after(RESPONSE_INTERVAL).await;
+                if view
+                    .update(cx, |view, cx| {
+                        view.drain_responses(cx);
+                        view.expire_toast();
+                        cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+
+        let mut this = Self {
+            state: UiState::default(),
+            channels: client::spawn(),
+            outstanding: 0,
+            page: Page::Home,
+            preferences,
+            runtime,
+            settings_scroll: ScrollHandle::new(),
+            diagnostics: None,
+            toast: None,
+            toast_expires: None,
+            last_daemon_error: None,
+            processing_transition: None,
+            optimistic_active: None,
+        };
+        if !tray_available {
+            this.show_toast(Toast {
+                cause: "This desktop does not expose a compatible system tray.".to_owned(),
+                recovery: "Noire will remain visible and exit normally when closed.".to_owned(),
+                retryable: false,
+            });
+        }
+        this.send(Request::Refresh, false);
+        this
+    }
+
+    fn palette(&self) -> Palette {
+        if self.preferences.dark_theme {
+            Palette::dark()
+        } else {
+            Palette::light()
+        }
+    }
+
+    fn send(&mut self, request: Request, mutation: bool) {
+        match self.channels.requests.try_send(request) {
+            Ok(()) => {
+                self.outstanding = self.outstanding.saturating_add(1);
+                if mutation {
+                    self.state.set_request_pending(true);
+                }
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                let error = UserError::new(
+                    "ui-busy",
+                    "Noire is still applying the previous change.",
+                    "Wait a moment, then try again.",
+                    true,
+                );
+                self.show_toast(Toast::from(&error));
+                self.state.reject(error, None);
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                let error = communication_stopped_error();
+                self.show_toast(Toast::from(&error));
+                self.state.reject(error, None);
+            }
+        }
+    }
+
+    fn drain_responses(&mut self, cx: &mut Context<Self>) {
         loop {
-            match responses.try_recv() {
+            match self.channels.responses.try_recv() {
                 Ok(Response::State {
                     snapshot,
                     inputs,
                     refresh,
                     request_complete,
                 }) => {
-                    if refresh {
-                        state_clone.borrow_mut().refresh(snapshot, inputs);
-                    } else {
-                        state_clone.borrow_mut().converge(snapshot, inputs);
+                    let previous_active = self.state.snapshot().map(|snapshot| snapshot.active);
+                    let active = snapshot.active;
+                    let daemon_error = snapshot.has_error.then(|| Toast {
+                        cause: snapshot.last_error.message.clone(),
+                        recovery: snapshot.last_error.recovery.clone(),
+                        retryable: snapshot.last_error.retryable,
+                    });
+                    let daemon_error_code = snapshot
+                        .has_error
+                        .then(|| snapshot.last_error.code.clone())
+                        .filter(|code| !code.is_empty());
+                    if daemon_error_code != self.last_daemon_error
+                        && let Some(toast) = daemon_error
+                    {
+                        self.show_toast(toast);
                     }
+                    self.last_daemon_error = daemon_error_code;
+                    if refresh {
+                        self.state.refresh(snapshot, inputs);
+                    } else {
+                        self.state.converge(snapshot, inputs);
+                    }
+                    if self.optimistic_active == Some(active) {
+                        self.optimistic_active = None;
+                    } else if previous_active.is_some_and(|previous| previous != active) {
+                        self.processing_transition = Some(ProcessingTransition {
+                            from: !active,
+                            to: active,
+                            started: Instant::now(),
+                        });
+                    }
+                    self.sync_runtime_active(active, cx);
                     if request_complete {
-                        outstanding_clone.set(outstanding_clone.get().saturating_sub(1));
+                        self.outstanding = self.outstanding.saturating_sub(1);
                     }
                 }
                 Ok(Response::Rejected {
@@ -777,42 +395,1340 @@ fn receive_responses(
                     recovered,
                     request_complete,
                 }) => {
-                    state_clone.borrow_mut().reject(error, recovered);
+                    let displayed_active = self.display_active();
+                    let toast = Toast::from(&error);
+                    if self
+                        .last_daemon_error
+                        .as_deref()
+                        .is_none_or(|code| code != error.code)
+                    {
+                        self.show_toast(toast);
+                    }
+                    self.last_daemon_error = Some(error.code.clone());
+                    self.state.reject(error, recovered);
+                    let authoritative_active = self
+                        .state
+                        .snapshot()
+                        .is_some_and(|snapshot| snapshot.active);
+                    self.optimistic_active = None;
+                    self.sync_runtime_active(authoritative_active, cx);
+                    if displayed_active != authoritative_active {
+                        self.processing_transition = Some(ProcessingTransition {
+                            from: displayed_active,
+                            to: authoritative_active,
+                            started: Instant::now(),
+                        });
+                    }
                     if request_complete {
-                        outstanding_clone.set(outstanding_clone.get().saturating_sub(1));
+                        self.outstanding = self.outstanding.saturating_sub(1);
                     }
                 }
                 Ok(Response::Diagnostics(report)) => {
-                    widgets_clone
-                        .diagnostic_text
-                        .set_text(&diagnostic_report_text(&report));
-                    widgets_clone.diagnostic_revealer.set_reveal_child(true);
-                    outstanding_clone.set(outstanding_clone.get().saturating_sub(1));
+                    self.diagnostics = Some(diagnostic_report_text(&report));
+                    self.outstanding = self.outstanding.saturating_sub(1);
                 }
-                Ok(Response::Meters(metrics)) => {
-                    state_clone.borrow_mut().update_metrics(metrics);
-                }
+                Ok(Response::Meters(metrics)) => self.state.update_metrics(metrics),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => {
-                    state_clone
-                        .borrow_mut()
-                        .reject(communication_stopped_error(), None);
-                    outstanding_clone.set(0);
-                    disconnected = true;
+                    self.outstanding = 0;
+                    let error = communication_stopped_error();
+                    self.show_toast(Toast::from(&error));
+                    self.state.reject(error, None);
                     break;
                 }
             }
         }
-        state_clone
-            .borrow_mut()
-            .set_request_pending(outstanding_clone.get() > 0);
-        render(&widgets_clone, &state_clone.borrow(), &updating_clone);
-        if disconnected {
-            glib::ControlFlow::Break
-        } else {
-            glib::ControlFlow::Continue
+        self.state.set_request_pending(self.outstanding > 0);
+        if self
+            .processing_transition
+            .is_some_and(|transition| transition.started.elapsed() >= Duration::from_millis(160))
+        {
+            self.processing_transition = None;
         }
-    });
+    }
+
+    fn show_toast(&mut self, toast: Toast) {
+        if self.toast.as_ref() == Some(&toast) {
+            return;
+        }
+        self.toast = Some(toast);
+        self.toast_expires = Some(Instant::now() + TOAST_LIFETIME);
+    }
+
+    fn expire_toast(&mut self) {
+        if self
+            .toast_expires
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.toast = None;
+            self.toast_expires = None;
+        }
+    }
+
+    fn persist_preferences(&mut self, cx: &mut Context<Self>) {
+        let tray_available = self.runtime.read(cx).tray_available();
+        self.runtime.read(cx).close_to_tray.store(
+            self.preferences.close_to_tray && tray_available,
+            Ordering::Relaxed,
+        );
+        if self.preferences.save().is_err() {
+            self.show_toast(Toast {
+                cause: "Noire could not save the desktop preference.".to_owned(),
+                recovery: "Check the configuration directory permissions and free space."
+                    .to_owned(),
+                retryable: false,
+            });
+        }
+    }
+
+    fn display_active(&self) -> bool {
+        self.optimistic_active.unwrap_or_else(|| {
+            self.state
+                .snapshot()
+                .is_some_and(|snapshot| snapshot.active)
+        })
+    }
+
+    fn sync_runtime_active(&self, active: bool, cx: &mut Context<Self>) {
+        self.runtime
+            .update(cx, |runtime, _| runtime.set_active(active));
+    }
+
+    fn begin_active_change(&mut self, target: bool, cx: &mut Context<Self>) {
+        let active = self.display_active();
+        self.optimistic_active = Some(target);
+        self.sync_runtime_active(target, cx);
+        self.processing_transition = Some(ProcessingTransition {
+            from: active,
+            to: target,
+            started: Instant::now(),
+        });
+        self.send(Request::SetActive(target), true);
+    }
+
+    fn toggle_active(&mut self, cx: &mut Context<Self>) {
+        self.begin_active_change(!self.display_active(), cx);
+    }
+
+    fn close_window(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.runtime.read(cx).close_to_tray.load(Ordering::Relaxed) {
+            self.runtime.update(cx, |runtime, _| runtime.window = None);
+            window.remove_window();
+        } else {
+            cx.quit();
+        }
+    }
+
+    fn title_bar(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        div()
+            .relative()
+            .flex()
+            .h(px(46.0))
+            .w_full()
+            .items_center()
+            .child(
+                div()
+                    .window_control_area(WindowControlArea::Drag)
+                    .on_mouse_down(gpui::MouseButton::Left, |_event, window, _cx| {
+                        window.start_window_move();
+                    })
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .items_center()
+                    .pl_4()
+                    .pr_3()
+                    .gap_2()
+                    .text_xs()
+                    .text_color(rgb(p.faint))
+                    .child(img("icons/noire-icon.svg").size(px(24.0)))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_family("Liberation Sans")
+                            .font_weight(FontWeight::BOLD)
+                            .child("NOIRE"),
+                    ),
+            )
+            .child(window_button(
+                "window-minimize",
+                "icons/minimize.svg",
+                p,
+                WindowControlArea::Min,
+                |_view, _, window, _cx| window.minimize_window(),
+                cx,
+            ))
+            .child(
+                div()
+                    .absolute()
+                    .left_2()
+                    .right_2()
+                    .bottom_0()
+                    .h(px(1.0))
+                    .bg(rgb(p.border_soft)),
+            )
+            .child(window_button(
+                "window-close",
+                "icons/close.svg",
+                p,
+                WindowControlArea::Close,
+                |view, _, window, cx| view.close_window(window, cx),
+                cx,
+            ))
+    }
+
+    fn page_actions(&self, settings: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let (nav_icon, nav_label) = if settings {
+            ("icons/back.svg", "Back")
+        } else {
+            ("icons/settings.svg", "Settings")
+        };
+
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                div()
+                    .id("theme")
+                    .cursor_pointer()
+                    .size(px(36.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.raised))
+                    .hover(move |style| style.bg(rgb(p.hover)))
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.preferences.dark_theme = !view.preferences.dark_theme;
+                        view.persist_preferences(cx);
+                        cx.notify();
+                    }))
+                    .child(
+                        img(if self.preferences.dark_theme {
+                            "icons/new-moon-emoji.svg"
+                        } else {
+                            "icons/full-moon-emoji.svg"
+                        })
+                        .size(px(20.0)),
+                    ),
+            )
+            .child(
+                div()
+                    .id("settings-navigation")
+                    .cursor_pointer()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .h(px(36.0))
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.raised))
+                    .px_3()
+                    .hover(move |style| style.bg(rgb(p.hover)))
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.page = if view.page == Page::Home {
+                            Page::Settings
+                        } else {
+                            Page::Home
+                        };
+                        cx.notify();
+                    }))
+                    .child(svg().path(nav_icon).size(px(16.0)).text_color(rgb(p.muted)))
+                    .child(div().text_sm().child(nav_label)),
+            )
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn home(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let presentation = self.state.presentation();
+        let snapshot = self.state.snapshot();
+        let active = self.display_active();
+        let voice = snapshot.map_or(0.0, |snapshot| meter_level(snapshot.metrics.rms));
+        let peak = snapshot.map_or(0.0, |snapshot| meter_level(snapshot.metrics.peak));
+        let model = snapshot.map_or("FastEnhancer-B", |snapshot| snapshot.model_id.as_str());
+        let input = self.state.input_display_name();
+
+        div().flex_1().min_h_0().w_full().px_5().pt_5().child(
+            div()
+                .w_full()
+                .max_w(px(720.0))
+                .mx_auto()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .child(
+                    div()
+                        .rounded_xl()
+                        .border_1()
+                        .border_color(rgb(if active { p.accent } else { p.border }))
+                        .bg(rgb(p.surface))
+                        .p_5()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_4()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(
+                                            div()
+                                                .text_base()
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child("Noire"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(p.muted))
+                                                .child("Microphone cleanup, entirely local"),
+                                        ),
+                                )
+                                .child(self.page_actions(false, cx)),
+                        )
+                        .child(
+                            div()
+                                .mt_4()
+                                .pt_4()
+                                .border_t_1()
+                                .border_color(rgb(p.border_soft))
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_5()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_4()
+                                        .child(status_icon(active, p))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .gap_1()
+                                                .child(processing_status(active, p))
+                                                .child(
+                                                    div()
+                                                        .text_sm()
+                                                        .text_color(rgb(p.muted))
+                                                        .child(presentation.detail),
+                                                ),
+                                        ),
+                                )
+                                .child(self.processing_button(
+                                    active,
+                                    presentation.controls_enabled,
+                                    cx,
+                                )),
+                        )
+                        .child(
+                            div()
+                                .mt_5()
+                                .pt_5()
+                                .border_t_1()
+                                .border_color(rgb(p.border_soft))
+                                .flex()
+                                .flex_col()
+                                .gap_4()
+                                .child(signal_meter("Voice", voice, p.accent, p))
+                                .child(signal_meter("Peak", peak, p.success, p)),
+                        ),
+                )
+                .child(
+                    div()
+                        .rounded_xl()
+                        .border_1()
+                        .border_color(rgb(p.border_soft))
+                        .bg(rgb(p.surface))
+                        .p_4()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(p.faint))
+                                .mb_3()
+                                .child("SIGNAL PATH"),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(path_node("icons/microphone.svg", &input, p))
+                                .child(path_arrow(p))
+                                .child(path_node("icons/waveform.svg", model, p))
+                                .child(path_arrow(p))
+                                .child(path_node("icons/shield.svg", "Noire Microphone ☾", p)),
+                        ),
+                )
+                .child(
+                    div()
+                        .h(px(24.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(rgb(p.faint))
+                        .child(svg().path("icons/shield.svg").size(px(14.0)))
+                        .child("48 kHz · local processing · no audio leaves this device"),
+                ),
+        )
+    }
+
+    fn processing_button(&self, active: bool, interactive: bool, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let pending = self.state.request_pending();
+        let content = if let Some(transition) = self.processing_transition {
+            let progress = (transition.started.elapsed().as_secs_f32() / 0.16).clamp(0.0, 1.0);
+            div()
+                .relative()
+                .w(px(76.0))
+                .h(px(20.0))
+                .child(processing_action_content(
+                    transition.from,
+                    1.0 - progress,
+                    p,
+                ))
+                .child(processing_action_content(transition.to, progress, p))
+        } else {
+            div()
+                .relative()
+                .w(px(76.0))
+                .h(px(20.0))
+                .child(processing_action_content(active, 1.0, p))
+        };
+
+        div().child(
+            div()
+                .id("primary-action")
+                .cursor_pointer()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .h(px(40.0))
+                .w(px(112.0))
+                .rounded_lg()
+                .border_1()
+                .border_color(rgb(if active { p.success } else { p.border }))
+                .bg(rgb(p.raised))
+                .text_color(rgb(p.text))
+                .font_weight(FontWeight::SEMIBOLD)
+                .when(!interactive, |button| button.opacity(0.5))
+                .when(interactive && !pending, |button| {
+                    button
+                        .hover(move |style| style.bg(rgb(p.hover)))
+                        .on_click(cx.listener(|view, _, _, cx| {
+                            view.toggle_active(cx);
+                            cx.notify();
+                        }))
+                })
+                .child(content),
+        )
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn settings_content(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        let snapshot = self.state.snapshot();
+        let controls_enabled = self.state.presentation().controls_enabled;
+        let selected_input = snapshot.map_or("", |snapshot| snapshot.input_stable_id.as_str());
+        let strength = snapshot.map_or(0.55, |snapshot| snapshot.strength);
+        let latency = snapshot.map_or("low", |snapshot| snapshot.latency_profile.as_str());
+        let fail_mode = snapshot.map_or("closed", |snapshot| snapshot.fail_mode.as_str());
+        let suppression = snapshot.is_none_or(|snapshot| snapshot.suppression_enabled);
+        let launch_at_login = snapshot.is_some_and(|snapshot| snapshot.launch_at_login);
+        let tray_available = self.runtime.read(cx).tray_available();
+        let choices = self.state.input_choices();
+
+        div()
+            .w_full()
+            .max_w(px(720.0))
+            .mx_auto()
+            .flex()
+            .flex_col()
+            .gap_5()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .rounded_xl()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.surface))
+                    .p_4()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Settings"),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(p.muted))
+                                    .child("Audio and desktop preferences"),
+                            ),
+                    )
+                    .child(self.page_actions(true, cx)),
+            )
+            .child(section_title(
+                "Audio",
+                "The defaults are tuned for speech; change only what your microphone needs.",
+                p,
+            ))
+            .child(
+                settings_card(p)
+                    .child(toggle_row(
+                        "suppression-toggle",
+                        "Noise suppression",
+                        "Keep timing stable even when suppression is bypassed.",
+                        suppression,
+                        controls_enabled,
+                        p,
+                        cx.listener(|view, _, _, cx| {
+                            let enabled = view
+                                .state
+                                .snapshot()
+                                .is_none_or(|snapshot| snapshot.suppression_enabled);
+                            view.send(Request::SetSuppressionEnabled(!enabled), true);
+                            cx.notify();
+                        }),
+                    ))
+                    .child(strength_row(strength, controls_enabled, p, cx))
+                    .child(choice_row(
+                        "Latency",
+                        "Low minimizes delay; Balanced tolerates a busier system.",
+                        [("Low", "low"), ("Balanced", "balanced")],
+                        latency,
+                        controls_enabled,
+                        p,
+                        |value| Request::SetLatencyProfile(value.to_owned()),
+                        cx,
+                    ))
+                    .child(choice_row(
+                        "Failure behavior",
+                        "Closed prevents accidental raw audio when processing fails.",
+                        [("Closed", "closed"), ("Open", "open")],
+                        fail_mode,
+                        controls_enabled,
+                        p,
+                        |value| Request::SetFailMode(value.to_owned()),
+                        cx,
+                    )),
+            )
+            .child(section_title(
+                "Microphone",
+                "Follow the session default or pin one physical input.",
+                p,
+            ))
+            .child(
+                settings_card(p).children(choices.into_iter().enumerate().map(
+                    |(index, choice)| {
+                        let selected = choice.stable_id == selected_input;
+                        let stable_id = choice.stable_id;
+                        div()
+                            .id(SharedString::from(format!("input-{index}")))
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_3()
+                            .rounded_lg()
+                            .p_3()
+                            .when(controls_enabled, |row| {
+                                row.hover(move |style| style.bg(rgb(p.hover))).on_click(
+                                    cx.listener(move |view, _, _, cx| {
+                                        view.send(Request::SelectInput(stable_id.clone()), true);
+                                        cx.notify();
+                                    }),
+                                )
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(
+                                        svg()
+                                            .path("icons/microphone.svg")
+                                            .size(px(17.0))
+                                            .text_color(rgb(if selected {
+                                                p.accent
+                                            } else {
+                                                p.muted
+                                            })),
+                                    )
+                                    .child(div().text_sm().child(choice.label)),
+                            )
+                            .child(selection_mark(selected, p))
+                    },
+                )),
+            )
+            .child(section_title(
+                "Startup & tray",
+                "Control background behavior without cluttering the home screen.",
+                p,
+            ))
+            .child(
+                settings_card(p)
+                    .child(toggle_row(
+                        "launch-at-login",
+                        "Start at login",
+                        "Start the background audio service with your desktop session.",
+                        launch_at_login,
+                        controls_enabled,
+                        p,
+                        cx.listener(|view, _, _, cx| {
+                            let enabled = view
+                                .state
+                                .snapshot()
+                                .is_some_and(|snapshot| snapshot.launch_at_login);
+                            view.send(Request::SetLaunchAtLogin(!enabled), true);
+                            cx.notify();
+                        }),
+                    ))
+                    .child(toggle_row(
+                        "start-minimized",
+                        "Start minimized",
+                        "Open future controller sessions directly in the tray.",
+                        self.preferences.start_minimized && tray_available,
+                        tray_available,
+                        p,
+                        cx.listener(|view, _, _, cx| {
+                            view.preferences.start_minimized = !view.preferences.start_minimized;
+                            view.persist_preferences(cx);
+                            cx.notify();
+                        }),
+                    ))
+                    .child(toggle_row(
+                        "close-to-tray",
+                        "Close to tray",
+                        "Keep the controller available when its window is closed.",
+                        self.preferences.close_to_tray && tray_available,
+                        tray_available,
+                        p,
+                        cx.listener(|view, _, _, cx| {
+                            view.preferences.close_to_tray = !view.preferences.close_to_tray;
+                            view.persist_preferences(cx);
+                            cx.notify();
+                        }),
+                    )),
+            )
+            .child(section_title(
+                "Support",
+                "Generate a privacy-safe snapshot containing no recorded audio.",
+                p,
+            ))
+            .child(
+                settings_card(p)
+                    .child(
+                        div()
+                            .id("diagnostics")
+                            .cursor_pointer()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .rounded_lg()
+                            .p_3()
+                            .hover(move |style| style.bg(rgb(p.hover)))
+                            .on_click(cx.listener(|view, _, _, cx| {
+                                view.send(Request::Diagnostics, false);
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_3()
+                                    .child(
+                                        svg()
+                                            .path("icons/shield.svg")
+                                            .size(px(17.0))
+                                            .text_color(rgb(p.muted)),
+                                    )
+                                    .child("Generate diagnostics"),
+                            )
+                            .child(
+                                svg()
+                                    .path("icons/chevron.svg")
+                                    .size(px(16.0))
+                                    .text_color(rgb(p.faint)),
+                            ),
+                    )
+                    .when_some(self.diagnostics.clone(), |card, report| {
+                        card.child(
+                            div()
+                                .rounded_lg()
+                                .bg(rgb(p.raised))
+                                .p_3()
+                                .text_xs()
+                                .text_color(rgb(p.muted))
+                                .line_height(px(19.0))
+                                .child(report),
+                        )
+                    }),
+            )
+    }
+
+    fn settings_view(&self, cx: &mut Context<Self>) -> Div {
+        let p = self.palette();
+        div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .child(
+                div()
+                    .id("settings-scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .scrollbar_width(px(12.0))
+                    .track_scroll(&self.settings_scroll)
+                    .pt_5()
+                    .pb_5()
+                    .pl_5()
+                    .pr_2()
+                    .child(self.settings_content(cx)),
+            )
+            .child(settings_scrollbar(&self.settings_scroll, p))
+    }
+
+    fn toast_view(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let toast = self.toast.as_ref()?;
+        let p = self.palette();
+        Some(
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom_5()
+                .flex()
+                .justify_center()
+                .px_5()
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(px(520.0))
+                        .rounded_xl()
+                        .border_1()
+                        .border_color(rgb(p.danger))
+                        .bg(rgb(p.danger_soft))
+                        .shadow_lg()
+                        .p_4()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_4()
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(toast.cause.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(p.muted))
+                                        .child(toast.recovery.clone()),
+                                ),
+                        )
+                        .when(toast.retryable, |toast| {
+                            toast.child(
+                                div()
+                                    .id("toast-retry")
+                                    .cursor_pointer()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(rgb(p.border))
+                                    .bg(rgb(p.surface))
+                                    .px_3()
+                                    .py_2()
+                                    .text_sm()
+                                    .hover(move |style| style.bg(rgb(p.hover)))
+                                    .on_click(cx.listener(|view, _, _, cx| {
+                                        view.toast = None;
+                                        view.toast_expires = None;
+                                        view.last_daemon_error = None;
+                                        view.send(Request::Retry, true);
+                                        cx.notify();
+                                    }))
+                                    .child(
+                                        svg()
+                                            .path("icons/retry.svg")
+                                            .size(px(15.0))
+                                            .text_color(rgb(p.text)),
+                                    )
+                                    .child("Retry"),
+                            )
+                        }),
+                ),
+        )
+    }
+}
+
+impl Render for NoireView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = self.palette();
+        div()
+            .relative()
+            .size_full()
+            .min_h_0()
+            .overflow_hidden()
+            .rounded(px(13.0))
+            .text_color(rgb(p.text))
+            .child(
+                img(if self.preferences.dark_theme {
+                    "icons/window-dark.svg"
+                } else {
+                    "icons/window-light.svg"
+                })
+                .absolute()
+                .inset_0()
+                .size_full(),
+            )
+            .child(
+                div()
+                    .relative()
+                    .size_full()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(self.title_bar(cx))
+                    .child(match self.page {
+                        Page::Home => self.home(cx),
+                        Page::Settings => self.settings_view(cx),
+                    })
+                    .when_some(self.toast_view(cx), gpui::ParentElement::child),
+            )
+    }
+}
+
+/// Runs the desktop application. Command-line minimization overrides the saved preference.
+pub(crate) fn run(start_minimized: bool) {
+    let preferences = DesktopPreferences::load();
+    let tray = TrayRuntime::start();
+    let tray_available = tray.available();
+    let hidden = (start_minimized || preferences.start_minimized) && tray_available;
+    let close_to_tray = Arc::new(AtomicBool::new(preferences.close_to_tray && tray_available));
+    let quit_requested = Arc::new(AtomicBool::new(false));
+    let mut session_action = (!hidden).then_some(false);
+
+    loop {
+        if let Some(toggle_on_launch) = session_action.take() {
+            run_window_session(
+                tray.clone(),
+                Arc::clone(&close_to_tray),
+                Arc::clone(&quit_requested),
+                toggle_on_launch,
+            );
+        }
+
+        if quit_requested.load(Ordering::Relaxed)
+            || !tray.available()
+            || !close_to_tray.load(Ordering::Relaxed)
+        {
+            break;
+        }
+
+        match tray.recv() {
+            Ok(TrayCommand::Show) => session_action = Some(false),
+            Ok(TrayCommand::ToggleProcessing) => session_action = Some(true),
+            Ok(TrayCommand::Quit) | Err(_) => break,
+        }
+    }
+}
+
+fn run_window_session(
+    tray: TrayRuntime,
+    close_to_tray: Arc<AtomicBool>,
+    quit_requested: Arc<AtomicBool>,
+    toggle_on_launch: bool,
+) {
+    Application::new()
+        .with_assets(Assets)
+        .run(move |cx: &mut App| {
+            let runtime = cx.new(|_| AppRuntime::new(tray, close_to_tray, quit_requested));
+            let runtime_task = runtime.clone();
+            cx.spawn(async move |cx| {
+                loop {
+                    Timer::after(RESPONSE_INTERVAL).await;
+                    if runtime_task.update(cx, AppRuntime::drain_commands).is_err() {
+                        break;
+                    }
+                }
+            })
+            .detach();
+            runtime.update(cx, |runtime, cx| {
+                runtime.show_window(cx);
+                if toggle_on_launch {
+                    runtime.toggle_processing(cx);
+                }
+            });
+        });
+}
+
+fn window_button(
+    id: &'static str,
+    icon: &'static str,
+    p: Palette,
+    control: WindowControlArea,
+    click: impl Fn(&mut NoireView, &gpui::ClickEvent, &mut Window, &mut Context<NoireView>) + 'static,
+    cx: &mut Context<NoireView>,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .window_control_area(control)
+        .cursor_pointer()
+        .h(px(36.0))
+        .w(px(40.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_lg()
+        .when(control == WindowControlArea::Close, gpui::Styled::mr_3)
+        .hover(move |style| {
+            style.bg(rgb(if control == WindowControlArea::Close {
+                p.danger_soft
+            } else {
+                p.hover
+            }))
+        })
+        .on_click(cx.listener(click))
+        .child(svg().path(icon).size(px(16.0)).text_color(rgb(p.muted)))
+}
+
+fn processing_status(active: bool, p: Palette) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_1()
+        .text_xl()
+        .font_weight(FontWeight::SEMIBOLD)
+        .child("Noise reduction is:")
+        .child(
+            div()
+                .text_color(rgb(if active { p.success } else { p.danger }))
+                .child(if active { "ON" } else { "OFF" }),
+        )
+}
+
+fn processing_action_content(active: bool, opacity: f32, p: Palette) -> Div {
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .top_0()
+        .bottom_0()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .opacity(opacity)
+        .child(
+            div().w(px(20.0)).flex().justify_center().child(
+                svg()
+                    .path(if active {
+                        "icons/microphone-clean.svg"
+                    } else {
+                        "icons/microphone-noisy.svg"
+                    })
+                    .size(px(18.0))
+                    .text_color(rgb(if active { p.success } else { p.danger })),
+            ),
+        )
+        .child(
+            div()
+                .w(px(48.0))
+                .text_center()
+                .child(if active { "Stop" } else { "Start" }),
+        )
+}
+
+fn status_icon(active: bool, p: Palette) -> Div {
+    div()
+        .relative()
+        .size(px(48.0))
+        .rounded_xl()
+        .flex()
+        .items_center()
+        .justify_center()
+        .bg(rgb(if active { p.accent_soft } else { p.raised }))
+        .border_1()
+        .border_color(rgb(if active { p.accent } else { p.border }))
+        .child(
+            svg()
+                .path("icons/waveform.svg")
+                .size(px(23.0))
+                .text_color(rgb(p.muted)),
+        )
+        .child(
+            div()
+                .absolute()
+                .right(px(5.0))
+                .bottom(px(5.0))
+                .size(px(7.0))
+                .rounded_full()
+                .bg(rgb(if active { p.success } else { p.faint })),
+        )
+}
+
+fn path_node(icon: &'static str, label: &str, p: Palette) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .h(px(54.0))
+        .rounded_lg()
+        .bg(rgb(p.raised))
+        .border_1()
+        .border_color(rgb(p.border_soft))
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap_2()
+        .px_3()
+        .child(svg().path(icon).size(px(17.0)).text_color(rgb(p.muted)))
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_sm()
+                .text_color(rgb(p.text))
+                .child(label.to_owned()),
+        )
+}
+
+fn path_arrow(p: Palette) -> Div {
+    div().child(
+        svg()
+            .path("icons/chevron.svg")
+            .size(px(15.0))
+            .text_color(rgb(p.faint)),
+    )
+}
+
+fn settings_card(p: Palette) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .overflow_hidden()
+        .rounded_xl()
+        .border_1()
+        .border_color(rgb(p.border_soft))
+        .bg(rgb(p.surface))
+        .p_2()
+}
+
+fn section_title(title: &'static str, subtitle: &'static str, p: Palette) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_lg()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title),
+        )
+        .child(div().text_sm().text_color(rgb(p.muted)).child(subtitle))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn toggle_row(
+    id: &'static str,
+    title: &'static str,
+    subtitle: &'static str,
+    enabled: bool,
+    interactive: bool,
+    p: Palette,
+    on_click: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(id)
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_4()
+        .rounded_lg()
+        .p_3()
+        .cursor_pointer()
+        .when(interactive, |row| {
+            row.hover(move |style| style.bg(rgb(p.hover)))
+                .on_click(on_click)
+        })
+        .when(!interactive, |row| row.opacity(0.45))
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().font_weight(FontWeight::MEDIUM).child(title))
+                .child(div().text_xs().text_color(rgb(p.muted)).child(subtitle)),
+        )
+        .child(
+            div()
+                .w(px(40.0))
+                .h(px(22.0))
+                .p(px(3.0))
+                .rounded_full()
+                .bg(rgb(if enabled { p.accent } else { p.border }))
+                .flex()
+                .justify_end()
+                .when(!enabled, gpui::Styled::justify_start)
+                .child(div().size(px(16.0)).rounded_full().bg(rgb(if enabled {
+                    p.text
+                } else {
+                    p.faint
+                }))),
+        )
+}
+
+fn strength_row(strength: f64, interactive: bool, p: Palette, cx: &mut Context<NoireView>) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_3()
+        .rounded_lg()
+        .p_3()
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .child(div().font_weight(FontWeight::MEDIUM).child("Strength"))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(p.muted))
+                        .child(format!("{:.0}%", strength * 100.0)),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_2()
+                .children(
+                    [0.35, 0.55, 0.75, 1.0]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, value)| {
+                            let selected = (strength - value).abs() < 0.01;
+                            div()
+                                .id(SharedString::from(format!("strength-{index}")))
+                                .flex_1()
+                                .cursor_pointer()
+                                .rounded_lg()
+                                .border_1()
+                                .border_color(rgb(if selected { p.accent } else { p.border }))
+                                .bg(rgb(if selected { p.accent_soft } else { p.raised }))
+                                .py_2()
+                                .text_center()
+                                .text_sm()
+                                .when(interactive, |button| {
+                                    button.hover(move |style| style.bg(rgb(p.hover))).on_click(
+                                        cx.listener(move |view, _, _, cx| {
+                                            view.send(Request::SetStrength(value), true);
+                                            cx.notify();
+                                        }),
+                                    )
+                                })
+                                .child(format!("{:.0}%", value * 100.0))
+                        }),
+                ),
+        )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn choice_row<const N: usize>(
+    title: &'static str,
+    subtitle: &'static str,
+    choices: [(&'static str, &'static str); N],
+    selected: &str,
+    interactive: bool,
+    p: Palette,
+    request: impl Fn(&str) -> Request + Copy + 'static,
+    cx: &mut Context<NoireView>,
+) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_4()
+        .rounded_lg()
+        .p_3()
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().font_weight(FontWeight::MEDIUM).child(title))
+                .child(div().text_xs().text_color(rgb(p.muted)).child(subtitle)),
+        )
+        .child(
+            div()
+                .flex()
+                .gap_2()
+                .children(
+                    choices
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (label, value))| {
+                            let is_selected = selected == value;
+                            div()
+                                .id(SharedString::from(format!("choice-{title}-{index}")))
+                                .cursor_pointer()
+                                .rounded_lg()
+                                .border_1()
+                                .border_color(rgb(if is_selected { p.accent } else { p.border }))
+                                .bg(rgb(if is_selected { p.accent_soft } else { p.raised }))
+                                .px_3()
+                                .py_2()
+                                .text_sm()
+                                .when(interactive, |button| {
+                                    button.hover(move |style| style.bg(rgb(p.hover))).on_click(
+                                        cx.listener(move |view, _, _, cx| {
+                                            view.send(request(value), true);
+                                            cx.notify();
+                                        }),
+                                    )
+                                })
+                                .child(label)
+                        }),
+                ),
+        )
+}
+
+fn selection_mark(selected: bool, p: Palette) -> Div {
+    div()
+        .size(px(16.0))
+        .rounded_full()
+        .border_1()
+        .border_color(rgb(if selected { p.accent } else { p.border }))
+        .flex()
+        .items_center()
+        .justify_center()
+        .when(selected, |mark| {
+            mark.child(div().size(px(8.0)).rounded_full().bg(rgb(p.accent)))
+        })
+}
+
+fn meter_level(linear: f64) -> f64 {
+    if !linear.is_finite() || linear <= 0.0 {
+        return 0.0;
+    }
+    ((20.0 * linear.log10() + 60.0) / 60.0).clamp(0.0, 1.0)
+}
+
+#[allow(clippy::cast_possible_truncation)]
+fn signal_meter(label: &'static str, value: f64, color: u32, p: Palette) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .child(
+            div()
+                .w(px(42.0))
+                .text_xs()
+                .text_color(rgb(p.muted))
+                .child(label),
+        )
+        .child(
+            div()
+                .h(px(6.0))
+                .flex_1()
+                .rounded_full()
+                .overflow_hidden()
+                .bg(rgb(p.raised))
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(value as f32))
+                        .rounded_full()
+                        .bg(rgb(color)),
+                ),
+        )
+        .child(
+            div()
+                .w(px(34.0))
+                .text_right()
+                .text_xs()
+                .text_color(rgb(p.faint))
+                .child(format!("{:.0}%", value * 100.0)),
+        )
+}
+
+fn settings_scrollbar(handle: &ScrollHandle, p: Palette) -> Div {
+    let maximum = f32::from(handle.max_offset().height);
+    let viewport = f32::from(handle.bounds().size.height);
+    let offset = f32::from(handle.offset().y);
+    let Some((thumb_top, thumb_height)) = scrollbar_thumb_geometry(maximum, viewport, offset)
+    else {
+        return div();
+    };
+    div()
+        .absolute()
+        .right(px(8.0))
+        .top_3()
+        .bottom_3()
+        .w(px(5.0))
+        .rounded_full()
+        .bg(rgb(p.border_soft))
+        .child(
+            div()
+                .absolute()
+                .top(px(thumb_top))
+                .h(px(thumb_height))
+                .w_full()
+                .rounded_full()
+                .bg(rgb(p.faint)),
+        )
+}
+
+fn scrollbar_thumb_geometry(maximum: f32, viewport: f32, offset: f32) -> Option<(f32, f32)> {
+    const TRACK_INSET: f32 = 12.0;
+    const MINIMUM_THUMB_HEIGHT: f32 = 36.0;
+
+    let track_height = viewport - (TRACK_INSET * 2.0);
+    if maximum <= 0.5 || viewport <= 1.0 || track_height <= 1.0 {
+        return None;
+    }
+
+    let content = viewport + maximum;
+    let minimum_thumb_height = MINIMUM_THUMB_HEIGHT.min(track_height);
+    let thumb_height =
+        (track_height * viewport / content).clamp(minimum_thumb_height, track_height);
+    let progress = (-offset / maximum).clamp(0.0, 1.0);
+    let thumb_top = progress * (track_height - thumb_height);
+    Some((thumb_top, thumb_height))
 }
 
 fn communication_stopped_error() -> UserError {
@@ -846,551 +1762,34 @@ fn diagnostic_report_text(report: &DiagnosticReport) -> String {
     )
 }
 
-fn render(widgets: &Widgets, state: &UiState, updating: &Cell<bool>) {
-    updating.set(true);
-    let presentation = state.presentation();
-    widgets.status.set_text(&presentation.status);
-    widgets.detail.set_text(&presentation.detail);
-    widgets.primary.set_label(&presentation.primary_action);
-    widgets
-        .primary
-        .update_property(&[Property::Label(if presentation.primary_action == "Stop" {
-            "Stop noise reduction"
-        } else {
-            "Start noise reduction"
-        })]);
-    widgets.spinner.set_spinning(state.request_pending());
-
-    let connected = state.snapshot().is_some();
-    let enabled = connected && presentation.controls_enabled;
-    for widget in [
-        widgets.input.upcast_ref::<gtk::Widget>(),
-        widgets.suppression.upcast_ref(),
-        widgets.strength.upcast_ref(),
-        widgets.latency.upcast_ref(),
-        widgets.fail_mode.upcast_ref(),
-        widgets.launch_at_login.upcast_ref(),
-        widgets.diagnostics.upcast_ref(),
-        widgets.primary.upcast_ref(),
-    ] {
-        widget.set_sensitive(enabled);
-    }
-
-    if let Some(message) = presentation.error_message.as_deref() {
-        let mut parts = vec![message.to_owned()];
-        if let Some(code) = presentation.error_code.as_deref() {
-            parts.push(format!("Error code: {code}"));
-        }
-        if let Some(recovery) = presentation.recovery.as_deref() {
-            parts.push(format!("What to do: {recovery}"));
-        }
-        let text = parts.join("\n");
-        widgets.error_text.set_text(&text);
-        widgets.retry.set_visible(presentation.retryable);
-        widgets.retry.set_sensitive(!state.request_pending());
-        widgets.error_revealer.set_reveal_child(true);
-    } else {
-        widgets.error_revealer.set_reveal_child(false);
-    }
-
-    if let Some(snapshot) = state.snapshot() {
-        let choices = state.input_choices();
-        let labels: Vec<&str> = choices.iter().map(|choice| choice.label.as_str()).collect();
-        widgets
-            .input_model
-            .splice(0, widgets.input_model.n_items(), &labels);
-        let selected_id = snapshot.input_stable_id.as_str();
-        let selected = choices
-            .iter()
-            .position(|choice| choice.stable_id == selected_id)
-            .and_then(|index| u32::try_from(index).ok())
-            .unwrap_or(0);
-        widgets.input.set_selected(selected);
-        widgets.suppression.set_active(snapshot.suppression_enabled);
-        widgets.strength.set_value(snapshot.strength);
-        widgets
-            .strength_value
-            .set_text(&format!("{:.0}%", snapshot.strength * 100.0));
-        widgets
-            .latency
-            .set_selected(u32::from(snapshot.latency_profile != "low"));
-        widgets
-            .fail_mode
-            .set_selected(u32::from(snapshot.fail_mode != "closed"));
-        widgets.launch_at_login.set_active(snapshot.launch_at_login);
-        widgets.rms.set_value(snapshot.metrics.rms.clamp(0.0, 1.0));
-        widgets
-            .peak
-            .set_value(snapshot.metrics.peak.clamp(0.0, 1.0));
-        widgets.runtime.set_text(&format!(
-            "Noire {} · API {} · PipeWire {} · Model delay {} ms · revision {}",
-            snapshot.build_version,
-            snapshot.api_version,
-            if snapshot.pipewire_version.is_empty() {
-                "not connected"
-            } else {
-                snapshot.pipewire_version.as_str()
-            },
-            f64::from(snapshot.model_delay_samples) / 48.0,
-            snapshot.revision,
-        ));
-    } else {
-        widgets
-            .input_model
-            .splice(0, widgets.input_model.n_items(), &["Follow system default"]);
-        widgets.input.set_selected(0);
-        widgets.rms.set_value(0.0);
-        widgets.peak.set_value(0.0);
-        widgets.runtime.set_text("Daemon details are unavailable.");
-    }
-    updating.set(false);
-}
-
 #[cfg(test)]
 mod tests {
-    use noire_ipc::{
-        API_VERSION, ERROR_CATALOG, ErrorInfo, InputDescriptor, Metrics, SNAPSHOT_SCHEMA_VERSION,
-        Snapshot,
-    };
+    use super::{meter_level, scrollbar_thumb_geometry};
 
-    use super::*;
-
-    fn snapshot(state: &str, active: bool) -> Snapshot {
-        Snapshot {
-            schema_version: SNAPSHOT_SCHEMA_VERSION,
-            api_version: API_VERSION.to_owned(),
-            build_version: env!("CARGO_PKG_VERSION").to_owned(),
-            revision: 19,
-            device_revision: 4,
-            state: state.to_owned(),
-            active,
-            launch_at_login: true,
-            input_mode: "selected".to_owned(),
-            input_stable_id: "usb:desk".to_owned(),
-            input_display_name: "Desk microphone".to_owned(),
-            channel: "auto".to_owned(),
-            fallback_to_default: false,
-            source_node_name: "io.github.rayan6ms.Noire.Microphone".to_owned(),
-            latency_profile: "balanced".to_owned(),
-            suppression_enabled: true,
-            strength: 0.63,
-            fail_mode: "closed".to_owned(),
-            model_id: "org.rnnoise.nnnoiseless.default".to_owned(),
-            model_delay_samples: 480,
-            pipewire_version: "1.4.7".to_owned(),
-            uptime_millis: 5,
-            has_error: false,
-            last_error: ErrorInfo::default(),
-            metrics: Metrics {
-                rms: 0.25,
-                peak: 0.75,
-                ..Metrics::default()
-            },
-        }
-    }
-
-    fn inputs() -> Vec<InputDescriptor> {
-        vec![InputDescriptor {
-            stable_id: "usb:desk".to_owned(),
-            display_name: "Desk microphone".to_owned(),
-            is_default: true,
-            availability: "available".to_owned(),
-        }]
-    }
-
-    fn diagnostic_report() -> DiagnosticReport {
-        DiagnosticReport {
-            schema_version: 1,
-            build_version: env!("CARGO_PKG_VERSION").to_owned(),
-            api_version: "1.0".to_owned(),
-            state: "running".to_owned(),
-            source_node_name: "io.github.rayan6ms.Noire.Microphone".to_owned(),
-            selected_input_id: "usb:desk".to_owned(),
-            last_error_code: String::new(),
-            journal_hint: "journalctl --user-unit=noire.service --since=-15min".to_owned(),
-            privacy:
-                "contains no audio, raw device properties, environment dump, or automatic upload"
-                    .to_owned(),
-        }
-    }
-
-    fn assert_error_catalog_rendering(
-        widgets: &Widgets,
-        state: &mut UiState,
-        updating: &Cell<bool>,
-    ) {
-        for entry in ERROR_CATALOG {
-            let mut catalog_state = snapshot("degraded", true);
-            catalog_state.has_error = true;
-            catalog_state.last_error = ErrorInfo {
-                code: entry.code.to_owned(),
-                message: entry.cause.to_owned(),
-                recovery: entry.recovery.to_owned(),
-                component: "test".to_owned(),
-                retryable: entry.retryable,
-                timestamp_millis: 1,
-            };
-            state.converge(catalog_state, inputs());
-            render(widgets, state, updating);
-            let rendered = widgets.error_text.text();
-            assert!(rendered.contains(entry.code), "{}", entry.code);
-            assert!(rendered.contains(entry.cause), "{}", entry.code);
-            assert!(rendered.contains(entry.recovery), "{}", entry.code);
-            assert_eq!(
-                widgets.retry.is_visible(),
-                entry.retryable,
-                "{}",
-                entry.code
-            );
-            assert!(widgets.primary.is_sensitive(), "{}", entry.code);
-        }
-    }
-
-    fn assert_information_content(widgets: &Widgets) {
-        assert!(!widgets.diagnostic_revealer.reveals_child());
-        widgets
-            .diagnostic_text
-            .set_text(&diagnostic_report_text(&diagnostic_report()));
-        widgets.diagnostic_revealer.set_reveal_child(true);
-        assert!(widgets.diagnostic_text.text().contains("contains no audio"));
-        assert!(widgets.diagnostic_text.text().contains("noire.service"));
-        assert!(!widgets.diagnostic_text.text().contains("environment dump:"));
-        assert_eq!(
-            widgets.user_guide.uri(),
-            "file:///usr/share/doc/noire-daemon/USER_GUIDE.md"
-        );
-        let about = about_dialog();
-        assert_eq!(about.program_name().as_deref(), Some("Noire"));
-        assert_eq!(about.version().as_deref(), Some(env!("CARGO_PKG_VERSION")));
-        assert_eq!(about.license_type(), gtk::License::Gpl30);
-    }
-
-    fn assert_information_accessibility(widgets: &Widgets, window: &gtk::Window) {
-        for (name, control, role) in [
-            (
-                "diagnostics",
-                widgets.diagnostics.upcast_ref::<gtk::Widget>(),
-                gtk::AccessibleRole::Button,
-            ),
-            (
-                "user guide",
-                widgets.user_guide.upcast_ref(),
-                gtk::AccessibleRole::Link,
-            ),
-            (
-                "troubleshooting",
-                widgets.troubleshooting.upcast_ref(),
-                gtk::AccessibleRole::Link,
-            ),
-            (
-                "privacy",
-                widgets.privacy.upcast_ref(),
-                gtk::AccessibleRole::Link,
-            ),
-            (
-                "about",
-                widgets.about.upcast_ref(),
-                gtk::AccessibleRole::Button,
-            ),
-        ] {
-            assert_eq!(control.accessible_role(), role, "{name}");
-            assert!(control.is_focusable(), "{name}");
-            assert!(control.is_sensitive(), "{name}");
-            assert!(control.tooltip_text().is_some_and(|text| !text.is_empty()));
-            assert!(control.grab_focus(), "{name}");
-            assert!(
-                gtk::prelude::RootExt::focus(window)
-                    .is_some_and(|focused| focused == *control || focused.is_ancestor(control)),
-                "{name}"
-            );
-        }
-    }
-
-    fn assert_information_focusable(widgets: &Widgets) {
-        for (name, control) in [
-            (
-                "diagnostics",
-                widgets.diagnostics.upcast_ref::<gtk::Widget>(),
-            ),
-            ("user guide", widgets.user_guide.upcast_ref()),
-            ("troubleshooting", widgets.troubleshooting.upcast_ref()),
-            ("privacy", widgets.privacy.upcast_ref()),
-            ("about", widgets.about.upcast_ref()),
-        ] {
-            assert!(control.is_focusable(), "{name} must be keyboard focusable");
-        }
+    #[test]
+    fn meter_level_maps_quiet_linear_audio_into_a_visible_range() {
+        assert!(meter_level(0.0).abs() < f64::EPSILON);
+        assert!(meter_level(f64::NAN).abs() < f64::EPSILON);
+        assert!((meter_level(0.01) - (1.0 / 3.0)).abs() < 0.001);
+        assert!((meter_level(0.1) - (2.0 / 3.0)).abs() < 0.001);
+        assert!((meter_level(1.0) - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
-    #[ignore = "requires a disposable GTK display; run with run_phase8_ui_smoke.sh"]
-    fn accessibility_tree_and_keyboard_paths_are_complete() -> Result<(), glib::BoolError> {
-        gtk::init()?;
-        let widgets = build_widgets();
-        let updating = Cell::new(false);
-        let mut degraded = snapshot("degraded", true);
-        degraded.has_error = true;
-        degraded.last_error = ErrorInfo {
-            code: "input-unavailable".to_owned(),
-            message: "The selected microphone is unavailable.".to_owned(),
-            recovery: "Reconnect it or select another microphone.".to_owned(),
-            component: "input".to_owned(),
-            retryable: true,
-            timestamp_millis: 1,
-        };
-        let mut state = UiState::default();
-        state.converge(degraded, inputs());
-        render(&widgets, &state, &updating);
+    fn settings_scrollbar_thumb_stays_inside_the_inset_track() {
+        let maximum = 420.0;
+        let viewport = 500.0;
+        let track_height = viewport - 24.0;
 
-        let window = gtk::Window::builder()
-            .title("Noire accessibility test")
-            .default_width(640)
-            .default_height(760)
-            .child(&widgets.root)
-            .build();
-        window.present();
-        let context = glib::MainContext::default();
-        while context.pending() {
-            context.iteration(false);
-        }
+        let top_geometry = scrollbar_thumb_geometry(maximum, viewport, 0.0);
+        assert!(top_geometry.is_some());
+        let (top, height) = top_geometry.unwrap_or_default();
+        assert!(top.abs() < f32::EPSILON);
+        assert!(height <= track_height);
 
-        assert_eq!(widgets.root.accessible_role(), gtk::AccessibleRole::Main);
-        assert_eq!(
-            widgets.status.accessible_role(),
-            gtk::AccessibleRole::Status
-        );
-        assert_eq!(
-            widgets.error_text.accessible_role(),
-            gtk::AccessibleRole::Alert
-        );
-        assert_eq!(widgets.rms.accessible_role(), gtk::AccessibleRole::Meter);
-        assert_eq!(widgets.peak.accessible_role(), gtk::AccessibleRole::Meter);
-        assert!(widgets.status.text().contains("attention"));
-        assert!(widgets.error_text.text().contains("input-unavailable"));
-        assert!(widgets.error_text.text().contains("What to do:"));
-
-        for (name, control, role) in [
-            (
-                "primary",
-                widgets.primary.upcast_ref::<gtk::Widget>(),
-                gtk::AccessibleRole::Button,
-            ),
-            (
-                "input",
-                widgets.input.upcast_ref(),
-                gtk::AccessibleRole::ComboBox,
-            ),
-            (
-                "suppression",
-                widgets.suppression.upcast_ref(),
-                gtk::AccessibleRole::Switch,
-            ),
-            (
-                "strength",
-                widgets.strength.upcast_ref(),
-                gtk::AccessibleRole::Slider,
-            ),
-            (
-                "latency",
-                widgets.latency.upcast_ref(),
-                gtk::AccessibleRole::ComboBox,
-            ),
-            (
-                "failure mode",
-                widgets.fail_mode.upcast_ref(),
-                gtk::AccessibleRole::ComboBox,
-            ),
-            (
-                "launch at login",
-                widgets.launch_at_login.upcast_ref(),
-                gtk::AccessibleRole::Switch,
-            ),
-            (
-                "retry",
-                widgets.retry.upcast_ref(),
-                gtk::AccessibleRole::Button,
-            ),
-        ] {
-            assert_eq!(control.accessible_role(), role, "{name}");
-            assert!(control.is_focusable(), "{name}");
-            assert!(control.is_sensitive(), "{name}");
-            assert!(
-                control.tooltip_text().is_some_and(|text| !text.is_empty()),
-                "{name}"
-            );
-            assert!(control.grab_focus(), "{name}");
-            assert!(
-                gtk::prelude::RootExt::focus(&window)
-                    .is_some_and(|focused| focused == *control || focused.is_ancestor(control)),
-                "{name}"
-            );
-        }
-        assert_information_accessibility(&widgets, &window);
-        window.close();
-        Ok(())
-    }
-
-    #[test]
-    #[ignore = "requires a disposable GTK display; run with run_phase8_accessibility_preflight.sh"]
-    fn rtl_high_contrast_scaled_layout_remains_operable() -> Result<(), Box<dyn std::error::Error>>
-    {
-        gtk::init()?;
-        gtk::Widget::set_default_direction(gtk::TextDirection::Rtl);
-
-        let settings = gtk::Settings::default().ok_or("GTK settings must exist")?;
-        settings.set_gtk_theme_name(Some("HighContrast"));
-        let theme = settings
-            .gtk_theme_name()
-            .ok_or("GTK theme name must exist")?
-            .to_ascii_lowercase();
-        assert_eq!(theme, "highcontrast");
-
-        let display = gtk::gdk::Display::default().ok_or("GDK display must exist")?;
-        let backend = display.type_().name().to_ascii_lowercase();
-        let expected_backend = std::env::var("NOIRE_PHASE8_GDK_BACKEND")?;
-        assert!(
-            backend.contains(&expected_backend),
-            "expected {expected_backend} display, found {backend}"
-        );
-
-        let widgets = build_widgets();
-        let updating = Cell::new(false);
-        let mut state = UiState::default();
-        state.converge(snapshot("running", true), inputs());
-        render(&widgets, &state, &updating);
-        let window = gtk::Window::builder()
-            .title("Noire accessibility environment test")
-            .default_width(640)
-            .default_height(760)
-            .child(&widgets.root)
-            .build();
-        window.present();
-        let context = glib::MainContext::default();
-        while context.pending() {
-            context.iteration(false);
-        }
-        for _attempt in 0..50 {
-            if window.width() > 0 && window.height() > 0 {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-            while context.pending() {
-                context.iteration(false);
-            }
-        }
-
-        assert!(window.is_mapped());
-        assert!(widgets.root.is_mapped());
-        assert_eq!(widgets.root.direction(), gtk::TextDirection::Rtl);
-        assert_eq!(window.scale_factor(), 2);
-        assert!(window.width() > 0);
-        assert!(window.height() > 0);
-        assert_information_accessibility(&widgets, &window);
-
-        window.close();
-        gtk::Widget::set_default_direction(gtk::TextDirection::Ltr);
-        Ok(())
-    }
-
-    #[test]
-    #[ignore = "requires a disposable GTK display; run with run_phase8_ui_smoke.sh"]
-    fn widget_state_matrix_tracks_daemon_truth_and_accessible_controls()
-    -> Result<(), glib::BoolError> {
-        gtk::init()?;
-        let widgets = build_widgets();
-        let updating = Cell::new(false);
-
-        let mut state = UiState::default();
-        state.converge(snapshot("running", true), inputs());
-        render(&widgets, &state, &updating);
-        assert_eq!(widgets.status.text(), "Noise reduction is active");
-        assert_eq!(widgets.primary.label().as_deref(), Some("Stop"));
-        assert!(widgets.primary.is_sensitive());
-        assert!(widgets.suppression.is_active());
-        assert_eq!(widgets.strength_value.text(), "63%");
-        assert_eq!(widgets.latency.selected(), 1);
-        assert!(widgets.launch_at_login.is_active());
-        assert_eq!(widgets.input_model.n_items(), 2);
-        assert_eq!(widgets.input.selected(), 1);
-        assert!((widgets.rms.value() - 0.25).abs() < f64::EPSILON);
-        assert!((widgets.peak.value() - 0.75).abs() < f64::EPSILON);
-        assert!(widgets.runtime.text().contains("revision 19"));
-        assert!(!widgets.error_revealer.reveals_child());
-        assert_information_content(&widgets);
-
-        state.set_request_pending(true);
-        render(&widgets, &state, &updating);
-        assert!(!widgets.primary.is_sensitive());
-        assert!(widgets.spinner.is_spinning());
-
-        let mut degraded = snapshot("running", true);
-        degraded.has_error = true;
-        degraded.last_error = ErrorInfo {
-            code: "input-unavailable".to_owned(),
-            message: "The selected microphone is unavailable.".to_owned(),
-            recovery: "Reconnect it or select another microphone.".to_owned(),
-            component: "input".to_owned(),
-            retryable: true,
-            timestamp_millis: 1,
-        };
-        state.converge(degraded, inputs());
-        render(&widgets, &state, &updating);
-        assert_eq!(widgets.status.text(), "Needs attention");
-        assert!(widgets.error_revealer.reveals_child());
-        assert!(widgets.error_text.text().contains("Reconnect it"));
-        assert!(widgets.error_text.text().contains("input-unavailable"));
-        assert!(widgets.error_text.text().contains("What to do:"));
-        assert!(widgets.retry.is_visible());
-
-        assert_error_catalog_rendering(&widgets, &mut state, &updating);
-
-        state.converge(snapshot("recovering", true), inputs());
-        render(&widgets, &state, &updating);
-        assert_eq!(widgets.status.text(), "Reconnecting");
-        assert!(widgets.detail.text().contains("safely muted"));
-
-        state.reject(
-            UserError::new(
-                "daemon-unavailable",
-                "The Noire background service is unavailable.",
-                "Start the service, then retry.",
-                true,
-            ),
-            None,
-        );
-        render(&widgets, &state, &updating);
-        assert_eq!(widgets.status.text(), "Daemon unavailable");
-        assert!(!widgets.primary.is_sensitive());
-        assert!(widgets.error_revealer.reveals_child());
-
-        for (name, control) in [
-            ("primary", widgets.primary.upcast_ref::<gtk::Widget>()),
-            ("input", widgets.input.upcast_ref()),
-            ("suppression", widgets.suppression.upcast_ref()),
-            ("strength", widgets.strength.upcast_ref()),
-            ("latency", widgets.latency.upcast_ref()),
-            ("fail mode", widgets.fail_mode.upcast_ref()),
-            ("launch at login", widgets.launch_at_login.upcast_ref()),
-            ("retry", widgets.retry.upcast_ref()),
-        ] {
-            assert!(control.is_focusable(), "{name} must be keyboard focusable");
-        }
-        assert_information_focusable(&widgets);
-        assert_eq!(
-            widgets.primary.accessible_role(),
-            gtk::AccessibleRole::Button
-        );
-        assert_eq!(
-            widgets.input.accessible_role(),
-            gtk::AccessibleRole::ComboBox
-        );
-        assert_eq!(
-            widgets.suppression.accessible_role(),
-            gtk::AccessibleRole::Switch
-        );
-        assert_eq!(
-            widgets.strength.accessible_role(),
-            gtk::AccessibleRole::Slider
-        );
-        Ok(())
+        let bottom_geometry = scrollbar_thumb_geometry(maximum, viewport, -maximum);
+        assert!(bottom_geometry.is_some());
+        let (bottom_top, bottom_height) = bottom_geometry.unwrap_or_default();
+        assert!((bottom_top + bottom_height - track_height).abs() < f32::EPSILON);
     }
 }

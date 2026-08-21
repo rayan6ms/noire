@@ -6,8 +6,8 @@ pub const SAMPLE_RATE_HZ: u32 = 48_000;
 /// The number of channels in Noire's internal audio domain.
 pub const CANONICAL_CHANNELS: usize = 1;
 
-/// The exact 10 ms model frame size at 48 kHz.
-pub const MODEL_FRAME_SAMPLES: usize = 480;
+/// The exact `FastEnhancer` streaming hop (10.67 ms at 48 kHz).
+pub const MODEL_FRAME_SAMPLES: usize = 512;
 
 /// The largest callback quantum accepted by bounded DSP utilities.
 pub const MAX_CALLBACK_FRAMES: usize = 4_096;
@@ -44,7 +44,7 @@ pub struct CanonicalFormat {
     pub model_frame_samples: usize,
 }
 
-/// Noire's canonical mono, 48 kHz, 480-sample-frame format.
+/// Noire's canonical mono, 48 kHz, 512-sample-frame format.
 pub const CANONICAL_FORMAT: CanonicalFormat = CanonicalFormat {
     sample_rate_hz: SAMPLE_RATE_HZ,
     channels: CANONICAL_CHANNELS,
@@ -56,10 +56,10 @@ mod tests {
     use super::{CANONICAL_FORMAT, MODEL_FRAME_SAMPLES, SAMPLE_RATE_HZ};
 
     #[test]
-    fn canonical_format_is_mono_48_khz_with_ten_ms_frames() {
+    fn canonical_format_is_mono_48_khz_with_fastenhancer_frames() {
         assert_eq!(CANONICAL_FORMAT.sample_rate_hz, SAMPLE_RATE_HZ);
         assert_eq!(CANONICAL_FORMAT.channels, 1);
         assert_eq!(CANONICAL_FORMAT.model_frame_samples, MODEL_FRAME_SAMPLES);
-        assert_eq!(MODEL_FRAME_SAMPLES, 480);
+        assert_eq!(MODEL_FRAME_SAMPLES, 512);
     }
 }

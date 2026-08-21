@@ -1,4 +1,4 @@
-//! Pure presentation state shared by GTK and headless tests.
+//! Pure presentation state shared by GPUI and headless tests.
 
 use noire_ipc::{InputDescriptor, Metrics, Snapshot};
 
@@ -51,7 +51,7 @@ pub struct UiState {
     client_error: Option<UserError>,
 }
 
-/// Fully derived text and action state for a GTK render pass.
+/// Fully derived text and action state for a GPUI render pass.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Presentation {
     /// Short status that never depends on color alone.
@@ -151,10 +151,9 @@ impl UiState {
         }];
         choices.extend(self.inputs.iter().map(|input| {
             let qualifier = match (input.is_default, input.availability.as_str()) {
-                (true, "available") => " — system default",
-                (_, "available") => "",
+                (true, _) => " — system default",
                 (_, "unavailable") => " — unavailable",
-                _ => " — availability unknown",
+                _ => "",
             };
             InputChoice {
                 stable_id: input.stable_id.clone(),
@@ -162,6 +161,34 @@ impl UiState {
             }
         }));
         choices
+    }
+
+    /// Resolves the configured input to the best current human-readable label.
+    #[must_use]
+    pub fn input_display_name(&self) -> String {
+        let Some(snapshot) = &self.snapshot else {
+            return "System default".to_owned();
+        };
+        if !snapshot.input_display_name.is_empty() {
+            return snapshot.input_display_name.clone();
+        }
+        if snapshot.input_mode == "selected" {
+            return self
+                .inputs
+                .iter()
+                .find(|input| input.stable_id == snapshot.input_stable_id)
+                .map_or_else(
+                    || snapshot.input_stable_id.clone(),
+                    |input| input.display_name.clone(),
+                );
+        }
+        self.inputs
+            .iter()
+            .find(|input| input.is_default)
+            .map_or_else(
+                || "System default".to_owned(),
+                |input| input.display_name.clone(),
+            )
     }
 
     /// Derives all status and action copy from daemon truth.
@@ -187,7 +214,8 @@ impl UiState {
             };
         };
 
-        let (status, detail) = lifecycle_copy(snapshot);
+        let input = self.input_display_name();
+        let (status, detail) = lifecycle_copy(snapshot, &input);
         let daemon_error = snapshot.has_error.then_some(&snapshot.last_error);
         Presentation {
             status,
@@ -219,7 +247,7 @@ impl UiState {
     }
 }
 
-fn lifecycle_copy(snapshot: &Snapshot) -> (String, String) {
+fn lifecycle_copy(snapshot: &Snapshot, input: &str) -> (String, String) {
     if snapshot.has_error {
         return (
             "Needs attention".to_owned(),
@@ -231,11 +259,6 @@ fn lifecycle_copy(snapshot: &Snapshot) -> (String, String) {
         );
     }
 
-    let input = if snapshot.input_display_name.is_empty() {
-        "the system default input"
-    } else {
-        snapshot.input_display_name.as_str()
-    };
     match snapshot.state.as_str() {
         "running" => (
             "Noise reduction is active".to_owned(),
@@ -282,8 +305,8 @@ mod tests {
             suppression_enabled: true,
             strength: 0.8,
             fail_mode: "closed".to_owned(),
-            model_id: "org.rnnoise.nnnoiseless.default".to_owned(),
-            model_delay_samples: 480,
+            model_id: "org.noire.fastenhancer.base-48khz".to_owned(),
+            model_delay_samples: 512,
             pipewire_version: "1.4.7".to_owned(),
             uptime_millis: 5,
             has_error: false,
@@ -469,6 +492,12 @@ mod tests {
                 is_default: false,
                 availability: "unavailable".to_owned(),
             },
+            InputDescriptor {
+                stable_id: "usb:unknown".to_owned(),
+                display_name: "Registry microphone".to_owned(),
+                is_default: false,
+                availability: "unknown".to_owned(),
+            },
         ];
         let mut state = UiState::default();
         state.converge(snapshot(), inputs);
@@ -476,5 +505,25 @@ mod tests {
         assert_eq!(choices[0].stable_id, "");
         assert!(choices[1].label.contains("system default"));
         assert!(choices[2].label.contains("unavailable"));
+        assert_eq!(choices[3].label, "Registry microphone");
+    }
+
+    #[test]
+    fn selected_input_uses_registry_label_while_audio_graph_is_stopped() {
+        let mut value = snapshot();
+        value.state = "stopped".to_owned();
+        value.active = false;
+        value.input_display_name.clear();
+        let inputs = vec![InputDescriptor {
+            stable_id: "usb:desk".to_owned(),
+            display_name: "Desk microphone".to_owned(),
+            is_default: true,
+            availability: "unknown".to_owned(),
+        }];
+        let mut state = UiState::default();
+        state.converge(value, inputs);
+
+        assert_eq!(state.input_display_name(), "Desk microphone");
+        assert_eq!(state.presentation().detail, "Ready to use Desk microphone.");
     }
 }

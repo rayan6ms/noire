@@ -4,9 +4,10 @@ use std::alloc::System;
 
 use noire_dsp::MODEL_FRAME_SAMPLES;
 use noire_model::{
-    Denoiser, FrameStats, ModelDescriptor, ModelDescriptorSpec, ProcessError,
+    Denoiser, DenoiserFactory, FrameStats, ModelDescriptor, ModelDescriptorSpec, ProcessError,
     finalize_process_output, prepare_process_frame,
 };
+use noire_model_fastenhancer::FastEnhancerFactory;
 use noire_pipewire::{
     BYPASS_STARTUP_QUANTA, CaptureProcessor, CaptureSink, CaptureTelemetry, ChunkMetadata,
     InputGeneration, create_bypass_channel, create_live_channel,
@@ -80,7 +81,8 @@ impl CaptureSink for CountingSink {
 }
 
 #[test]
-fn warmed_capture_and_bypass_callbacks_have_zero_allocator_calls() {
+fn warmed_capture_and_bypass_callbacks_have_zero_allocator_calls()
+-> Result<(), Box<dyn std::error::Error>> {
     let samples = [0.125_f32; 128];
     let bytes: Vec<u8> = samples
         .iter()
@@ -127,6 +129,31 @@ fn warmed_capture_and_bypass_callbacks_have_zero_allocator_calls() {
     assert_eq!(telemetry.snapshot().underflows, 0);
     assert_eq!(telemetry.snapshot().overflows, 0);
     assert!(destination.iter().all(|sample| sample.is_finite()));
+
+    let fastenhancer = FastEnhancerFactory::new()?.create()?;
+    let (mut sink, mut output, _control, telemetry) = create_live_channel(fastenhancer)?;
+    let input = [0.125_f32; MODEL_FRAME_SAMPLES];
+    let mut rendered = [0.0_f32; MODEL_FRAME_SAMPLES];
+    for _ in 0..20 {
+        sink.write(InputGeneration::INITIAL, &input);
+        assert!(output.fill(&mut rendered).is_ok());
+    }
+
+    let region = Region::new(GLOBAL);
+    for _ in 0..1_024 {
+        sink.write(InputGeneration::INITIAL, &input);
+        assert!(output.fill(&mut rendered).is_ok());
+    }
+    let change = region.change();
+    assert_eq!(change.allocations, 0);
+    assert_eq!(change.reallocations, 0);
+    assert_eq!(change.deallocations, 0);
+    let snapshot = telemetry.snapshot();
+    assert_eq!(snapshot.model_errors, 0);
+    assert_eq!(snapshot.hard_ceiling_samples, 0);
+    assert_eq!(snapshot.transport.underflows, 0);
+    assert_eq!(snapshot.transport.overflows, 0);
+    Ok(())
 }
 
 #[test]

@@ -72,7 +72,24 @@ fn daemon_engine_creates_controls_and_removes_the_live_graph() -> Result<(), Box
     config.active = false;
     let stopped = engine.apply(&config)?;
     assert_eq!(stopped.state.to_string(), "stopped");
+    assert_eq!(stopped.input_display_name, running.input_display_name);
     assert!(!stopped.metrics.vad_probability.is_nan());
+
+    engine.set_meter_monitoring(true)?;
+    let meter_deadline = Instant::now() + TIMEOUT;
+    let monitored = loop {
+        let _ = fixture_connection.dispatch_once(Duration::from_millis(5));
+        let observation = engine.observe(&stopped)?;
+        if observation.metrics.peak > 0.0 && observation.metrics.rms > 0.0 {
+            break observation;
+        }
+        if Instant::now() >= meter_deadline {
+            return Err("timed out waiting for stopped-state microphone meters".into());
+        }
+    };
+    assert_eq!(monitored.state.to_string(), "stopped");
+    assert_eq!(monitored.input_display_name, running.input_display_name);
+    engine.set_meter_monitoring(false)?;
     drop(engine);
     assert!(fixture.take_error().is_none());
 

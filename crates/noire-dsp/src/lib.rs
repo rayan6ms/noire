@@ -10,6 +10,7 @@ mod canonical;
 mod channels;
 mod dc;
 mod delay;
+mod dereverb;
 mod fault;
 mod frame;
 mod meter;
@@ -27,10 +28,14 @@ pub use channels::{
 };
 pub use dc::DcBlocker;
 pub use delay::{DryDelay, DryDelayError};
+pub use dereverb::{LateReverbConfig, LateReverbReducer, LateReverbReport};
 pub use fault::{
     ClickDetector, ClickDetectorError, FaultRamp, FaultRampError, FaultRampReport, FaultRampState,
 };
 pub use frame::{FrameAssembler, FrameAssemblerError, FramePushReport};
 pub use meter::{Meter, MeterSnapshot};
-pub use ramp::{EqualPowerMixer, MixReport, StrengthRamp};
+pub use ramp::{
+    AdaptiveSuppressionController, ConfidenceWeightedBlend, EqualPowerMixer, LinearMixer,
+    MixReport, SpeechPreservingStrength, StrengthRamp,
+};
 pub use sanitize::{SanitizeReport, sanitize_buffer, sanitize_sample};

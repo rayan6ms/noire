@@ -119,6 +119,12 @@ pub const ERROR_CATALOG: &[ErrorCatalogEntry] = &[
         retryable: true,
     },
     ErrorCatalogEntry {
+        code: "audio-meter-unavailable",
+        cause: "Live microphone metering could not be started or stopped.",
+        recovery: "Retry; restart PipeWire if the meter remains unavailable.",
+        retryable: true,
+    },
+    ErrorCatalogEntry {
         code: "model-initialization-failed",
         cause: "The bundled suppression model could not initialize.",
         recovery: "Restart Noire; reinstall if the condition persists.",
@@ -413,8 +419,8 @@ mod tests {
             suppression_enabled: true,
             strength: 1.0,
             fail_mode: "closed".to_owned(),
-            model_id: "org.rnnoise.nnnoiseless.default".to_owned(),
-            model_delay_samples: 480,
+            model_id: "org.noire.fastenhancer.base-48khz".to_owned(),
+            model_delay_samples: 512,
             pipewire_version: String::new(),
             uptime_millis: 5,
             has_error: false,

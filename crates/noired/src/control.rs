@@ -101,6 +101,14 @@ pub trait AudioEngine: Send {
     fn observe(&mut self, previous: &EngineObservation) -> Result<EngineObservation, EngineError> {
         Ok(previous.clone())
     }
+    /// Enables physical capture for local low-rate metering even without a source consumer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified backend failure if capture cannot change state.
+    fn set_meter_monitoring(&mut self, _enabled: bool) -> Result<(), EngineError> {
+        Ok(())
+    }
     /// Returns stable candidate inputs without transient registry IDs.
     ///
     /// # Errors
@@ -261,8 +269,8 @@ impl Daemon {
                 FailMode::Open => "open",
             }
             .to_owned(),
-            model_id: "org.rnnoise.nnnoiseless.default".to_owned(),
-            model_delay_samples: 480,
+            model_id: "org.noire.fastenhancer.base-48khz".to_owned(),
+            model_delay_samples: 512,
             pipewire_version: self.observation.pipewire_version.clone(),
             uptime_millis: u64::try_from(self.started_at.elapsed().as_millis()).unwrap_or(u64::MAX),
             has_error: self.last_error.is_some(),
@@ -319,6 +327,17 @@ impl Daemon {
             self.device_revision = self.device_revision.saturating_add(1);
         }
         Ok(self.devices.clone())
+    }
+
+    /// Enables or disables local meter monitoring without changing persisted intent.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified audio failure when capture cannot change state.
+    pub fn set_meter_monitoring(&mut self, enabled: bool) -> Result<(), ControlError> {
+        self.engine
+            .set_meter_monitoring(enabled)
+            .map_err(ControlError::Audio)
     }
 
     /// Atomically starts intended processing.
@@ -784,7 +803,7 @@ mod tests {
             Err(ControlError::Invalid(_))
         ));
         assert_eq!(daemon.snapshot().revision, 1);
-        assert!((daemon.snapshot().strength - 1.0).abs() < f64::EPSILON);
+        assert!((daemon.snapshot().strength - 0.55).abs() < f64::EPSILON);
         if root.exists() {
             fs::remove_dir_all(root)?;
         }

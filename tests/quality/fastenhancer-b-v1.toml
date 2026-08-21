@@ -1,0 +1,81 @@
+schema_version = 1
+candidate = "fastenhancer-b-48khz"
+status = "selected-production-model"
+decision_date = "2026-08-19"
+decision = "Ship FastEnhancer-B at a fixed 0.55 wet mix. Retain RNNoise quality-v1 in source as a non-shipping backup."
+
+[official_model]
+repository = "https://github.com/aask1357/fastenhancer"
+release = "onnx-48khz-v1"
+release_commit = "8d2d41931b1de316f10da15583f431761bf903ad"
+onnx_sha256 = "70e23bba3d41e80d30ebc5eba39d9df64f0e0315f31c772022bb17576c4d96bf"
+onnx_bytes = 449559
+license = "MIT"
+
+[production_artifact]
+path = "crates/noire-model-fastenhancer/models/fe_base_48k.bin"
+bytes = 406636
+sha256 = "a3f475e6ae0cfbe337a411f4f2d01b0cdc49a3fbf1eed02ad46dd355074d0071"
+model = "FastEnhancer Base 48 kHz"
+sample_rate_hz = 48000
+frame_samples = 512
+hop_samples = 512
+delay_samples = 512
+wet_mix = 0.55
+
+[native_runtime]
+repository = "https://github.com/ryyr-ry/fastenhancer-web"
+commit = "1bfc497df7a5aae8e1f22835e8b97c71baf4a83b"
+license = "MIT"
+unsafe_scope = "Private FFI crate only; safe production adapter and callback path"
+steady_state_allocations = 0
+
+[comparison_baseline]
+model = "rnnoise-quality-v1"
+path = "crates/noire-model-rnnoise/models/rnnoise-quality-v1.rnn"
+sha256 = "2f0958c50378499cbd8869723b7dc214a65873304ec81856d3c084c08c0e9048"
+speech_strength = 0.55
+noise_strength = 0.70
+
+[frozen_voicebank_test]
+dataset = "VoiceBank-DEMAND test speakers p232 and p257"
+cases = 824
+stoi_delta_vs_rnnoise_mean = 0.006183632306672288
+stoi_delta_vs_rnnoise_median = 0.004792622327625118
+stoi_delta_vs_rnnoise_p05 = -0.004047004617424658
+si_sdr_delta_db_vs_rnnoise_mean = 2.519924016440062
+si_sdr_delta_db_vs_rnnoise_median = 1.9473220743644761
+segmental_snr_delta_db_vs_rnnoise_median = 1.2723205231328083
+absolute_stoi_improvement_median = 0.009752790452502047
+absolute_si_sdr_improvement_db_median = 5.1417323440378855
+clean_stoi_damage_median = 0.0000021672086755741837
+clean_stoi_damage_delta_vs_rnnoise_median = -0.0018130007678807125
+newly_clipped_files = 0
+non_finite_samples = 0
+
+[registered_stress_test]
+cases = 952
+stoi_delta_vs_rnnoise_mean = -0.00028491116373856947
+stoi_delta_vs_rnnoise_median = 0.0
+si_sdr_delta_db_vs_rnnoise_mean = 8.691988576563576
+si_sdr_delta_db_vs_rnnoise_median = 3.507740615778858
+segmental_snr_delta_db_vs_rnnoise_mean = 8.208590541547276
+segmental_snr_delta_db_vs_rnnoise_median = 6.473652006572913
+newly_clipped_files = 0
+non_finite_samples = 0
+
+[reference_host_performance]
+profile = "release"
+timing_samples = 5000
+frame_duration_ms = 10.6666666667
+typical_inference_ms = 2.2351
+p99_inference_ms = 2.747152
+p99_gate_ms = 4.0
+criterion_throughput_samples_per_second = 229070
+
+[shipping_policy]
+production_crate = "noire-model-fastenhancer"
+default_strength = 0.55
+low_latency_quantum_samples = 256
+balanced_latency_quantum_samples = 512
+release_dependency_must_exclude = ["noire-model-rnnoise", "nnnoiseless", "onnxruntime"]

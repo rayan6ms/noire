@@ -33,7 +33,7 @@ pub struct FramePushReport {
     pub sanitized: SanitizeReport,
 }
 
-/// A bounded assembler for exact 480-sample model frames.
+/// A bounded assembler for exact 512-sample model frames.
 #[derive(Clone, Debug)]
 pub struct FrameAssembler {
     storage: [f32; FRAME_ASSEMBLER_CAPACITY],

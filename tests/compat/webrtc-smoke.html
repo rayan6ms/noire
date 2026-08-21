@@ -37,11 +37,11 @@
           const inputs = devices.filter((device) => device.kind === "audioinput");
           const labels = inputs.map((device) => device.label);
           const noire = inputs.find((device) =>
-            device.label.includes("Noire Microphone"),
+            device.label.includes("Noire Microphone ☾"),
           );
           permissionStream.getTracks().forEach((track) => track.stop());
           if (!noire) {
-            throw new Error(`Noire Microphone absent from ${labels.join(", ")}`);
+            throw new Error(`Noire Microphone ☾ absent from ${labels.join(", ")}`);
           }
           stream = await navigator.mediaDevices.getUserMedia({
             audio: {
@@ -90,7 +90,7 @@
 
           const label = track.label;
           result = {
-            pass: label.includes("Noire Microphone") && recordedBytes > 0,
+            pass: label.includes("Noire Microphone ☾") && recordedBytes > 0,
             label,
             labels,
             peak,

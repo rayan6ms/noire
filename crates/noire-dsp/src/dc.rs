@@ -2,9 +2,9 @@
 
 use crate::{SAMPLE_RATE_HZ, SanitizeReport, sanitize_sample};
 
-const DEFAULT_CUTOFF_HZ: f32 = 20.0;
+const DEFAULT_CUTOFF_HZ: f32 = 60.0;
 
-/// An allocation-free one-pole high-pass filter near 20 Hz.
+/// An allocation-free one-pole high-pass filter near 60 Hz.
 #[derive(Clone, Debug)]
 pub struct DcBlocker {
     coefficient: f32,
@@ -73,7 +73,12 @@ impl DcBlocker {
 mod tests {
     #![allow(clippy::float_cmp)]
 
-    use super::DcBlocker;
+    use super::{DEFAULT_CUTOFF_HZ, DcBlocker};
+
+    #[test]
+    fn production_cutoff_is_quality_audited_sixty_hz() {
+        assert_eq!(DEFAULT_CUTOFF_HZ, 60.0);
+    }
 
     #[test]
     fn constant_offset_decays_toward_zero() {

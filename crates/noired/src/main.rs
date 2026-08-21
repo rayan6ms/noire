@@ -7,11 +7,19 @@ use clap::Parser;
 /// Owns Noire's audio graph and control-plane state.
 #[derive(Debug, Parser)]
 #[command(version, about)]
-struct Arguments;
+struct Arguments {
+    /// Verify that this binary contains the production `PipeWire` backend.
+    #[arg(long, hide = true)]
+    verify_native_backend: bool,
+}
 
 #[cfg(not(feature = "runtime"))]
 fn main() {
-    Arguments::parse();
+    let arguments = Arguments::parse();
+    if arguments.verify_native_backend {
+        eprintln!("noired was built without the runtime feature");
+        std::process::exit(1);
+    }
     println!("noired was built without the runtime feature");
 }
 
@@ -23,7 +31,16 @@ async fn main() -> anyhow::Result<()> {
     use noire_config::ConfigStore;
     use noired::{AudioEngine, Daemon, NoireService, SystemdUserManager, register_and_claim};
 
-    Arguments::parse();
+    let arguments = Arguments::parse();
+    if arguments.verify_native_backend {
+        #[cfg(feature = "pipewire-backend")]
+        {
+            println!("pipewire-backend");
+            return Ok(());
+        }
+        #[cfg(not(feature = "pipewire-backend"))]
+        anyhow::bail!("noired was built without the production PipeWire backend");
+    }
     tracing_subscriber::fmt().with_target(false).init();
 
     let connection = zbus::Connection::session().await?;

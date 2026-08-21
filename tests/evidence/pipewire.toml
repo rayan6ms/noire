@@ -58,7 +58,7 @@ commands = [".github/scripts/run_pipewire_session.sh"]
 fixtures = ["Selected deterministic tone/sequence/impulse source, latency-matched dry sweep, fully processed sweep, and recording consumer"]
 environments = ["Disposable Ubuntu 24.04 PipeWire 1.0.5 release session"]
 result_artifacts = ["NOIRE_PHASE5_NATIVE and tests/performance/phase5-live.toml"]
-sources = ["crates/noire-pipewire/tests/phase5_session.rs::fn live_rnnoise_graph_meets_latency_demand_and_transport_gates", "crates/noire-pipewire/src/graph.rs::pub struct LiveGraph", "crates/noire-pipewire/src/live.rs::pub struct LiveCaptureSink"]
+sources = ["crates/noire-pipewire/tests/phase5_session.rs::fn live_fastenhancer_graph_meets_latency_demand_and_transport_gates", "crates/noire-pipewire/src/graph.rs::pub struct LiveGraph", "crates/noire-pipewire/src/live.rs::pub struct LiveCaptureSink"]
 
 [[template]]
 id = "AT-PIPEWIRE-RECOVERY"

@@ -67,7 +67,15 @@ jobs:
           mkdir -p "$RUNNER_TEMP/noire-ci-logs"
           rustup toolchain install 1.97.0 --profile minimal \
             --component clippy,rustfmt --no-self-update \
-            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
+              2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
+
+      - name: Install GPUI build requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev
 
       - name: Restore Cargo sources
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -216,7 +224,15 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/noire-ci-logs"
           rustup toolchain install 1.92.0 --profile minimal --no-self-update \
-            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
+              2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
+
+      - name: Install GPUI build requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev
 
       - name: Restore Cargo sources
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -249,7 +265,15 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/noire-ci-logs"
           rustup toolchain install 1.97.0 --profile minimal --no-self-update \
-            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
+              2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
+
+      - name: Install GPUI build requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends --yes \
+            libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
+            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev
 
       - name: Restore Cargo sources
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -271,16 +295,16 @@ jobs:
               --locked -- --ignored --nocapture
             cargo +1.97.0 test --release --package noire-pipewire \
               --test phase5_pipeline \
-              live_rnnoise_meets_cpu_deadline_callback_and_rss_gates \
+              live_fastenhancer_meets_cpu_deadline_callback_and_rss_gates \
               --locked -- --ignored --nocapture
           } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/phase5-release.log"
 
       - name: Smoke-test binary interfaces
         run: |
           {
-            test "$(target/release/noired --version)" = "noired 1.0.0"
-            test "$(target/release/noire --version)" = "noire 1.0.0"
-            test "$(target/release/noirectl --version)" = "noirectl 1.0.0"
+            test "$(target/release/noired --version)" = "noired 1.1.0"
+            test "$(target/release/noire --version)" = "noire 1.1.0"
+            test "$(target/release/noirectl --version)" = "noirectl 1.1.0"
             target/release/noired --help >/dev/null
             target/release/noire --help >/dev/null
             target/release/noirectl --help >/dev/null
@@ -387,7 +411,7 @@ jobs:
           artifact-name: ci-failure-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
 
   native-ui:
-    name: Native workspace and GTK4 UI
+    name: Native workspace and GPUI
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -414,12 +438,13 @@ jobs:
           {
             sudo apt-get update
             sudo apt-get install --no-install-recommends --yes \
-              gcc pkg-config libclang-dev at-spi2-core dbus-x11 gettext weston xvfb \
-              libpipewire-0.3-dev libspa-0.2-dev libgtk-4-dev
+              gcc pkg-config libclang-dev dbus-x11 weston \
+              libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
+              libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
+              libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev \
+              libpipewire-0.3-dev libspa-0.2-dev
             pkg-config --modversion libpipewire-0.3
             pkg-config --modversion libspa-0.2
-            pkg-config --atleast-version=4.10 gtk4
-            pkg-config --modversion gtk4
           } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-packages.log"
 
       - name: Check the complete native workspace
@@ -442,15 +467,10 @@ jobs:
             cargo +1.97.0 test --workspace --all-features --locked \
             2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-test.log"
 
-      - name: Exercise the GTK unavailable-daemon state
+      - name: Smoke-test the GPUI command interface
         run: |
-          .github/scripts/run_phase8_ui_smoke.sh \
+          cargo +1.97.0 run --package noire-ui --locked -- --help \
             2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/ui-smoke.log"
-
-      - name: Exercise GTK accessibility and display preflight
-        run: |
-          .github/scripts/run_phase8_accessibility_preflight.sh \
-            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/ui-accessibility-preflight.log"
 
       - name: Upload failure evidence
         if: ${{ failure() }}

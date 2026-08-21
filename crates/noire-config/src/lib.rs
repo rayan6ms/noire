@@ -179,7 +179,9 @@ impl Default for SuppressionConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            strength: 1.0,
+            // Frozen speech and registered stress evaluation select a 55% wet
+            // FastEnhancer-B mix as the best quality/safety balance.
+            strength: 0.55,
             fail_mode: FailMode::Closed,
         }
     }
@@ -757,7 +759,7 @@ mod tests {
         ));
         assert_eq!(fs::read(store.path())?, before);
         let mut valid = Config::default();
-        valid.suppression.strength = 0.75;
+        valid.suppression.strength = 0.70;
         store.save(&valid)?;
         assert_eq!(store.load()?.config, valid);
         fs::remove_dir_all(root)?;

@@ -47,14 +47,14 @@ impl NoireService {
 
     /// Publishes autonomous state/device changes and subscribed meters.
     ///
-    /// This control-plane loop never runs on a `PipeWire` callback. Its 100 ms
+    /// This control-plane loop never runs on a `PipeWire` callback. Its 40 ms
     /// cadence is the maximum public meter rate, and meters are not emitted when
     /// no D-Bus client has explicitly subscribed.
     pub async fn monitor(&self, connection: &zbus::Connection) {
         let Ok(emitter) = SignalEmitter::new(connection, OBJECT_PATH) else {
             return;
         };
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        let mut interval = tokio::time::interval(Duration::from_millis(40));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut prune_tick = 0_u8;
 
@@ -122,6 +122,9 @@ impl NoireService {
             if !matches!(bus.name_has_owner(name).await, Ok(true)) {
                 self.meter_subscribers.lock().await.remove(&subscriber);
             }
+        }
+        if self.meter_subscribers.lock().await.is_empty() {
+            let _ignored = self.daemon.lock().await.set_meter_monitoring(false);
         }
     }
 
@@ -327,10 +330,19 @@ impl NoireService {
         &self,
         #[zbus(header)] header: Header<'_>,
     ) -> Result<(), ServiceError> {
-        self.meter_subscribers
-            .lock()
-            .await
-            .insert(Self::caller(&header)?);
+        let caller = Self::caller(&header)?;
+        let first_subscriber = {
+            let mut subscribers = self.meter_subscribers.lock().await;
+            let inserted = subscribers.insert(caller);
+            inserted && subscribers.len() == 1
+        };
+        if first_subscriber {
+            self.daemon
+                .lock()
+                .await
+                .set_meter_monitoring(true)
+                .map_err(map_error)?;
+        }
         Ok(())
     }
 
@@ -338,10 +350,18 @@ impl NoireService {
         &self,
         #[zbus(header)] header: Header<'_>,
     ) -> Result<(), ServiceError> {
-        self.meter_subscribers
-            .lock()
-            .await
-            .remove(&Self::caller(&header)?);
+        let caller = Self::caller(&header)?;
+        let last_subscriber = {
+            let mut subscribers = self.meter_subscribers.lock().await;
+            subscribers.remove(&caller) && subscribers.is_empty()
+        };
+        if last_subscriber {
+            self.daemon
+                .lock()
+                .await
+                .set_meter_monitoring(false)
+                .map_err(map_error)?;
+        }
         Ok(())
     }
 
