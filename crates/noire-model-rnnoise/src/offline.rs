@@ -2,10 +2,53 @@
 
 use core::fmt;
 
-use noire_dsp::{FrameAssembler, FrameAssemblerError, MODEL_FRAME_SAMPLES, ModelFrame};
+use noire_dsp::{FrameAssemblerError, MAX_CALLBACK_FRAMES};
 use noire_model::{CreateError, Denoiser, DenoiserFactory, ProcessError};
 
-use crate::RnnoiseFactory;
+use crate::{RNNOISE_FRAME_SAMPLES, RnnoiseFactory};
+
+#[derive(Clone, Debug)]
+struct RnnoiseFrameAssembler {
+    storage: [f32; RNNOISE_FRAME_SAMPLES],
+    pending: usize,
+}
+
+impl RnnoiseFrameAssembler {
+    const fn new() -> Self {
+        Self {
+            storage: [0.0; RNNOISE_FRAME_SAMPLES],
+            pending: 0,
+        }
+    }
+
+    const fn pending_samples(&self) -> usize {
+        self.pending
+    }
+
+    fn push(
+        &mut self,
+        input: &[f32],
+        mut emit: impl FnMut(&[f32; RNNOISE_FRAME_SAMPLES]),
+    ) -> Result<(), FrameAssemblerError> {
+        if input.len() > MAX_CALLBACK_FRAMES {
+            return Err(FrameAssemblerError::QuantumTooLarge);
+        }
+
+        let mut consumed = 0;
+        while consumed < input.len() {
+            let copied = (RNNOISE_FRAME_SAMPLES - self.pending).min(input.len() - consumed);
+            self.storage[self.pending..self.pending + copied]
+                .copy_from_slice(&input[consumed..consumed + copied]);
+            self.pending += copied;
+            consumed += copied;
+            if self.pending == RNNOISE_FRAME_SAMPLES {
+                emit(&self.storage);
+                self.pending = 0;
+            }
+        }
+        Ok(())
+    }
+}
 
 /// A bounded failure from the development-only offline runner.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,9 +87,9 @@ impl std::error::Error for OfflineError {}
 /// This type deliberately allocates output storage and is available only with
 /// `offline-wav`; it must never be used from an audio callback.
 pub struct OfflineDenoiser {
-    assembler: FrameAssembler,
+    assembler: RnnoiseFrameAssembler,
     denoiser: Box<dyn Denoiser>,
-    model_output: ModelFrame,
+    model_output: [f32; RNNOISE_FRAME_SAMPLES],
     raw_output: Vec<f32>,
     accepted_samples: usize,
     delay_samples: usize,
@@ -63,9 +106,9 @@ impl OfflineDenoiser {
         let delay_samples = factory.descriptor().delay_samples();
         let denoiser = factory.create().map_err(OfflineError::Create)?;
         Ok(Self {
-            assembler: FrameAssembler::new(),
+            assembler: RnnoiseFrameAssembler::new(),
             denoiser,
-            model_output: [0.0; MODEL_FRAME_SAMPLES],
+            model_output: [0.0; RNNOISE_FRAME_SAMPLES],
             raw_output: Vec::new(),
             accepted_samples: 0,
             delay_samples,
@@ -98,20 +141,20 @@ impl OfflineDenoiser {
     pub fn finish(mut self) -> Result<Vec<f32>, OfflineError> {
         let pending = self.assembler.pending_samples();
         if pending != 0 {
-            let padding = [0.0; MODEL_FRAME_SAMPLES];
-            self.process_chunk(&padding[..MODEL_FRAME_SAMPLES - pending])?;
+            let padding = [0.0; RNNOISE_FRAME_SAMPLES];
+            self.process_chunk(&padding[..RNNOISE_FRAME_SAMPLES - pending])?;
         }
 
         let mut remaining_delay = self.delay_samples;
-        let silence = [0.0; MODEL_FRAME_SAMPLES];
+        let silence = [0.0; RNNOISE_FRAME_SAMPLES];
         while remaining_delay != 0 {
-            let pushed = remaining_delay.min(MODEL_FRAME_SAMPLES);
+            let pushed = remaining_delay.min(RNNOISE_FRAME_SAMPLES);
             self.process_chunk(&silence[..pushed])?;
             remaining_delay -= pushed;
         }
         let pending = self.assembler.pending_samples();
         if pending != 0 {
-            self.process_chunk(&silence[..MODEL_FRAME_SAMPLES - pending])?;
+            self.process_chunk(&silence[..RNNOISE_FRAME_SAMPLES - pending])?;
         }
 
         let output_end = self

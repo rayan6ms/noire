@@ -2,7 +2,7 @@
 
 Noire is a native Linux microphone noise-reduction application. It captures a
 physical microphone through PipeWire, processes speech locally with
-FastEnhancer-B at 48 kHz, and publishes **Noire Microphone** for browsers, voice
+FastEnhancer-B at 48 kHz, and publishes **Noire Microphone ☾** for browsers, voice
 clients, recorders, and streaming tools.
 
 The application consists of a persistent per-user daemon, the `noirectl`

@@ -569,14 +569,13 @@ impl LiveCaptureSink {
 
         *model_count = model_count.saturating_add(1);
         let diagnostic = shared.parameters.diagnostic_timing.load(Ordering::Relaxed);
-        let sample_timing =
-            diagnostic || model_count.is_multiple_of(DEFAULT_TIMING_SAMPLE_INTERVAL);
-        let started = sample_timing.then(Instant::now);
+        let sample_deadline = model_count.is_multiple_of(DEFAULT_TIMING_SAMPLE_INTERVAL);
+        let started = (diagnostic || sample_deadline).then(Instant::now);
         let result = model.process_frame(frame, wet);
         if let Some(started) = started {
             let elapsed = started.elapsed();
             shared.model_timing.observe(elapsed);
-            if elapsed > deadline_policy.model_deadline {
+            if sample_deadline && elapsed > deadline_policy.model_deadline {
                 shared.deadline_misses.fetch_add(1, Ordering::Relaxed);
                 if deadline_window.record(Instant::now(), deadline_policy) {
                     shared
@@ -777,7 +776,9 @@ mod tests {
         finalize_process_output, prepare_process_frame,
     };
 
-    use super::{DeadlinePolicy, FailMode, LiveState, create_live_channel};
+    use super::{
+        DEFAULT_TIMING_SAMPLE_INTERVAL, DeadlinePolicy, FailMode, LiveState, create_live_channel,
+    };
     use crate::{CaptureSink, InputGeneration};
 
     struct TestModel {
@@ -993,18 +994,46 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let mut model = TestModel::new(0.5)?;
         model.sleep = Duration::from_micros(50);
-        let (mut sink, _output, control, telemetry) = create_live_channel(Box::new(model))?;
+        let (mut sink, mut output, control, telemetry) = create_live_channel(Box::new(model))?;
         control.set_diagnostic_timing(true);
         sink.set_deadline_policy_deactivated(DeadlinePolicy {
             model_deadline: Duration::from_nanos(1),
             ..DeadlinePolicy::default()
         });
-        for _ in 0..5 {
+        for _ in 0..(DEFAULT_TIMING_SAMPLE_INTERVAL * 5) {
             sink.write(InputGeneration::INITIAL, &[0.1; MODEL_FRAME_SAMPLES]);
+            let mut discarded = [0.0; MODEL_FRAME_SAMPLES];
+            let _ = output.fill(&mut discarded)?;
         }
         let snapshot = telemetry.snapshot();
         assert_eq!(snapshot.deadline_misses, 5);
         assert_eq!(snapshot.state, LiveState::DegradedPerformance);
+        Ok(())
+    }
+
+    #[test]
+    fn diagnostic_timing_does_not_change_deadline_sampling_policy()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut model = TestModel::new(0.5)?;
+        model.sleep = Duration::from_micros(50);
+        let (mut sink, mut output, control, telemetry) = create_live_channel(Box::new(model))?;
+        control.set_diagnostic_timing(true);
+        sink.set_deadline_policy_deactivated(DeadlinePolicy {
+            model_deadline: Duration::from_nanos(1),
+            ..DeadlinePolicy::default()
+        });
+        for _ in 0..(DEFAULT_TIMING_SAMPLE_INTERVAL - 1) {
+            sink.write(InputGeneration::INITIAL, &[0.1; MODEL_FRAME_SAMPLES]);
+            let mut discarded = [0.0; MODEL_FRAME_SAMPLES];
+            let _ = output.fill(&mut discarded)?;
+        }
+        let snapshot = telemetry.snapshot();
+        assert_eq!(
+            snapshot.model_timing.samples,
+            DEFAULT_TIMING_SAMPLE_INTERVAL - 1
+        );
+        assert_eq!(snapshot.deadline_misses, 0);
+        assert_eq!(snapshot.state, LiveState::Running);
         Ok(())
     }
 }

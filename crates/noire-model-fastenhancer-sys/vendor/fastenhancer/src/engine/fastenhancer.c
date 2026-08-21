@@ -447,22 +447,15 @@ static void pipeline_mask_istft(FeState* s, float* output) {
     const float* mask_re = s->buf_a;
     const float* mask_im = s->buf_a + FE_FREQ_BINS;
 
-    int i = 0;
-    for (; i + 3 < FE_FREQ_BINS; i += 4) {
+    _Static_assert(FE_FREQ_BINS % 4 == 0,
+                   "FastEnhancer frequency bins must fit exact SIMD lanes");
+    for (int i = 0; i < FE_FREQ_BINS; i += 4) {
         f32x4 ire = f32x4_load(s->spec_in_re + i);
         f32x4 iim = f32x4_load(s->spec_in_im + i);
         f32x4 mre = f32x4_load(mask_re + i);
         f32x4 mim = f32x4_load(mask_im + i);
         f32x4_store(s->spec_out_re + i, f32x4_sub(f32x4_mul(ire, mre), f32x4_mul(iim, mim)));
         f32x4_store(s->spec_out_im + i, f32x4_add(f32x4_mul(ire, mim), f32x4_mul(iim, mre)));
-    }
-    for (; i < FE_FREQ_BINS; i++) {
-        float in_re = s->spec_in_re[i];
-        float in_im = s->spec_in_im[i];
-        float m_re  = mask_re[i];
-        float m_im  = mask_im[i];
-        s->spec_out_re[i] = in_re * m_re - in_im * m_im;
-        s->spec_out_im[i] = in_re * m_im + in_im * m_re;
     }
 
     /* Power decompression */

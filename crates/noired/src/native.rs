@@ -34,6 +34,10 @@ enum NativeCommand {
     Observe {
         reply: SyncSender<Result<EngineObservation, EngineError>>,
     },
+    SetMeterMonitoring {
+        enabled: bool,
+        reply: SyncSender<Result<(), EngineError>>,
+    },
     Shutdown,
 }
 
@@ -113,6 +117,10 @@ impl AudioEngine for NativeAudioEngine {
     fn observe(&mut self, _previous: &EngineObservation) -> Result<EngineObservation, EngineError> {
         self.request(|reply| NativeCommand::Observe { reply })
     }
+
+    fn set_meter_monitoring(&mut self, enabled: bool) -> Result<(), EngineError> {
+        self.request(|reply| NativeCommand::SetMeterMonitoring { enabled, reply })
+    }
 }
 
 impl Drop for NativeAudioEngine {
@@ -156,11 +164,13 @@ fn command_error(error: TrySendError<NativeCommand>) -> EngineError {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender<()>) {
     let mut connection: Option<PipewireConnection> = None;
     let mut graph: Option<LiveGraph> = None;
     let mut applied: Option<Config> = None;
     let mut observation: Option<EngineObservation> = None;
+    let mut meter_monitoring = false;
     let recovery_origin = Instant::now();
     let mut recovery = RecoveryController::default();
     loop {
@@ -174,6 +184,7 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
                     previous_config.as_ref(),
                     previous_observation.as_ref(),
                     &config,
+                    meter_monitoring,
                 );
                 if let Ok(applied_observation) = result.as_ref() {
                     applied = Some(config);
@@ -190,6 +201,7 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
                         None,
                         previous_observation.as_ref(),
                         previous_config,
+                        meter_monitoring,
                     )
                 {
                     observation = Some(restored);
@@ -223,9 +235,23 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
                         graph,
                         previous.input_display_name.clone(),
                         connection.runtime_version().unwrap_or_default(),
+                        applied.as_ref().is_some_and(|config| config.active),
                     ));
                 }
                 let _ = reply.send(Ok(observation.clone().unwrap_or_default()));
+            }
+            Ok(NativeCommand::SetMeterMonitoring { enabled, reply }) => {
+                let result = update_meter_monitoring(
+                    &mut connection,
+                    &mut graph,
+                    applied.as_ref(),
+                    &mut observation,
+                    enabled,
+                );
+                if result.is_ok() {
+                    meter_monitoring = enabled;
+                }
+                let _ = reply.send(result);
             }
             Ok(NativeCommand::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -237,11 +263,34 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
             &mut observation,
             &mut recovery,
             recovery_origin,
+            meter_monitoring,
         );
     }
     drop(graph);
     drop(connection);
     let _ = shutdown_complete.send(());
+}
+
+fn update_meter_monitoring(
+    connection: &mut Option<PipewireConnection>,
+    graph: &mut Option<LiveGraph>,
+    applied: Option<&Config>,
+    observation: &mut Option<EngineObservation>,
+    enabled: bool,
+) -> Result<(), EngineError> {
+    let Some(config) = applied else {
+        return Ok(());
+    };
+    let next = apply_native(
+        connection,
+        graph,
+        Some(config),
+        observation.as_ref(),
+        config,
+        enabled,
+    )?;
+    *observation = Some(next);
+    Ok(())
 }
 
 fn service_native(
@@ -251,6 +300,7 @@ fn service_native(
     observation: &mut Option<EngineObservation>,
     recovery: &mut RecoveryController,
     origin: Instant,
+    meter_monitoring: bool,
 ) {
     let now = Instant::now();
     let now_millis = elapsed_millis(origin);
@@ -298,7 +348,7 @@ fn service_native(
         }
     }
 
-    let Some(config) = applied.filter(|config| config.active) else {
+    let Some(config) = applied.filter(|config| config.active || meter_monitoring) else {
         recovery.stop();
         return;
     };
@@ -308,7 +358,14 @@ fn service_native(
     if recovery.poll(now_millis).is_none() {
         return;
     }
-    if let Ok(recovered) = apply_native(connection, graph, None, observation.as_ref(), config) {
+    if let Ok(recovered) = apply_native(
+        connection,
+        graph,
+        None,
+        observation.as_ref(),
+        config,
+        meter_monitoring,
+    ) {
         *observation = Some(recovered);
         recovery.recovered();
     } else {
@@ -395,16 +452,23 @@ fn elapsed_millis(origin: Instant) -> u64 {
     u64::try_from(origin.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
+#[allow(clippy::too_many_lines)]
 fn apply_native(
     connection: &mut Option<PipewireConnection>,
     graph: &mut Option<LiveGraph>,
     previous: Option<&Config>,
     previous_observation: Option<&EngineObservation>,
     config: &Config,
+    meter_monitoring: bool,
 ) -> Result<EngineObservation, EngineError> {
-    if !config.active {
+    if !config.active && !meter_monitoring {
         *graph = None;
-        return Ok(EngineObservation::default());
+        return Ok(stopped_observation(
+            connection,
+            previous,
+            previous_observation,
+            config,
+        ));
     }
 
     let requires_rebuild = graph.is_none()
@@ -487,6 +551,14 @@ fn apply_native(
         retryable: true,
     })?;
     apply_controls(graph, config);
+    graph
+        .set_meter_monitoring(meter_monitoring)
+        .map_err(|error| EngineError {
+            code: "audio-meter-unavailable",
+            message: format!("microphone metering could not change state: {error}"),
+            recovery: "retry; restart PipeWire if the meter remains unavailable",
+            retryable: true,
+        })?;
     Ok(observe_graph(
         graph,
         selected_label,
@@ -494,7 +566,51 @@ fn apply_native(
             .as_ref()
             .and_then(PipewireConnection::runtime_version)
             .unwrap_or_default(),
+        config.active,
     ))
+}
+
+fn stopped_observation(
+    connection: &mut Option<PipewireConnection>,
+    previous: Option<&Config>,
+    previous_observation: Option<&EngineObservation>,
+    config: &Config,
+) -> EngineObservation {
+    let input_unchanged = previous.is_some_and(|previous| previous.input == config.input);
+    let previous_label = previous_observation
+        .filter(|_| input_unchanged)
+        .map(|observation| observation.input_display_name.as_str())
+        .filter(|label| !label.is_empty());
+    let resolved_label = previous_label.map(ToOwned::to_owned).or_else(|| {
+        let connection = ensure_connection(connection).ok()?;
+        refresh_registry(connection);
+        let snapshot = connection.registry_snapshot_now();
+        resolve_input(&snapshot, config).and_then(|node_name| {
+            snapshot
+                .candidates()
+                .iter()
+                .find(|candidate| candidate.node_name == node_name)
+                .map(|candidate| candidate.label.clone())
+        })
+    });
+    EngineObservation {
+        state: LifecycleState::Stopped,
+        input_display_name: resolved_label.unwrap_or_else(|| {
+            if config.input.mode == InputMode::Selected {
+                config.input.stable_id.clone()
+            } else {
+                "System default".to_owned()
+            }
+        }),
+        pipewire_version: connection
+            .as_ref()
+            .and_then(PipewireConnection::runtime_version)
+            .or_else(|| {
+                previous_observation.map(|observation| observation.pipewire_version.clone())
+            })
+            .unwrap_or_default(),
+        ..EngineObservation::default()
+    }
 }
 
 fn ensure_connection(
@@ -559,12 +675,15 @@ fn observe_graph(
     graph: &LiveGraph,
     input_display_name: String,
     pipewire_version: String,
+    processing_active: bool,
 ) -> EngineObservation {
     let live = graph.telemetry().snapshot();
     let capture = graph.capture().telemetry().snapshot();
     let source = graph.source().telemetry().snapshot();
     EngineObservation {
-        state: if live.state == LiveState::Running {
+        state: if !processing_active {
+            LifecycleState::Stopped
+        } else if live.state == LiveState::Running {
             LifecycleState::Running
         } else {
             LifecycleState::Degraded

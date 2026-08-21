@@ -328,7 +328,7 @@ mod tests {
         assert_eq!(descriptor.lookahead_samples(), 0);
         assert_eq!(descriptor.delay_samples(), RNNOISE_DELAY_SAMPLES);
         assert_eq!(RNNOISE_SAMPLE_RATE_HZ, noire_dsp::SAMPLE_RATE_HZ);
-        assert_eq!(RNNOISE_FRAME_SAMPLES, noire_dsp::MODEL_FRAME_SAMPLES);
+        assert_eq!(RNNOISE_FRAME_SAMPLES, 480);
         assert_eq!(
             usize::from(descriptor.channels()),
             noire_dsp::CANONICAL_CHANNELS

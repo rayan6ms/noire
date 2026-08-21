@@ -101,6 +101,14 @@ pub trait AudioEngine: Send {
     fn observe(&mut self, previous: &EngineObservation) -> Result<EngineObservation, EngineError> {
         Ok(previous.clone())
     }
+    /// Enables physical capture for local low-rate metering even without a source consumer.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified backend failure if capture cannot change state.
+    fn set_meter_monitoring(&mut self, _enabled: bool) -> Result<(), EngineError> {
+        Ok(())
+    }
     /// Returns stable candidate inputs without transient registry IDs.
     ///
     /// # Errors
@@ -319,6 +327,17 @@ impl Daemon {
             self.device_revision = self.device_revision.saturating_add(1);
         }
         Ok(self.devices.clone())
+    }
+
+    /// Enables or disables local meter monitoring without changing persisted intent.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified audio failure when capture cannot change state.
+    pub fn set_meter_monitoring(&mut self, enabled: bool) -> Result<(), ControlError> {
+        self.engine
+            .set_meter_monitoring(enabled)
+            .map_err(ControlError::Audio)
     }
 
     /// Atomically starts intended processing.

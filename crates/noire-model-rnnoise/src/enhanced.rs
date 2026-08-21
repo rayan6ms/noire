@@ -1,12 +1,12 @@
 //! Experimental multi-frame enhancement path layered beside production `RNNoise`.
 
-use noire_dsp::{LateReverbConfig, LateReverbReducer, MODEL_FRAME_SAMPLES, ModelFrame};
+use noire_dsp::{LateReverbConfig, LateReverbReducer};
 use noire_model::{
     CreateError, Denoiser, DenoiserFactory, FrameStats, ModelDescriptor, ModelDescriptorSpec,
     ProcessError, finalize_process_output, prepare_process_frame,
 };
 
-use crate::{RNNOISE_DELAY_SAMPLES, RNNOISE_SAMPLE_RATE_HZ, RnnoiseFactory};
+use crate::{RNNOISE_DELAY_SAMPLES, RNNOISE_FRAME_SAMPLES, RNNOISE_SAMPLE_RATE_HZ, RnnoiseFactory};
 
 const ENHANCED_MODEL_VERSION: &str = "prototype-1/rnnoise-nnnoiseless-0.5.2";
 
@@ -57,8 +57,8 @@ impl EnhancedRnnoiseFactory {
             license: "GPL-3.0-or-later AND BSD-3-Clause",
             sample_rate_hz: RNNOISE_SAMPLE_RATE_HZ,
             channels: 1,
-            frame_samples: MODEL_FRAME_SAMPLES,
-            hop_samples: MODEL_FRAME_SAMPLES,
+            frame_samples: RNNOISE_FRAME_SAMPLES,
+            hop_samples: RNNOISE_FRAME_SAMPLES,
             lookahead_samples: 0,
             delay_samples: RNNOISE_DELAY_SAMPLES,
         })
@@ -85,7 +85,7 @@ impl DenoiserFactory for EnhancedRnnoiseFactory {
             descriptor: self.descriptor,
             inner,
             dereverb,
-            model_output: [0.0; MODEL_FRAME_SAMPLES],
+            model_output: [0.0; RNNOISE_FRAME_SAMPLES],
             pending_vad: 0.0,
         }))
     }
@@ -95,7 +95,7 @@ struct EnhancedRnnoiseDenoiser {
     descriptor: ModelDescriptor,
     inner: Box<dyn Denoiser>,
     dereverb: LateReverbReducer,
-    model_output: ModelFrame,
+    model_output: [f32; RNNOISE_FRAME_SAMPLES],
     pending_vad: f32,
 }
 
@@ -119,7 +119,7 @@ impl Denoiser for EnhancedRnnoiseDenoiser {
         prepare_process_frame(&self.descriptor, input, output)?;
         let stats = self.inner.process_frame(input, &mut self.model_output)?;
 
-        let mut enhanced = [0.0; MODEL_FRAME_SAMPLES];
+        let mut enhanced = [0.0; RNNOISE_FRAME_SAMPLES];
         self.dereverb
             .process_frame(&self.model_output, &mut enhanced, self.pending_vad);
         output.copy_from_slice(&enhanced);

@@ -119,6 +119,12 @@ pub const ERROR_CATALOG: &[ErrorCatalogEntry] = &[
         retryable: true,
     },
     ErrorCatalogEntry {
+        code: "audio-meter-unavailable",
+        cause: "Live microphone metering could not be started or stopped.",
+        recovery: "Retry; restart PipeWire if the meter remains unavailable.",
+        retryable: true,
+    },
+    ErrorCatalogEntry {
         code: "model-initialization-failed",
         cause: "The bundled suppression model could not initialize.",
         recovery: "Restart Noire; reinstall if the condition persists.",

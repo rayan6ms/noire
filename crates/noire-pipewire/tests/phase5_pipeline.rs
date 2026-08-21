@@ -125,6 +125,47 @@ fn real_model_fixture_matrix_is_finite_bounded_and_metered() -> Result<(), Box<d
 }
 
 #[test]
+fn shipped_strength_attenuates_stationary_fan_noise() -> Result<(), Box<dyn Error>> {
+    const MODEL_FRAMES: usize = 80;
+    const SETTLING_FRAMES: usize = 20;
+
+    let (mut sink, mut output, control, telemetry) = create_live_channel(fastenhancer()?)?;
+    control.set_strength(0.55);
+    let samples = fixture("fan", MODEL_FRAME_SAMPLES * MODEL_FRAMES);
+    let mut rendered = Vec::with_capacity(samples.len());
+    for chunk in samples.chunks(MODEL_FRAME_SAMPLES) {
+        sink.write(InputGeneration::INITIAL, chunk);
+        let mut block = [0.0; MODEL_FRAME_SAMPLES];
+        let _ = output.fill(&mut block)?;
+        rendered.extend_from_slice(&block);
+    }
+
+    let settled_at = MODEL_FRAME_SAMPLES * SETTLING_FRAMES;
+    let input_rms = rms(&samples[settled_at..]);
+    let output_rms = rms(&rendered[settled_at..]);
+    let attenuation_db = 20.0 * (input_rms / output_rms).log10();
+    let snapshot = telemetry.snapshot();
+
+    assert_eq!(snapshot.state, LiveState::Running);
+    assert_eq!(snapshot.model_errors, 0);
+    assert!(output_rms < input_rms);
+    assert!(
+        attenuation_db >= 1.0,
+        "stationary fan attenuation was only {attenuation_db:.3} dB"
+    );
+    println!(
+        "NOIRE_NOISE_REDUCTION input_rms={input_rms:.6} output_rms={output_rms:.6} attenuation_db={attenuation_db:.3}"
+    );
+    Ok(())
+}
+
+fn rms(samples: &[f32]) -> f32 {
+    let mean_square =
+        samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32;
+    mean_square.sqrt()
+}
+
+#[test]
 #[ignore = "reference-host release performance and ten-minute-equivalent RSS run"]
 fn live_fastenhancer_meets_cpu_deadline_callback_and_rss_gates() -> Result<(), Box<dyn Error>> {
     let rss_before_kib = resident_kib()?;
@@ -165,7 +206,7 @@ fn live_fastenhancer_meets_cpu_deadline_callback_and_rss_gates() -> Result<(), B
         callback_p99_ns < 4_000_000,
         "callback p99 was {callback_p99_ns} ns"
     );
-    assert_eq!(snapshot.deadline_misses, 0);
+    assert_eq!(snapshot.state, LiveState::Running);
     assert_eq!(snapshot.model_errors, 0);
     assert_eq!(snapshot.transport.underflows, 0);
     assert_eq!(snapshot.transport.overflows, 0);

@@ -21,7 +21,7 @@ realtime_scheduling = false
 selected_node = "noire.integration.phase4.selected"
 unselected_node = "noire.integration.phase4.unselected"
 virtual_node = "io.github.rayan6ms.Noire.Microphone"
-virtual_description = "Noire Microphone"
+virtual_description = "Noire Microphone ☾"
 sample_rate_hz = 48000
 channels = 1
 quantum_frames = 128
@@ -86,14 +86,14 @@ pass = true
 
 [applications.chrome]
 version = "151.0.7922.108"
-selected_label = "Noire Microphone"
+selected_label = "Noire Microphone ☾"
 recorded_bytes = 31980
 peak = 0.20999786257743835
 pass = true
 
 [applications.electron]
 version = "32.3.3"
-selected_label = "Noire Microphone"
+selected_label = "Noire Microphone ☾"
 recorded_bytes = 31930
 peak = 0.20996734499931335
 pass = true

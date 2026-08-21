@@ -510,7 +510,7 @@ mod tests {
         let mut virtual_node = physical(2, "virtual.mic", "Virtual").ok_or("missing fixture")?;
         virtual_node.virtual_node = true;
         let mut noire =
-            physical(3, RESERVED_NODE_NAME, "Noire Microphone").ok_or("missing fixture")?;
+            physical(3, RESERVED_NODE_NAME, "Noire Microphone ☾").ok_or("missing fixture")?;
         noire.virtual_node = false;
         let mut unavailable = physical(4, "alsa_input.gone", "Gone").ok_or("missing fixture")?;
         unavailable.availability = DeviceAvailability::Unavailable;

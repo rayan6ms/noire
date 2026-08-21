@@ -9,11 +9,10 @@ use std::io::{Read, Seek, Write};
 use std::path::PathBuf;
 
 use hound::{SampleFormat, WavReader, WavSpec, WavWriter};
-use noire_dsp::MODEL_FRAME_SAMPLES;
 use noire_model::{DenoiserFactory, FrameStats};
 use noire_model_rnnoise::{
-    EnhancedRnnoiseConfig, EnhancedRnnoiseFactory, RNNOISE_SAMPLE_RATE_HZ, RnnoiseCandidateFactory,
-    RnnoiseFactory,
+    EnhancedRnnoiseConfig, EnhancedRnnoiseFactory, RNNOISE_FRAME_SAMPLES, RNNOISE_SAMPLE_RATE_HZ,
+    RnnoiseCandidateFactory, RnnoiseFactory,
 };
 
 const DEFAULT_STRENGTH: f32 = 1.0;
@@ -258,18 +257,18 @@ fn run_selected_model(
     };
     let delay_samples = factory.descriptor().delay_samples();
     let mut model = factory.create()?;
-    let input_frames = input.len().div_ceil(MODEL_FRAME_SAMPLES);
-    let output_frames = input_frames + delay_samples.div_ceil(MODEL_FRAME_SAMPLES);
-    let mut raw_output = Vec::with_capacity(output_frames * MODEL_FRAME_SAMPLES);
+    let input_frames = input.len().div_ceil(RNNOISE_FRAME_SAMPLES);
+    let output_frames = input_frames + delay_samples.div_ceil(RNNOISE_FRAME_SAMPLES);
+    let mut raw_output = Vec::with_capacity(output_frames * RNNOISE_FRAME_SAMPLES);
     let mut vad = Vec::with_capacity(output_frames);
-    let mut frame = [0.0; MODEL_FRAME_SAMPLES];
-    let mut model_output = [0.0; MODEL_FRAME_SAMPLES];
+    let mut frame = [0.0; RNNOISE_FRAME_SAMPLES];
+    let mut model_output = [0.0; RNNOISE_FRAME_SAMPLES];
 
     for frame_index in 0..output_frames {
         frame.fill(0.0);
         if frame_index < input_frames {
-            let start = frame_index * MODEL_FRAME_SAMPLES;
-            let end = (start + MODEL_FRAME_SAMPLES).min(input.len());
+            let start = frame_index * RNNOISE_FRAME_SAMPLES;
+            let end = (start + RNNOISE_FRAME_SAMPLES).min(input.len());
             for (source, destination) in input[start..end].iter().zip(frame.iter_mut()) {
                 *destination = (*source * model_gain).clamp(-1.0, 1.0);
             }
@@ -303,7 +302,7 @@ fn adaptive_mix(dry: &[f32], wet: &[f32], vad: &[f32], policy: AdaptiveMix) -> V
     let noise_release = smoothing_coefficient(NOISE_RELEASE_SECONDS);
 
     for (sample_index, (dry, wet)) in dry.iter().zip(wet).enumerate() {
-        let output_frame = sample_index / MODEL_FRAME_SAMPLES;
+        let output_frame = sample_index / RNNOISE_FRAME_SAMPLES;
         // The cropped output frame is delayed by one model frame, so its
         // matching VAD is the preceding process call's statistic. That value
         // remains available to a causal live callback without lookahead.

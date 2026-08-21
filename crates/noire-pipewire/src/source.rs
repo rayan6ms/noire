@@ -205,9 +205,10 @@ impl VirtualSourceStream {
     ) -> Result<Self, SourceStreamError> {
         let properties = properties! {
             *keys::NODE_NAME => RESERVED_NODE_NAME,
-            *keys::NODE_DESCRIPTION => "Noire Microphone",
+            *keys::NODE_DESCRIPTION => "Noire Microphone ☾",
             *keys::NODE_NICK => "Noire",
             *keys::NODE_VIRTUAL => "true",
+            *keys::NODE_PAUSE_ON_IDLE => "true",
             *keys::MEDIA_TYPE => "Audio",
             *keys::MEDIA_CATEGORY => "Capture",
             *keys::MEDIA_ROLE => "Communication",

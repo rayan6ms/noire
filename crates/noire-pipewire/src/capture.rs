@@ -698,9 +698,15 @@ mod native {
                 ) {
                     Ok(_) => {
                         let generation = InputGeneration(next);
-                        self.processor
-                            .borrow_mut()
-                            .reset_input_generation(generation);
+                        // PipeWire may deliver a demand edge re-entrantly from the
+                        // source callback while the capture processor is still
+                        // handling a buffer. The atomic command is authoritative;
+                        // apply it eagerly only when the callback does not already
+                        // hold the processor borrow. Otherwise the next buffer
+                        // synchronizes the generation before accepting samples.
+                        if let Ok(mut processor) = self.processor.try_borrow_mut() {
+                            processor.reset_input_generation(generation);
+                        }
                         return generation;
                     }
                     Err(actual) => current = actual,
@@ -715,6 +721,15 @@ mod native {
         /// Returns the native stream error if the state change is rejected.
         pub fn set_active(&self, active: bool) -> Result<(), pipewire::Error> {
             self.stream.set_active(active)
+        }
+    }
+
+    impl Drop for NativeCaptureStream {
+        fn drop(&mut self) {
+            // Disconnect synchronously while the owning PipeWire core and
+            // listener are still alive. Relying only on the final proxy drop
+            // can leave a consumer link visible until a later main-loop turn.
+            let _ = self.stream.disconnect();
         }
     }
 

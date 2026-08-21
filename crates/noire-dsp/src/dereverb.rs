@@ -1,6 +1,6 @@
 //! Conservative causal reduction of late room-reverberation tails.
 
-use crate::{MODEL_FRAME_SAMPLES, ModelFrame, SAMPLE_RATE_HZ, SanitizeReport, sanitize_sample};
+use crate::{MODEL_FRAME_SAMPLES, SAMPLE_RATE_HZ, SanitizeReport, sanitize_sample};
 
 const LATE_DELAY_SAMPLES: usize = 1_920;
 const MAX_PREDICTION: f32 = 0.72;
@@ -101,10 +101,10 @@ impl LateReverbReducer {
     /// `speech_probability` must describe the audio in `input`, including any
     /// upstream model delay. Invalid probabilities are treated as speech so the
     /// processor fails toward preservation rather than stronger cancellation.
-    pub fn process_frame(
+    pub fn process_frame<const FRAME_SAMPLES: usize>(
         &mut self,
-        input: &ModelFrame,
-        output: &mut ModelFrame,
+        input: &[f32; FRAME_SAMPLES],
+        output: &mut [f32; FRAME_SAMPLES],
         speech_probability: f32,
     ) -> LateReverbReport {
         let speech = if speech_probability.is_finite() {

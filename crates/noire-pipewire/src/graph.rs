@@ -1,6 +1,6 @@
 //! Control-plane composition of capture, bypass transport, and virtual source.
 
-use std::time::Instant;
+use std::{cell::Cell, time::Instant};
 
 use crate::{
     BypassTelemetry, CaptureStreamError, CaptureStreamState, ConsumerDemand, DemandTransition,
@@ -206,6 +206,7 @@ pub struct LiveGraph {
     control: LiveControl,
     telemetry: LiveTelemetry,
     target_node_name: String,
+    meter_monitoring: Cell<bool>,
 }
 
 impl LiveGraph {
@@ -261,6 +262,7 @@ impl LiveGraph {
             control,
             telemetry,
             target_node_name: selected_node_name.to_owned(),
+            meter_monitoring: Cell::new(false),
         })
     }
 
@@ -280,16 +282,23 @@ impl LiveGraph {
                 Ok(BypassGraphService::Activated)
             }
             Some(DemandTransition::Deactivate) => {
-                self.capture
-                    .set_active(false)
-                    .map_err(LiveGraphError::Activation)?;
-                let _ = self.capture.advance_input_generation();
-                self.source.clear_sensitive();
-                Ok(BypassGraphService::Deactivated)
+                if self.meter_monitoring.get() {
+                    self.source.clear_sensitive();
+                    Ok(BypassGraphService::Unchanged)
+                } else {
+                    self.capture
+                        .set_active(false)
+                        .map_err(LiveGraphError::Activation)?;
+                    let _ = self.capture.advance_input_generation();
+                    self.source.clear_sensitive();
+                    Ok(BypassGraphService::Deactivated)
+                }
             }
             None => {
-                if self.source.demand() == ConsumerDemand::Active
-                    && self.source.state() != SourceStreamState::Streaming
+                let demand = self.source.demand();
+                if (demand == ConsumerDemand::Active
+                    && self.source.state() != SourceStreamState::Streaming)
+                    || (self.meter_monitoring.get() && demand == ConsumerDemand::Idle)
                 {
                     self.source.discard_pending_sensitive();
                 }
@@ -326,6 +335,23 @@ impl LiveGraph {
     #[must_use]
     pub fn demand(&self) -> ConsumerDemand {
         self.source.demand()
+    }
+
+    /// Keeps physical capture active while a trusted local meter client is subscribed.
+    ///
+    /// # Errors
+    ///
+    /// Returns the native error if `PipeWire` rejects the capture state change.
+    pub fn set_meter_monitoring(&self, enabled: bool) -> Result<(), LiveGraphError> {
+        if self.meter_monitoring.replace(enabled) == enabled {
+            return Ok(());
+        }
+        let capture_required = enabled || self.source.demand() == ConsumerDemand::Active;
+        let _ = self.capture.advance_input_generation();
+        self.source.clear_sensitive();
+        self.capture
+            .set_active(capture_required)
+            .map_err(LiveGraphError::Activation)
     }
 
     /// Stable physical node name used to build this graph generation.

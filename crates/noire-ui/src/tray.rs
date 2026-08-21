@@ -1,6 +1,10 @@
 //! Freedesktop `StatusNotifierItem` bridge for the GPUI application.
 
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+    mpsc::{self, Receiver, RecvError, Sender, TryRecvError},
+};
 
 use ksni::blocking::{Handle, TrayMethods};
 
@@ -32,11 +36,11 @@ impl ksni::Tray for NoireTray {
     }
 
     fn icon_name(&self) -> String {
-        "io.github.rayan6ms.Noire".to_owned()
+        String::new()
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
-        [22, 32, 64]
+        [16, 22, 24, 32, 48, 64]
             .into_iter()
             .map(|size| tray_icon(size, self.active))
             .collect()
@@ -86,36 +90,37 @@ impl ksni::Tray for NoireTray {
 }
 
 fn tray_icon(requested_size: i32, active: bool) -> ksni::Icon {
+    const SAMPLES: u16 = 4;
     let dimension = u16::try_from(requested_size).unwrap_or(32);
     let pixel_count = usize::from(dimension).pow(2);
     let scale = f32::from(dimension);
     let mut data = Vec::with_capacity(pixel_count * 4);
-    let center = (scale - 1.0) / 2.0;
-    let radius = scale * 0.47;
+    let sample_count = u32::from(SAMPLES).pow(2);
     for y in 0..dimension {
         for x in 0..dimension {
-            let dx = f32::from(x) - center;
-            let dy = f32::from(y) - center;
-            let inside_badge = dx.mul_add(dx, dy * dy) <= radius * radius;
-            let microphone = dx.abs() <= scale * 0.115 && dy >= -scale * 0.27 && dy <= scale * 0.12;
-            let stem = dx.abs() <= scale * 0.035 && dy >= scale * 0.12 && dy <= scale * 0.29;
-            let base = dy >= scale * 0.27 && dy <= scale * 0.33 && dx.abs() <= scale * 0.16;
-            let wave = (dy.abs() <= scale * 0.035 && dx.abs() >= scale * 0.2)
-                || ((dy - dx.abs() * 0.23).abs() <= scale * 0.045
-                    && dx.abs() >= scale * 0.15
-                    && dx.abs() <= scale * 0.34);
-            let (alpha, red, green, blue) = if microphone || stem || base {
-                (255, 14, 16, 20)
-            } else if wave && inside_badge {
-                if active {
-                    (255, 103, 170, 249)
-                } else {
-                    (255, 32, 36, 43)
+            let mut neutral_samples = 0_u32;
+            let mut state_samples = 0_u32;
+            for sy in 0..SAMPLES {
+                for sx in 0..SAMPLES {
+                    let dx =
+                        (f32::from(x) + (f32::from(sx) + 0.5) / f32::from(SAMPLES)) / scale - 0.5;
+                    let dy =
+                        (f32::from(y) + (f32::from(sy) + 0.5) / f32::from(SAMPLES)) / scale - 0.5;
+                    let (neutral, state) = tray_icon_sample(dx, dy, active);
+                    neutral_samples += u32::from(neutral);
+                    state_samples += u32::from(state);
                 }
-            } else if inside_badge {
-                (255, 135, 140, 148)
+            }
+            let visible_samples = neutral_samples.max(state_samples);
+            let alpha = u8::try_from(visible_samples * 255 / sample_count).unwrap_or(255);
+            let (red, green, blue) = if state_samples > 0 {
+                if active {
+                    (82, 199, 149)
+                } else {
+                    (240, 111, 121)
+                }
             } else {
-                (0, 0, 0, 0)
+                (224, 226, 230)
             };
             data.extend_from_slice(&[alpha, red, green, blue]);
         }
@@ -127,10 +132,63 @@ fn tray_icon(requested_size: i32, active: bool) -> ksni::Icon {
     }
 }
 
+fn tray_icon_sample(x: f32, y: f32, active: bool) -> (bool, bool) {
+    let microphone = point_segment_distance(x, y, 0.0, -0.17, 0.0, 0.04) <= 0.115;
+    let arch_radius = x.mul_add(x, (y - 0.035) * (y - 0.035)).sqrt();
+    let arch = y >= 0.025 && (arch_radius - 0.245).abs() <= 0.032;
+    let arch_sides = point_segment_distance(x, y, -0.245, -0.015, -0.245, 0.06) <= 0.032
+        || point_segment_distance(x, y, 0.245, -0.015, 0.245, 0.06) <= 0.032;
+    let stem = point_segment_distance(x, y, 0.0, 0.275, 0.0, 0.385) <= 0.032;
+    let base = point_segment_distance(x, y, -0.17, 0.405, 0.17, 0.405) <= 0.032;
+
+    let state = if active {
+        let inner = (x.mul_add(x, (y + 0.13) * (y + 0.13)).sqrt() - 0.205).abs() <= 0.028;
+        let outer = (x.mul_add(x, (y + 0.13) * (y + 0.13)).sqrt() - 0.305).abs() <= 0.028;
+        y < -0.17 && (inner || outer)
+    } else {
+        let left = point_segment_distance(x, y, -0.34, -0.28, -0.25, -0.22) <= 0.025
+            || point_segment_distance(x, y, -0.25, -0.22, -0.33, -0.14) <= 0.025
+            || point_segment_distance(x, y, -0.33, -0.14, -0.22, -0.08) <= 0.025;
+        let right = point_segment_distance(x, y, 0.34, -0.28, 0.25, -0.22) <= 0.025
+            || point_segment_distance(x, y, 0.25, -0.22, 0.33, -0.14) <= 0.025
+            || point_segment_distance(x, y, 0.33, -0.14, 0.22, -0.08) <= 0.025;
+        left || right
+    };
+
+    (microphone || arch || arch_sides || stem || base, state)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn point_segment_distance(
+    x: f32,
+    y: f32,
+    start_x: f32,
+    start_y: f32,
+    end_x: f32,
+    end_y: f32,
+) -> f32 {
+    let segment_x = end_x - start_x;
+    let segment_y = end_y - start_y;
+    let length_squared = segment_x.mul_add(segment_x, segment_y * segment_y);
+    let projection = ((x - start_x).mul_add(segment_x, (y - start_y) * segment_y) / length_squared)
+        .clamp(0.0, 1.0);
+    let closest_x = segment_x.mul_add(projection, start_x);
+    let closest_y = segment_y.mul_add(projection, start_y);
+    (x - closest_x)
+        .mul_add(x - closest_x, (y - closest_y) * (y - closest_y))
+        .sqrt()
+}
+
 /// Owns the tray service and its receiving side for the application's lifetime.
+#[derive(Clone)]
 pub(crate) struct TrayRuntime {
-    pub commands: Receiver<TrayCommand>,
+    inner: Arc<TrayInner>,
+}
+
+struct TrayInner {
+    commands: Mutex<Receiver<TrayCommand>>,
     handle: Option<Handle<NoireTray>>,
+    active: AtomicBool,
 }
 
 impl TrayRuntime {
@@ -142,19 +200,53 @@ impl TrayRuntime {
             commands: sender,
         };
         let sandboxed = std::env::var_os("FLATPAK_ID").is_some();
-        let handle = tray.disable_dbus_name(sandboxed).spawn().ok();
-        Self { commands, handle }
+        let handle = match tray.disable_dbus_name(sandboxed).spawn() {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                eprintln!("Noire could not register its system tray item: {error}");
+                None
+            }
+        };
+        Self {
+            inner: Arc::new(TrayInner {
+                commands: Mutex::new(commands),
+                handle,
+                active: AtomicBool::new(false),
+            }),
+        }
     }
 
     /// Whether a `StatusNotifierItem` host accepted the tray service.
     #[must_use]
     pub fn available(&self) -> bool {
-        self.handle.is_some()
+        self.inner.handle.is_some()
+    }
+
+    #[must_use]
+    pub fn active(&self) -> bool {
+        self.inner.active.load(Ordering::Relaxed)
+    }
+
+    pub fn try_recv(&self) -> Result<TrayCommand, TryRecvError> {
+        self.inner
+            .commands
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .try_recv()
+    }
+
+    pub fn recv(&self) -> Result<TrayCommand, RecvError> {
+        self.inner
+            .commands
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .recv()
     }
 
     /// Keeps the tray label/action synchronized with authoritative daemon state.
     pub fn set_active(&self, active: bool) {
-        if let Some(handle) = &self.handle {
+        self.inner.active.store(active, Ordering::Relaxed);
+        if let Some(handle) = &self.inner.handle {
             let _ignored = handle.update(|tray| {
                 tray.active = active;
             });
@@ -162,7 +254,7 @@ impl TrayRuntime {
     }
 }
 
-impl Drop for TrayRuntime {
+impl Drop for TrayInner {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
             handle.shutdown().wait();
@@ -186,5 +278,15 @@ mod tests {
     #[test]
     fn active_tray_icon_has_a_distinct_accent() {
         assert_ne!(tray_icon(32, false).data, tray_icon(32, true).data);
+    }
+
+    #[test]
+    fn embedded_tray_icon_edges_are_antialiased() {
+        assert!(
+            tray_icon(22, false)
+                .data
+                .chunks_exact(4)
+                .any(|pixel| (1..255).contains(&pixel[0]))
+        );
     }
 }
