@@ -65,15 +65,15 @@ assert_count 1 "$flatpak_dir"/*.flatpak
 assert_count 1 "$appimage_dir"/*.AppImage
 assert_count 1 "$source_dir"/*.tar.xz
 
+# GitHub's artifact service does not preserve executable mode bits.
+chmod 0755 "$appimage"
 [ "$(APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version)" = "noire $version" ]
 
 work_dir=$(mktemp -d)
 trap 'rm -rf -- "$work_dir"' EXIT HUP INT TERM
 export FLATPAK_USER_DIR="$work_dir/flatpak-user"
-flatpak build-import-bundle "$work_dir/flatpak-repository" "$flatpak"
-flatpak remote-add --user --no-gpg-verify bundle \
-    "file://$work_dir/flatpak-repository"
-flatpak_ref=$(flatpak remote-info --user --show-ref bundle io.github.rayan6ms.Noire)
+flatpak install --user --noninteractive --no-deps --no-related --bundle "$flatpak"
+flatpak_ref=$(flatpak info --user --show-ref io.github.rayan6ms.Noire)
 case "$flatpak_ref" in
     app/io.github.rayan6ms.Noire/x86_64/*) ;;
     *) echo "unexpected Flatpak ref: $flatpak_ref" >&2; exit 1 ;;

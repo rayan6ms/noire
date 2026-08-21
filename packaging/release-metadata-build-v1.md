@@ -10,9 +10,8 @@ AppImage, and source archive, and emits:
 - third-party license notices;
 - an in-toto statement using the SLSA provenance v1 predicate.
 
-The SHA-256 manifest is signed separately with the Noire release OpenPGP key.
-GitHub releases additionally receive GitHub-hosted build-provenance attestations
-for every published artifact and metadata file.
+GitHub releases receive GitHub-hosted build-provenance attestations for every
+published artifact and metadata file, including the SHA-256 manifest.
 
 The artifact inventory must include the `deb`, `rpm`, `flatpak`, `appimage`, and
 `source` directories. Portable artifacts are part of the same checksum, SPDX,
