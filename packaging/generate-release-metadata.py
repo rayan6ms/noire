@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(os.environ.get("NOIRE_REPO_DIR", Path(__file__).resolve().parent.parent)).resolve()
 REPOSITORY = "https://github.com/rayan6ms/noire"
 TARGET = "x86_64-unknown-linux-gnu"
 ROOT_PACKAGES = frozenset({"noired", "noirectl", "noire-ui"})
@@ -198,6 +198,7 @@ def collect_artifacts(directories: list[Path]) -> dict[str, Path]:
     if not directories:
         raise MetadataError("at least one --artifact-dir is required")
     artifacts: dict[str, Path] = {}
+    release_names: set[str] = set()
     directory_names: set[str] = set()
     for raw_directory in directories:
         if raw_directory.is_symlink():
@@ -219,6 +220,9 @@ def collect_artifacts(directories: list[Path]) -> dict[str, Path]:
             logical = (Path(directory.name) / relative).as_posix()
             if logical in artifacts:
                 raise MetadataError(f"duplicate logical artifact path: {logical}")
+            if candidate.name in release_names:
+                raise MetadataError(f"duplicate release asset basename: {candidate.name}")
+            release_names.add(candidate.name)
             artifacts[logical] = candidate
     if not artifacts:
         raise MetadataError("artifact directories contain no recognized release artifacts")
@@ -508,7 +512,7 @@ def generate(arguments: argparse.Namespace) -> None:
     write_atomic(output / spdx_name, spdx_bytes)
     write_atomic(output / notices_name, notices_bytes)
     write_atomic(output / provenance_name, provenance_bytes)
-    all_digests = dict(artifact_digests)
+    all_digests = {Path(name).name: digest for name, digest in artifact_digests.items()}
     all_digests[spdx_name] = metadata_digests[spdx_name]
     all_digests[notices_name] = metadata_digests[notices_name]
     all_digests[provenance_name] = hashlib.sha256(provenance_bytes).hexdigest()
@@ -553,13 +557,14 @@ def verify_release(version: str, directories: list[Path], metadata_dir: Path) ->
             raise MetadataError(f"required release metadata is missing or unsafe: {path}")
 
     sums = parse_sums(metadata_dir / sums_name)
-    expected_sum_names = set(artifact_digests) | {spdx_name, notices_name, provenance_name}
+    artifact_assets = {path.name: path for path in artifacts.values()}
+    expected_sum_names = set(artifact_assets) | {spdx_name, notices_name, provenance_name}
     if set(sums) != expected_sum_names:
         missing = sorted(expected_sum_names - set(sums))
         extra = sorted(set(sums) - expected_sum_names)
         raise MetadataError(f"checksum inventory mismatch: missing={missing}, extra={extra}")
     for name, expected in sums.items():
-        path = artifacts.get(name, metadata_dir / name)
+        path = artifact_assets.get(name, metadata_dir / name)
         actual = sha256_file(path)
         if actual != expected:
             raise MetadataError(f"checksum mismatch for {name}: expected {expected}, got {actual}")

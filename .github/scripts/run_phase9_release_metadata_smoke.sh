@@ -75,10 +75,13 @@ import sys
 root = pathlib.Path(sys.argv[1])
 spdx = json.loads((root / "noire-1.1.0.spdx.json").read_text(encoding="utf-8"))
 provenance = json.loads((root / "noire-1.1.0.intoto.jsonl").read_text(encoding="utf-8"))
+sums = (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
 assert spdx["spdxVersion"] == "SPDX-2.3"
 assert provenance["predicateType"] == "https://slsa.dev/provenance/v1"
 assert len(spdx["files"]) == 5
 assert len(provenance["subject"]) == 5
+assert len(sums) == 8
+assert all("/" not in line.split("  ", 1)[1] for line in sums)
 assert any(package["name"] == "org.noire.fastenhancer.base-48khz" for package in spdx["packages"])
 assert all("/" not in package["licenseDeclared"] for package in spdx["packages"])
 PY

@@ -302,7 +302,14 @@ jobs:
           cargo +1.97.0 fetch --locked --target x86_64-unknown-linux-gnu
           SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
           export SOURCE_DATE_EPOCH
-          packaging/generate-release-metadata.py generate \
+          generator=packaging/generate-release-metadata.py
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            git fetch origin "$GITHUB_SHA" --no-tags
+            generator="$RUNNER_TEMP/generate-release-metadata.py"
+            git show "${GITHUB_SHA}:packaging/generate-release-metadata.py" >"$generator"
+            chmod 0755 "$generator"
+          fi
+          NOIRE_REPO_DIR="$GITHUB_WORKSPACE" "$generator" generate \
             --version "${{ needs.prepare.outputs.version }}" \
             --artifact-dir dist/deb \
             --artifact-dir dist/rpm \
@@ -310,7 +317,7 @@ jobs:
             --artifact-dir dist/appimage \
             --artifact-dir dist/source \
             --output-dir dist/release-metadata
-          packaging/generate-release-metadata.py verify \
+          NOIRE_REPO_DIR="$GITHUB_WORKSPACE" "$generator" verify \
             --version "${{ needs.prepare.outputs.version }}" \
             --artifact-dir dist/deb \
             --artifact-dir dist/rpm \
