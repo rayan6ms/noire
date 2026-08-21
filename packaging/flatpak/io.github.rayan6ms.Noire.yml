@@ -2,6 +2,8 @@ app-id: io.github.rayan6ms.Noire
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.llvm20
 command: noire-wrapper
 finish-args:
   - --share=ipc
@@ -17,6 +19,10 @@ modules:
   - name: noire
     buildsystem: simple
     build-options:
+      prepend-path: /usr/lib/sdk/llvm20/bin
+      prepend-ld-library-path: /usr/lib/sdk/llvm20/lib
+      env:
+        LIBCLANG_PATH: /usr/lib/sdk/llvm20/lib
       build-args:
         - --share=network
     build-commands:
