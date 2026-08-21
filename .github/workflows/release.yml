@@ -193,7 +193,8 @@ jobs:
       - name: Install Flatpak build environment
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends --yes flatpak flatpak-builder
+          sudo apt-get install --no-install-recommends --yes \
+            desktop-file-utils flatpak flatpak-builder librsvg2-common
           sudo flatpak remote-add --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
           install_flatpak_ref() {
