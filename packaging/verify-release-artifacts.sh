@@ -14,7 +14,7 @@ rpm_dir=$4
 flatpak_dir=$5
 appimage_dir=$6
 source_dir=$7
-repo_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+repo_dir=${NOIRE_REPO_DIR:-$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)}
 
 require_file() {
     [ -f "$1" ] && [ ! -L "$1" ] && [ -s "$1" ] || {

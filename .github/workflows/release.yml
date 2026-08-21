@@ -286,7 +286,14 @@ jobs:
 
       - name: Verify exact artifact set
         run: |
-          packaging/verify-release-artifacts.sh \
+          verifier=packaging/verify-release-artifacts.sh
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            git fetch origin "$GITHUB_SHA" --no-tags
+            verifier="$RUNNER_TEMP/verify-release-artifacts.sh"
+            git show "${GITHUB_SHA}:packaging/verify-release-artifacts.sh" >"$verifier"
+            chmod 0755 "$verifier"
+          fi
+          NOIRE_REPO_DIR="$GITHUB_WORKSPACE" "$verifier" \
             "${{ needs.prepare.outputs.version }}" 1 \
             dist/deb dist/rpm dist/flatpak dist/appimage dist/source
 
