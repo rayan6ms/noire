@@ -28,6 +28,7 @@ use crate::{
 
 const APPLICATION_ID: &str = "io.github.rayan6ms.Noire";
 const RESPONSE_INTERVAL: Duration = Duration::from_millis(33);
+const TRANSITION_DURATION: Duration = Duration::from_millis(160);
 const TOAST_LIFETIME: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -407,7 +408,9 @@ impl NoireView {
                     }
                     if self.optimistic_active == Some(active) {
                         self.optimistic_active = None;
-                    } else if previous_active.is_some_and(|previous| previous != active) {
+                    } else if previous_active.is_some_and(|previous| previous != active)
+                        && !transition_targets(self.processing_transition, active)
+                    {
                         self.processing_transition = Some(ProcessingTransition {
                             from: !active,
                             to: active,
@@ -464,9 +467,19 @@ impl NoireView {
             }
         }
         self.state.set_request_pending(self.outstanding > 0);
-        if self
-            .processing_transition
-            .is_some_and(|transition| transition.started.elapsed() >= Duration::from_millis(160))
+        self.retire_settled_transition();
+    }
+
+    /// Retires a transition only after its fade completed AND no mutation is
+    /// outstanding: expiring on a fixed timer alone reverts the button to the
+    /// stale state whenever the daemon round trip outlasts the animation,
+    /// which reads as rapid flicker between both states.
+    fn retire_settled_transition(&mut self) {
+        let request_in_flight = self.state.request_pending() || self.tray_controller.busy();
+        if !request_in_flight
+            && self
+                .processing_transition
+                .is_some_and(|transition| transition.started.elapsed() >= TRANSITION_DURATION)
         {
             self.processing_transition = None;
         }
@@ -846,7 +859,9 @@ impl NoireView {
         let p = self.palette();
         let pending = self.state.request_pending() || self.tray_controller.busy();
         let content = if let Some(transition) = self.processing_transition {
-            let progress = (transition.started.elapsed().as_secs_f32() / 0.16).clamp(0.0, 1.0);
+            let progress = (transition.started.elapsed().as_secs_f32()
+                / TRANSITION_DURATION.as_secs_f32())
+            .clamp(0.0, 1.0);
             div()
                 .relative()
                 .w(px(76.0))
@@ -1429,6 +1444,15 @@ const fn appearance_is_dark(appearance: WindowAppearance) -> bool {
     )
 }
 
+/// Whether an in-flight transition already animates toward `active`.
+///
+/// Confirming daemon responses must not restart a fade that agrees with them;
+/// only an authoritative state that contradicts the running transition may
+/// replace it.
+fn transition_targets(transition: Option<ProcessingTransition>, active: bool) -> bool {
+    transition.is_some_and(|transition| transition.to == active)
+}
+
 fn processing_status(active: bool, p: Palette) -> Div {
     div()
         .flex()
@@ -1928,7 +1952,12 @@ fn diagnostic_report_text(report: &DiagnosticReport) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{meter_level, scrollbar_thumb_geometry, should_start_hidden};
+    use std::time::Instant;
+
+    use super::{
+        ProcessingTransition, meter_level, scrollbar_thumb_geometry, should_start_hidden,
+        transition_targets,
+    };
 
     #[test]
     fn minimized_start_requires_a_tray_and_honors_both_entry_points() {
@@ -1936,6 +1965,28 @@ mod tests {
         assert!(should_start_hidden(false, true, true));
         assert!(!should_start_hidden(false, false, true));
         assert!(!should_start_hidden(true, true, false));
+    }
+
+    #[test]
+    fn confirming_responses_do_not_restart_an_agreeing_transition() {
+        let started = Instant::now();
+        let enabling = Some(ProcessingTransition {
+            from: false,
+            to: true,
+            started,
+        });
+        assert!(transition_targets(enabling, true));
+        assert!(!transition_targets(enabling, false));
+        assert!(!transition_targets(None, true));
+
+        // A contradicting authoritative state must replace the running fade.
+        let disabling = Some(ProcessingTransition {
+            from: true,
+            to: false,
+            started,
+        });
+        assert!(transition_targets(disabling, false));
+        assert!(!transition_targets(disabling, true));
     }
 
     #[test]
