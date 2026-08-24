@@ -1,7 +1,25 @@
 #!/bin/sh
 set -eu
 
+runtime_dir=${XDG_RUNTIME_DIR:-}
+if [ ! -d "$runtime_dir" ] || [ ! -w "$runtime_dir" ]; then
+    runtime_dir=
+fi
+flock_bin=$(command -v flock || true)
+if [ -n "$runtime_dir" ] && [ -n "$flock_bin" ]; then
+    lock_file="$runtime_dir/noire-flatpak.lock"
+    if { exec 9>>"$lock_file"; } 2>/dev/null; then
+        if ! "$flock_bin" -n 9; then
+            exit 0
+        fi
+    fi
+fi
+
 if ! noirectl status >/dev/null 2>&1; then
-    noired >>"${XDG_RUNTIME_DIR:-/tmp}/noire-flatpak.log" 2>&1 &
+    daemon_log=/dev/null
+    if [ -n "$runtime_dir" ]; then
+        daemon_log="$runtime_dir/noire-flatpak.log"
+    fi
+    noired 9>&- >>"$daemon_log" 2>&1 &
 fi
 exec noire "$@"

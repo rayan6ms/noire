@@ -1,4 +1,4 @@
-//! Custom dark GPUI desktop shell for Noire.
+//! Custom adaptive GPUI desktop shell for Noire.
 
 use std::{
     sync::{
@@ -11,16 +11,16 @@ use std::{
 
 use gpui::{
     AnyWindowHandle, App, Application, Bounds, Context, Div, Entity, FontWeight, IntoElement,
-    Render, ScrollHandle, SharedString, Styled as _, Timer, TitlebarOptions, Window,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowDecorations, WindowOptions,
-    div, img, prelude::*, px, relative, rgb, size, svg,
+    Render, ScrollHandle, SharedString, Styled as _, Subscription, Timer, TitlebarOptions, Window,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowDecorations, WindowOptions, div, img, prelude::*, px, relative, rgb, size, svg,
 };
 use noire_ipc::DiagnosticReport;
 
 use crate::{
     assets::Assets,
     client::{self, Request, Response, WorkerChannels},
-    preferences::DesktopPreferences,
+    preferences::{DesktopPreferences, ThemePreference},
     state::{UiState, UserError},
     tray::{TrayCommand, TrayRuntime},
 };
@@ -74,19 +74,19 @@ impl Palette {
 
     const fn light() -> Self {
         Self {
-            surface: 0x4d4d4d,
-            raised: 0x3a3a3a,
-            hover: 0x595959,
-            border: 0x555555,
-            border_soft: 0x484848,
-            text: 0xf1f1f1,
-            muted: 0xc8c8c8,
-            faint: 0xaaaaaa,
-            accent: 0x151515,
-            accent_soft: 0x252525,
-            success: 0x65d2a2,
-            danger: 0xff8d95,
-            danger_soft: 0x65484b,
+            surface: 0xf7f7f5,
+            raised: 0xffffff,
+            hover: 0xeeeeeb,
+            border: 0xd4d4d0,
+            border_soft: 0xe3e3df,
+            text: 0x202020,
+            muted: 0x60605c,
+            faint: 0x85857f,
+            accent: 0x343434,
+            accent_soft: 0xe9e9e5,
+            success: 0x17845c,
+            danger: 0xb72f3d,
+            danger_soft: 0xfbe8ea,
         }
     }
 }
@@ -222,7 +222,7 @@ impl AppRuntime {
                 }
                 false
             });
-            cx.new(|cx| NoireView::new(preferences, runtime, tray_available, cx))
+            cx.new(|cx| NoireView::new(preferences, runtime, tray_available, window, cx))
         }) {
             Ok(handle) => {
                 let handle = AnyWindowHandle::from(handle);
@@ -253,6 +253,8 @@ struct NoireView {
     last_daemon_error: Option<String>,
     processing_transition: Option<ProcessingTransition>,
     optimistic_active: Option<bool>,
+    system_dark_theme: bool,
+    _appearance_subscription: Subscription,
 }
 
 impl Drop for NoireView {
@@ -266,8 +268,13 @@ impl NoireView {
         preferences: DesktopPreferences,
         runtime: Entity<AppRuntime>,
         tray_available: bool,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let appearance_subscription = cx.observe_window_appearance(window, |view, window, cx| {
+            view.system_dark_theme = appearance_is_dark(window.appearance());
+            cx.notify();
+        });
         cx.spawn(async move |view, cx| {
             loop {
                 Timer::after(RESPONSE_INTERVAL).await;
@@ -299,6 +306,8 @@ impl NoireView {
             last_daemon_error: None,
             processing_transition: None,
             optimistic_active: None,
+            system_dark_theme: appearance_is_dark(window.appearance()),
+            _appearance_subscription: appearance_subscription,
         };
         if !tray_available {
             this.show_toast(Toast {
@@ -312,20 +321,28 @@ impl NoireView {
     }
 
     fn palette(&self) -> Palette {
-        if self.preferences.dark_theme {
+        if self.dark_theme() {
             Palette::dark()
         } else {
             Palette::light()
         }
     }
 
-    fn send(&mut self, request: Request, mutation: bool) {
+    fn dark_theme(&self) -> bool {
+        self.preferences.theme.is_dark(self.system_dark_theme)
+    }
+
+    fn send(&mut self, request: Request, mutation: bool) -> bool {
+        if mutation && self.state.request_pending() {
+            return false;
+        }
         match self.channels.requests.try_send(request) {
             Ok(()) => {
                 self.outstanding = self.outstanding.saturating_add(1);
                 if mutation {
                     self.state.set_request_pending(true);
                 }
+                true
             }
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                 let error = UserError::new(
@@ -335,12 +352,13 @@ impl NoireView {
                     true,
                 );
                 self.show_toast(Toast::from(&error));
-                self.state.reject(error, None);
+                false
             }
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
                 let error = communication_stopped_error();
                 self.show_toast(Toast::from(&error));
                 self.state.reject(error, None);
+                false
             }
         }
     }
@@ -495,7 +513,16 @@ impl NoireView {
     }
 
     fn begin_active_change(&mut self, target: bool, cx: &mut Context<Self>) {
+        if self.state.snapshot().is_none() || self.state.request_pending() {
+            return;
+        }
         let active = self.display_active();
+        if active == target {
+            return;
+        }
+        if !self.send(Request::SetActive(target), true) {
+            return;
+        }
         self.optimistic_active = Some(target);
         self.sync_runtime_active(target, cx);
         self.processing_transition = Some(ProcessingTransition {
@@ -503,7 +530,6 @@ impl NoireView {
             to: target,
             started: Instant::now(),
         });
-        self.send(Request::SetActive(target), true);
     }
 
     fn toggle_active(&mut self, cx: &mut Context<Self>) {
@@ -604,12 +630,16 @@ impl NoireView {
                     .bg(rgb(p.raised))
                     .hover(move |style| style.bg(rgb(p.hover)))
                     .on_click(cx.listener(|view, _, _, cx| {
-                        view.preferences.dark_theme = !view.preferences.dark_theme;
+                        view.preferences.theme = if view.dark_theme() {
+                            ThemePreference::Light
+                        } else {
+                            ThemePreference::Dark
+                        };
                         view.persist_preferences(cx);
                         cx.notify();
                     }))
                     .child(
-                        img(if self.preferences.dark_theme {
+                        img(if self.dark_theme() {
                             "icons/new-moon-emoji.svg"
                         } else {
                             "icons/full-moon-emoji.svg"
@@ -704,7 +734,6 @@ impl NoireView {
                                 .border_color(rgb(p.border_soft))
                                 .flex()
                                 .items_center()
-                                .justify_between()
                                 .gap_5()
                                 .child(
                                     div()
@@ -725,7 +754,13 @@ impl NoireView {
                                                         .child(presentation.detail),
                                                 ),
                                         ),
-                                )
+                                ),
+                        )
+                        .child(
+                            div()
+                                .mt_4()
+                                .flex()
+                                .justify_center()
                                 .child(self.processing_button(
                                     active,
                                     presentation.controls_enabled,
@@ -818,7 +853,7 @@ impl NoireView {
                 .justify_center()
                 .gap_2()
                 .h(px(40.0))
-                .w(px(112.0))
+                .w(px(160.0))
                 .rounded_lg()
                 .border_1()
                 .border_color(rgb(if active { p.success } else { p.border }))
@@ -990,6 +1025,7 @@ impl NoireView {
             ))
             .child(
                 settings_card(p)
+                    .child(theme_row(self.preferences.theme, p, cx))
                     .child(toggle_row(
                         "launch-at-login",
                         "Start at login",
@@ -1195,7 +1231,8 @@ impl NoireView {
 }
 
 impl Render for NoireView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.system_dark_theme = appearance_is_dark(window.appearance());
         let p = self.palette();
         div()
             .relative()
@@ -1205,7 +1242,7 @@ impl Render for NoireView {
             .rounded(px(13.0))
             .text_color(rgb(p.text))
             .child(
-                img(if self.preferences.dark_theme {
+                img(if self.dark_theme() {
                     "icons/window-dark.svg"
                 } else {
                     "icons/window-light.svg"
@@ -1323,6 +1360,13 @@ fn window_button(
         })
         .on_click(cx.listener(click))
         .child(svg().path(icon).size(px(16.0)).text_color(rgb(p.muted)))
+}
+
+const fn appearance_is_dark(appearance: WindowAppearance) -> bool {
+    matches!(
+        appearance,
+        WindowAppearance::Dark | WindowAppearance::VibrantDark
+    )
 }
 
 fn processing_status(active: bool, p: Palette) -> Div {
@@ -1563,6 +1607,61 @@ fn strength_row(strength: f64, interactive: bool, p: Palette, cx: &mut Context<N
                                 .child(format!("{:.0}%", value * 100.0))
                         }),
                 ),
+        )
+}
+
+fn theme_row(selected: ThemePreference, p: Palette, cx: &mut Context<NoireView>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_4()
+        .rounded_lg()
+        .p_3()
+        .child(
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().font_weight(FontWeight::MEDIUM).child("Theme"))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(p.muted))
+                        .child("Follow the desktop or choose a fixed appearance."),
+                ),
+        )
+        .child(
+            div().flex().gap_2().children(
+                [
+                    ("System", ThemePreference::System),
+                    ("Dark", ThemePreference::Dark),
+                    ("Light", ThemePreference::Light),
+                ]
+                .into_iter()
+                .enumerate()
+                .map(|(index, (label, preference))| {
+                    let is_selected = selected == preference;
+                    div()
+                        .id(SharedString::from(format!("theme-choice-{index}")))
+                        .cursor_pointer()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(rgb(if is_selected { p.accent } else { p.border }))
+                        .bg(rgb(if is_selected { p.accent_soft } else { p.raised }))
+                        .px_3()
+                        .py_2()
+                        .text_sm()
+                        .hover(move |style| style.bg(rgb(p.hover)))
+                        .on_click(cx.listener(move |view, _, _, cx| {
+                            view.preferences.theme = preference;
+                            view.persist_preferences(cx);
+                            cx.notify();
+                        }))
+                        .child(label)
+                }),
+            ),
         )
 }
 

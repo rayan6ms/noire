@@ -3638,6 +3638,7 @@ dependencies = [
  "noire-model-fastenhancer",
  "pipewire",
  "rtrb",
+ "serde_json",
  "stats_alloc",
 ]
 

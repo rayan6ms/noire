@@ -5,6 +5,15 @@ app_dir=${APPDIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}
 export PATH="$app_dir/usr/bin${PATH:+:$PATH}"
 export LD_LIBRARY_PATH="$app_dir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export XDG_DATA_DIRS="$app_dir/usr/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+if [ -d "$app_dir/usr/lib/pipewire-0.3" ]; then
+    export PIPEWIRE_MODULE_DIR="$app_dir/usr/lib/pipewire-0.3"
+fi
+if [ -d "$app_dir/usr/lib/spa-0.2" ]; then
+    export SPA_PLUGIN_DIR="$app_dir/usr/lib/spa-0.2"
+fi
+if [ -d "$app_dir/usr/share/pipewire" ]; then
+    export PIPEWIRE_CONFIG_DIR="$app_dir/usr/share/pipewire"
+fi
 
 # Give the background service its own AppImage runtime. The outer AppImage
 # runtime unmounts as soon as its controller exits; a daemon started directly
@@ -16,45 +25,9 @@ if [ "${NOIRE_APPIMAGE_ROLE:-}" = daemon ]; then
     exec "$app_dir/usr/bin/noired" "$@"
 fi
 
-# Desktop shells do not inherit an AppImage's XDG_DATA_DIRS. Install the tiny
-# icon and launcher metadata in the user's data directory so Wayland app-id and
-# X11 WM_CLASS lookup both resolve to Noire instead of a generic application.
-if [ -n "${HOME:-}" ]; then
-    user_data_dir=${XDG_DATA_HOME:-"$HOME/.local/share"}
-    icon_dir="$user_data_dir/icons/hicolor/scalable/apps"
-    application_dir="$user_data_dir/applications"
-    mkdir -p "$icon_dir" "$application_dir"
-    icon="$icon_dir/io.github.rayan6ms.Noire.svg"
-    icon_updated=false
-    icon_tmp=$(mktemp "$icon_dir/.io.github.rayan6ms.Noire.svg.XXXXXX")
-    cp "$app_dir/usr/share/icons/hicolor/scalable/apps/io.github.rayan6ms.Noire.svg" \
-        "$icon_tmp"
-    chmod 0644 "$icon_tmp"
-    if [ -f "$icon" ] && cmp -s "$icon_tmp" "$icon"; then
-        rm -f "$icon_tmp"
-    else
-        mv -f "$icon_tmp" "$icon"
-        icon_updated=true
-    fi
-    if [ -n "${APPIMAGE:-}" ]; then
-        escaped_appimage=$(printf '%s' "$APPIMAGE" | sed 's/[\\&|]/\\&/g; s/"/\\"/g')
-        launcher="$application_dir/io.github.rayan6ms.Noire.desktop"
-        launcher_tmp=$(mktemp "$application_dir/.io.github.rayan6ms.Noire.desktop.XXXXXX")
-        sed "s|^Exec=noire$|Exec=\"${escaped_appimage}\"|" \
-            "$app_dir/usr/share/applications/io.github.rayan6ms.Noire.desktop" \
-            >"$launcher_tmp"
-        chmod 0644 "$launcher_tmp"
-        if [ -f "$launcher" ] && cmp -s "$launcher_tmp" "$launcher"; then
-            rm -f "$launcher_tmp"
-        else
-            mv -f "$launcher_tmp" "$launcher"
-        fi
-    fi
-    if [ "$icon_updated" = true ] && [ -x /usr/bin/gtk-update-icon-cache ]; then
-        env -u LD_LIBRARY_PATH /usr/bin/gtk-update-icon-cache -f -t \
-            "$user_data_dir/icons/hicolor" >/dev/null 2>&1 || true
-    fi
-fi
+# An AppImage is portable and must not silently install or overwrite desktop
+# launchers. Desktop integration remains an explicit user or AppImage-manager
+# choice; the metadata embedded at the AppDir root supports those tools.
 
 # Informational commands do not need the audio service and may exit before the
 # AppImage runtime has mounted long enough for a background daemon to remain.
@@ -67,21 +40,31 @@ esac
 # another tray icon. Activating a StatusNotifier item without a compositor
 # startup token makes GNOME display a broken “null is ready” notification, so a
 # headless repeat launch deliberately performs no window activation.
-runtime_dir=${XDG_RUNTIME_DIR:-/tmp}
-if [ -x /usr/bin/flock ]; then
+runtime_dir=${XDG_RUNTIME_DIR:-}
+if [ ! -d "$runtime_dir" ] || [ ! -w "$runtime_dir" ]; then
+    runtime_dir=
+fi
+flock_bin=$(command -v flock || true)
+if [ -n "$runtime_dir" ] && [ -n "$flock_bin" ]; then
     lock_file="$runtime_dir/noire-appimage.lock"
-    exec 9>"$lock_file"
-    if ! /usr/bin/flock -n 9; then
-        exit 0
+    if { exec 9>>"$lock_file"; } 2>/dev/null; then
+        if ! "$flock_bin" -n 9; then
+            exit 0
+        fi
     fi
 fi
 
 # Native packages use D-Bus activation. The portable image starts its bundled
 # daemon when no installed daemon already owns the service.
 if ! "$app_dir/usr/bin/noirectl" status >/dev/null 2>&1; then
-    daemon_log="${XDG_RUNTIME_DIR:-/tmp}/noire-appimage.log"
+    daemon_log=/dev/null
+    if [ -n "$runtime_dir" ]; then
+        daemon_log="$runtime_dir/noire-appimage.log"
+    fi
     if [ -n "${APPIMAGE:-}" ] && [ -x "$APPIMAGE" ]; then
-        NOIRE_APPIMAGE_ROLE=daemon "$APPIMAGE" 9>&- >>"$daemon_log" 2>&1 &
+        NOIRE_APPIMAGE_ROLE=daemon env -u LD_LIBRARY_PATH -u XDG_DATA_DIRS \
+            -u PIPEWIRE_MODULE_DIR -u SPA_PLUGIN_DIR -u PIPEWIRE_CONFIG_DIR \
+            "$APPIMAGE" 9>&- >>"$daemon_log" 2>&1 &
     else
         "$app_dir/usr/bin/noired" 9>&- >>"$daemon_log" 2>&1 &
     fi

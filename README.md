@@ -1,115 +1,76 @@
 # Noire
 
-Noire is a native Linux microphone noise-reduction application. It captures a
-physical microphone through PipeWire, processes speech locally with
-FastEnhancer-B at 48 kHz, and publishes **Noire Microphone ☾** for browsers, voice
-clients, recorders, and streaming tools.
+Noire removes background noise from a microphone on Linux. It processes audio
+locally and publishes **Noire Microphone ☾**, which can be selected in browsers,
+voice chat, recording, and streaming apps.
 
-The application consists of a persistent per-user daemon, the `noirectl`
-command-line client, and a dark Rust [GPUI](https://www.gpui.rs/) desktop
-interface. Audio is never uploaded and Noire does not rewrite global PipeWire or
-WirePlumber configuration.
+- Native PipeWire audio with low-latency and balanced modes
+- Adjustable suppression strength and live microphone level
+- System, dark, and light themes
+- Optional launch at login and tray controls
+- No uploads and no changes to global PipeWire or WirePlumber configuration
 
-## Current model
+## Install
 
-FastEnhancer-B 48 kHz is the production engine. Against the improved RNNoise
-backup on the frozen 824-utterance evaluation set, the selected mix improved
-median STOI by about `0.0048` and median SI-SDR by about `1.95 dB`, with
-effectively no clean-speech damage. It also passed the 952-case stress set
-without new clipping or non-finite output.
+Noire currently supports x86_64 Linux desktops running PipeWire. Download the
+newest files from [GitHub Releases](https://github.com/rayan6ms/noire/releases/latest).
 
-The improved RNNoise implementation remains in
-`crates/noire-model-rnnoise/` for experiments and future study, but it is not
-included in the production daemon dependency graph.
+Choose one format:
 
-## Desktop application
+- **Debian or Ubuntu:** download the three `.deb` files and install them together:
 
-The compact home screen keeps the live state, animated start/stop action, input
-meter, and signal path together in one coherent surface. A fixed branded header,
-custom rounded title bar, subtle window border, native light/dark themes, and
-bottom-center transient notifications keep controls stable while content changes.
-A separate scrollable settings view provides:
+  ```sh
+  sudo apt install ./noire-daemon_*_amd64.deb ./noire-ui_*_amd64.deb ./noire_*_amd64.deb
+  ```
 
-- physical microphone selection;
-- suppression strength and latency profile;
-- fail-closed or explicitly selected fail-open behavior;
-- start at login through the systemd user service;
-- start minimized and close to tray preferences;
-- privacy-safe diagnostics.
+- **Fedora:** download the three `.rpm` files and install them together:
 
-Closing the window keeps the controller in the freedesktop system tray by
-default, using Noire's own active/inactive tray artwork. It does not stop
-microphone processing. Desktop-only preferences are
-stored in `~/.config/noire/ui.toml`; audio configuration remains in
-`~/.config/noire/config.toml`.
+  ```sh
+  sudo dnf install ./noire-*.rpm
+  ```
 
-## Build and run
+- **Flatpak:**
 
-Noire currently targets x86_64 Linux with PipeWire and mono 48 kHz audio. Rust
-1.97 or newer, a C compiler, Clang, PipeWire development headers, Vulkan, and
-the normal Wayland/X11 GPUI development libraries are required.
+  ```sh
+  flatpak install --user ./Noire-*-x86_64.flatpak
+  ```
 
-```sh
-cargo build --workspace --release --locked
-./target/release/noired &
-./target/release/noire
-```
+- **AppImage:** make the file executable, then run it:
 
-Useful CLI operations:
+  ```sh
+  chmod +x Noire-*-x86_64.AppImage
+  ./Noire-*-x86_64.AppImage
+  ```
 
-```sh
-noirectl status
-noirectl devices
-noirectl start
-noirectl set strength 0.55
-noirectl set latency-profile low
-noirectl set fail-mode closed
-```
+  The AppImage stays portable: running it does not install or overwrite desktop
+  launchers. Desktop integration is left to the user or an AppImage manager.
 
-`0.55` is the recommended everyday strength. Keep the low-latency profile when
-audio is stable; use Balanced only when a busy system produces underruns or
-dropouts. Normally disable additional noise suppression in the receiving app to
-avoid processing the same voice twice.
+## Use
 
-## Packaging
+1. Open Noire and choose a microphone in **Settings**, or follow the system
+   default.
+2. Select a suppression strength and press **Start**.
+3. Select **Noire Microphone ☾** as the input in the receiving app.
 
-Packaging implementations are provided for Debian/Ubuntu, Fedora RPM, Flatpak,
-and AppImage:
+Disable noise suppression in the receiving app to avoid processing the voice
+twice. Closing Noire keeps it available in the tray by default and does not stop
+the virtual microphone.
 
-```sh
-packaging/build-local.sh deb
-packaging/build-local.sh rpm
-packaging/build-local.sh flatpak
-NOIRE_APPIMAGETOOL=/path/to/appimagetool packaging/build-local.sh appimage
-```
+## Troubleshooting
 
-Artifacts are written below `dist/`. Native packages install the daemon as a
-systemd user service with D-Bus activation. The AppImage and Flatpak wrappers
-start their bundled daemon when no installed daemon is already available.
+- If Noire cannot start, check that PipeWire is running and that the selected
+  microphone is connected, then press **Retry**.
+- If the virtual microphone is missing, start Noire before opening the receiving
+  app, or refresh that app's device list.
+- If an AppImage cannot use FUSE, run it with
+  `APPIMAGE_EXTRACT_AND_RUN=1 ./Noire-*-x86_64.AppImage`.
+- For native packages, recent daemon logs are available with
+  `journalctl --user-unit=noire.service --since=-15min`.
 
-Local build scripts never publish artifacts. A maintainer creates a public
-release by pushing an annotated `v<version>` tag that matches the workspace
-version. The release workflow rebuilds every format in clean environments,
-verifies the complete artifact set, generates checksums, SBOM and provenance,
-attests the files on GitHub, and only then publishes the release.
+The optional `noirectl` command can inspect and control Noire from a terminal;
+run `noirectl --help` for its commands.
 
-## Workspace
-
-- `crates/noired` — daemon, state, and production FastEnhancer integration
-- `crates/noire-ui` — GPUI desktop application and tray
-- `crates/noirectl` — headless D-Bus control client
-- `crates/noire-model-fastenhancer*` — production model adapter
-- `crates/noire-model-rnnoise` — retained experimental backup
-- `packaging` — DEB, RPM, Flatpak, and AppImage builders
-- `tools` — model evaluation and training utilities
-
-Run the main verification suite with:
-
-```sh
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-```
+Report problems through [GitHub Issues](https://github.com/rayan6ms/noire/issues).
 
 Source code is licensed under [GPL-3.0-or-later](LICENSE). The original Noire
 icon is licensed under [CC-BY-SA-4.0](icons/LICENSE).

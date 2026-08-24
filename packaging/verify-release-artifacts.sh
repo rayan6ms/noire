@@ -67,10 +67,31 @@ assert_count 1 "$source_dir"/*.tar.xz
 
 # GitHub's artifact service does not preserve executable mode bits.
 chmod 0755 "$appimage"
-[ "$(APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version)" = "noire $version" ]
-
 work_dir=$(mktemp -d)
 trap 'rm -rf -- "$work_dir"' EXIT HUP INT TERM
+appimage_home="$work_dir/appimage-home"
+mkdir -p "$appimage_home"
+[ "$(HOME="$appimage_home" XDG_DATA_HOME="$appimage_home/data" \
+    APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version)" = "noire $version" ]
+[ -z "$(find "$appimage_home" -mindepth 1 -print -quit)" ] || {
+    echo "AppImage informational command wrote to the user's home directory" >&2
+    exit 1
+}
+
+appimage_absolute=$(CDPATH='' cd -- "$(dirname -- "$appimage")" && pwd)/$(basename "$appimage")
+appimage_extract="$work_dir/appimage-extract"
+mkdir -p "$appimage_extract"
+(cd "$appimage_extract" && "$appimage_absolute" --appimage-extract >/dev/null)
+for bundled_runtime_file in \
+    usr/lib/pipewire-0.3/libpipewire-module-protocol-native.so \
+    usr/lib/pipewire-0.3/libpipewire-module-client-node.so \
+    usr/lib/spa-0.2/support/libspa-support.so \
+    usr/lib/spa-0.2/audioconvert/libspa-audioconvert.so \
+    usr/share/pipewire/client.conf
+do
+    require_file "$appimage_extract/squashfs-root/$bundled_runtime_file"
+done
+
 export FLATPAK_USER_DIR="$work_dir/flatpak-user"
 flatpak install --user --noninteractive --no-deps --no-related --bundle "$flatpak"
 flatpak_ref=$(flatpak info --user --show-ref io.github.rayan6ms.Noire)

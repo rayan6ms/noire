@@ -125,11 +125,7 @@ impl NodeDescriptor {
         };
         let description = owned_nonempty(properties.get("node.description"));
         let nick = owned_nonempty(properties.get("node.nick"));
-        let label = description
-            .as_deref()
-            .or(nick.as_deref())
-            .unwrap_or(&node_name)
-            .to_owned();
+        let label = preferred_label(description.as_deref(), nick.as_deref(), &node_name).to_owned();
 
         Some(Self {
             global_id,
@@ -330,10 +326,18 @@ impl RegistrySnapshot {
     pub fn new(revision: u64, nodes: impl IntoIterator<Item = NodeDescriptor>) -> Self {
         let nodes: Vec<_> = nodes.into_iter().collect();
         let node_names = nodes.iter().map(|node| node.node_name.clone()).collect();
-        let mut candidates: Vec<_> = nodes
-            .into_iter()
-            .filter(NodeDescriptor::is_candidate)
-            .collect();
+        let mut candidates_by_name = BTreeMap::<String, NodeDescriptor>::new();
+        for candidate in nodes.into_iter().filter(NodeDescriptor::is_candidate) {
+            candidates_by_name
+                .entry(candidate.node_name.clone())
+                .and_modify(|existing| {
+                    if candidate.is_default && !existing.is_default {
+                        existing.clone_from(&candidate);
+                    }
+                })
+                .or_insert(candidate);
+        }
+        let mut candidates: Vec<_> = candidates_by_name.into_values().collect();
         candidates.sort_by(|left, right| {
             left.label
                 .to_lowercase()
@@ -434,12 +438,8 @@ fn parse_positions(value: &str) -> Vec<String> {
 
 #[cfg(any(feature = "pipewire-backend", test))]
 pub(crate) fn parse_default_node_name(value: &str) -> Option<String> {
-    let name_key = value.find("\"name\"")?;
-    let after_key = value.get(name_key + "\"name\"".len()..)?;
-    let after_colon = after_key.split_once(':')?.1.trim_start();
-    let quoted = after_colon.strip_prefix('"')?;
-    let end = quoted.find('"')?;
-    nonempty(quoted.get(..end)).map(str::to_owned)
+    let metadata: serde_json::Value = serde_json::from_str(value).ok()?;
+    nonempty(metadata.get("name")?.as_str()).map(str::to_owned)
 }
 
 fn is_monitor_name(name: &str) -> bool {
@@ -454,12 +454,80 @@ fn is_monitor_description(description: &str) -> bool {
 fn deduplicate_labels(candidates: &mut [NodeDescriptor]) {
     let mut counts = BTreeMap::<String, usize>::new();
     for candidate in candidates.iter() {
-        *counts.entry(candidate.label.clone()).or_default() += 1;
+        *counts.entry(candidate.label.to_lowercase()).or_default() += 1;
+    }
+    let mut qualifier_counts = BTreeMap::<(String, String), usize>::new();
+    for candidate in candidates.iter() {
+        let label_key = candidate.label.to_lowercase();
+        if counts.get(&label_key).copied().unwrap_or_default() > 1 {
+            let qualifier_key = descriptive_qualifier(candidate).to_lowercase();
+            *qualifier_counts
+                .entry((label_key, qualifier_key))
+                .or_default() += 1;
+        }
     }
     for candidate in candidates.iter_mut() {
-        if counts.get(&candidate.label).copied().unwrap_or_default() > 1 {
-            candidate.label = format!("{} ({})", candidate.label, candidate.node_name);
+        let label_key = candidate.label.to_lowercase();
+        if counts.get(&label_key).copied().unwrap_or_default() > 1 {
+            let descriptive = descriptive_qualifier(candidate);
+            let qualifier_key = descriptive.to_lowercase();
+            let qualifier = if qualifier_counts
+                .get(&(label_key, qualifier_key))
+                .copied()
+                .unwrap_or_default()
+                == 1
+            {
+                descriptive
+            } else {
+                &candidate.node_name
+            };
+            candidate.label = format!("{} — {qualifier}", candidate.label);
         }
+    }
+}
+
+fn descriptive_qualifier(candidate: &NodeDescriptor) -> &str {
+    candidate
+        .description
+        .as_deref()
+        .filter(|description| !description.eq_ignore_ascii_case(&candidate.label))
+        .map_or(&candidate.node_name, |description| {
+            concise_qualifier(&candidate.label, description)
+        })
+}
+
+fn concise_qualifier<'a>(label: &str, description: &'a str) -> &'a str {
+    description
+        .get(label.len()..)
+        .filter(|_| {
+            description
+                .get(..label.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(label))
+        })
+        .map(str::trim)
+        .filter(|suffix| !suffix.is_empty())
+        .unwrap_or(description)
+}
+
+fn preferred_label<'a>(
+    description: Option<&'a str>,
+    nick: Option<&'a str>,
+    node_name: &'a str,
+) -> &'a str {
+    match (description, nick) {
+        (Some(description), Some(nick))
+            if description
+                .get(..nick.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(nick))
+                && description
+                    .get(nick.len()..)
+                    .is_some_and(|suffix| !suffix.trim().is_empty()) =>
+        {
+            nick
+        }
+        (Some(description), _) => description,
+        (None, Some(nick)) => nick,
+        (None, None) => node_name,
     }
 }
 
@@ -550,12 +618,122 @@ mod tests {
         assert_eq!(snapshot.revision(), 4);
         assert_eq!(
             snapshot.candidates()[0].label,
-            "Microphone (alsa_input.front)"
+            "Microphone — alsa_input.front"
         );
         assert_eq!(
             snapshot.candidates()[1].label,
-            "Microphone (alsa_input.rear)"
+            "Microphone — alsa_input.rear"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn concise_nicknames_hide_profile_suffixes_until_needed() -> Result<(), &'static str> {
+        let one = NodeDescriptor::from_properties(
+            1,
+            &NodeProperties::new([
+                ("node.name", "alsa_input.usb.analog-stereo"),
+                ("node.nick", "USB Microphone"),
+                ("node.description", "USB Microphone Analog Stereo"),
+                ("media.class", "Audio/Source"),
+            ]),
+        )
+        .ok_or("missing first fixture")?;
+        assert_eq!(
+            RegistrySnapshot::new(1, [one.clone()]).candidates()[0].label,
+            "USB Microphone"
+        );
+
+        let two = NodeDescriptor::from_properties(
+            2,
+            &NodeProperties::new([
+                ("node.name", "alsa_input.usb.pro-audio"),
+                ("node.nick", "usb microphone"),
+                ("node.description", "USB Microphone Pro Audio"),
+                ("media.class", "Audio/Source"),
+            ]),
+        )
+        .ok_or("missing second fixture")?;
+        let snapshot = RegistrySnapshot::new(2, [one, two]);
+        assert_eq!(
+            snapshot.candidates()[0].label,
+            "USB Microphone — Analog Stereo"
+        );
+        assert_eq!(snapshot.candidates()[1].label, "usb microphone — Pro Audio");
+        Ok(())
+    }
+
+    #[test]
+    fn generic_or_unrelated_nicknames_do_not_replace_descriptions() -> Result<(), &'static str> {
+        let webcam = NodeDescriptor::from_properties(
+            1,
+            &NodeProperties::new([
+                ("node.name", "alsa_input.webcam"),
+                ("node.nick", "USB Device 0x46d 0x825"),
+                ("node.description", "Webcam C270 Mono"),
+                ("media.class", "Audio/Source"),
+            ]),
+        )
+        .ok_or("missing webcam fixture")?;
+        let built_in = NodeDescriptor::from_properties(
+            2,
+            &NodeProperties::new([
+                ("node.name", "alsa_input.builtin"),
+                ("node.nick", "ALC892 Analog"),
+                ("node.description", "Built-in Audio Analog Stereo"),
+                ("media.class", "Audio/Source"),
+            ]),
+        )
+        .ok_or("missing built-in fixture")?;
+
+        assert_eq!(webcam.label, "Webcam C270 Mono");
+        assert_eq!(built_in.label, "Built-in Audio Analog Stereo");
+        Ok(())
+    }
+
+    #[test]
+    fn identical_friendly_profiles_fall_back_to_unique_stable_ids() -> Result<(), &'static str> {
+        let make = |global_id, name| {
+            NodeDescriptor::from_properties(
+                global_id,
+                &NodeProperties::new([
+                    ("node.name", name),
+                    ("node.nick", "USB Microphone"),
+                    ("node.description", "USB Microphone Analog Stereo"),
+                    ("media.class", "Audio/Source"),
+                ]),
+            )
+        };
+        let snapshot = RegistrySnapshot::new(
+            1,
+            [
+                make(1, "alsa_input.usb.first").ok_or("missing first fixture")?,
+                make(2, "alsa_input.usb.second").ok_or("missing second fixture")?,
+            ],
+        );
+
+        assert_eq!(
+            snapshot.candidates()[0].label,
+            "USB Microphone — alsa_input.usb.first"
+        );
+        assert_eq!(
+            snapshot.candidates()[1].label,
+            "USB Microphone — alsa_input.usb.second"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn repeated_globals_with_one_stable_name_are_listed_once() -> Result<(), &'static str> {
+        let first = physical(1, "alsa_input.usb", "USB Microphone").ok_or("missing fixture")?;
+        let mut replacement = first.clone();
+        replacement.global_id = 2;
+        replacement.is_default = true;
+        let snapshot = RegistrySnapshot::new(1, [first, replacement]);
+
+        assert_eq!(snapshot.node_name_occurrences("alsa_input.usb"), 2);
+        assert_eq!(snapshot.candidates().len(), 1);
+        assert!(snapshot.candidates()[0].is_default);
         Ok(())
     }
 
@@ -653,6 +831,14 @@ mod tests {
             Some("alsa_input.usb".to_owned())
         );
         assert_eq!(super::parse_default_node_name("{ \"name\": \"\" }"), None);
+        assert_eq!(
+            super::parse_default_node_name("{ \"name\": \"alsa_input.\\\"usb\" }"),
+            Some("alsa_input.\"usb".to_owned())
+        );
+        assert_eq!(
+            super::parse_default_node_name("{ \"nested\": { \"name\": \"wrong\" } }"),
+            None
+        );
         assert_eq!(super::parse_default_node_name("not-json"), None);
     }
 

@@ -66,9 +66,9 @@ jobs:
           sudo apt-get install --no-install-recommends --yes \
             build-essential ca-certificates clang curl dpkg-dev file libclang-dev \
             libegl1-mesa-dev libfontconfig-dev libpipewire-0.3-dev libspa-0.2-dev \
-            libvulkan-dev libwayland-dev libx11-xcb-dev libxcb1-dev \
+            libspa-0.2-modules libvulkan-dev libwayland-dev libx11-xcb-dev libxcb1-dev \
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev pkg-config xz-utils
+            libxkbcommon-dev libxkbcommon-x11-dev pipewire-bin pkg-config xz-utils
           rustup toolchain install 1.97.0 --profile minimal --no-self-update
 
       - name: Restore Cargo sources

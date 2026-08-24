@@ -14,7 +14,7 @@
       clients, recorders, and other PipeWire applications.
     </p>
     <p>
-      The dark GPUI interface controls a per-user background service. Audio
+      The desktop interface controls a per-user background service. Audio
       remains on the local machine and Noire does not modify global PipeWire or
       WirePlumber configuration.
     </p>
