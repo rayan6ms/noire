@@ -35,6 +35,7 @@
         <p>Fixes desktop startup and background resource lifecycle.</p>
         <ul>
           <li>Prevents the window startup crash and validates real GPUI and finished AppImage launches before release.</li>
+          <li>Keeps host graphics-driver discovery available when the desktop does not define XDG data paths.</li>
           <li>Reopens the existing window from repeated launcher clicks without creating duplicate controllers or tray items.</li>
           <li>Stops tray-only sessions from capturing microphone meters and reliably releases metering after clients disconnect.</li>
         </ul>

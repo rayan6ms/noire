@@ -16,6 +16,9 @@ install -m 0755 "$repo_dir/packaging/appimage/AppRun" "$app_dir/AppRun"
 # shellcheck disable=SC2016
 {
     echo '#!/bin/sh'
+    echo 'if [ "${NOIRE_SMOKE_RECORD_XDG:-}" = 1 ]; then'
+    printf '%s\n' '    printf "%s\n" "$XDG_DATA_DIRS" >"$XDG_RUNTIME_DIR/xdg-data-dirs"'
+    echo 'fi'
     echo 'if [ "${NOIRE_SMOKE_HOLD:-}" = 1 ]; then'
     echo '    printf ready >"$XDG_RUNTIME_DIR/controller-ready"'
     echo '    attempt=0'
@@ -67,6 +70,20 @@ appimage_version=$(APPDIR="$app_dir" APPIMAGE="$fake_appimage" \
 [ "$appimage_version" = 'noire 1.1.0' ]
 [ -f "$integrated_launcher" ]
 [ ! -e "$legacy_launcher" ]
+
+# AppRun must preserve the XDG specification's implicit host defaults. Vulkan
+# loaders use these paths to find the user's graphics driver manifests, and an
+# AppImage-private-only value makes GPUI fail before it can create a window.
+env -u XDG_DATA_DIRS APPDIR="$app_dir" APPIMAGE="$fake_appimage" \
+    HOME="$home_dir" NOIRE_SMOKE_RECORD_XDG=1 XDG_DATA_HOME="$data_dir" \
+    XDG_RUNTIME_DIR="$runtime_dir" "$app_dir/AppRun" --version >/dev/null
+[ "$(cat "$runtime_dir/xdg-data-dirs")" = \
+    "$app_dir/usr/share:/usr/local/share:/usr/share" ]
+XDG_DATA_DIRS=/opt/desktop/share APPDIR="$app_dir" APPIMAGE="$fake_appimage" \
+    HOME="$home_dir" NOIRE_SMOKE_RECORD_XDG=1 XDG_DATA_HOME="$data_dir" \
+    XDG_RUNTIME_DIR="$runtime_dir" "$app_dir/AppRun" --version >/dev/null
+[ "$(cat "$runtime_dir/xdg-data-dirs")" = \
+    "$app_dir/usr/share:/opt/desktop/share" ]
 
 # Never remove a canonical launcher that points anywhere else.
 {

@@ -68,7 +68,8 @@ jobs:
             libegl1-mesa-dev libfontconfig-dev libpipewire-0.3-dev libspa-0.2-dev \
             libspa-0.2-modules libvulkan-dev libwayland-dev libx11-xcb-dev libxcb1-dev \
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev pipewire-bin pkg-config xauth xvfb xz-utils
+            libxkbcommon-dev libxkbcommon-x11-dev mesa-vulkan-drivers pipewire-bin \
+            pkg-config xauth xvfb xz-utils
           rustup toolchain install 1.97.0 --profile minimal --no-self-update
 
       - name: Restore Cargo sources

@@ -4,7 +4,12 @@ set -eu
 app_dir=${APPDIR:-$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)}
 export PATH="$app_dir/usr/bin${PATH:+:$PATH}"
 export LD_LIBRARY_PATH="$app_dir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export XDG_DATA_DIRS="$app_dir/usr/share${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
+# XDG_DATA_DIRS defaults to these host locations when it is unset. Preserve
+# that default explicitly after prepending the AppImage data directory;
+# otherwise Vulkan cannot discover the host ICD manifests in minimal sessions
+# such as display managers, bare window managers, and CI virtual displays.
+host_data_dirs=${XDG_DATA_DIRS:-/usr/local/share:/usr/share}
+export XDG_DATA_DIRS="$app_dir/usr/share:$host_data_dirs"
 if [ -d "$app_dir/usr/lib/pipewire-0.3" ]; then
     export PIPEWIRE_MODULE_DIR="$app_dir/usr/lib/pipewire-0.3"
 fi

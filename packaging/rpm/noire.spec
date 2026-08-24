@@ -74,7 +74,7 @@ cp -a %{noire_ui_stage}/. %{buildroot}/
 
 %changelog
 * Mon Aug 24 2026 rayan6ms - 1.1.4-1
-- Fix desktop startup, launcher activation, and idle meter cleanup
+- Fix desktop startup, AppImage graphics discovery, launcher activation, and idle meter cleanup
 
 * Mon Aug 24 2026 rayan6ms - 1.1.3-1
 - Synchronize tray controls, safe startup, and portable daemon lifetime
