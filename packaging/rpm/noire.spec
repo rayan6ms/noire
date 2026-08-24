@@ -1,4 +1,4 @@
-%{!?noire_version:%global noire_version 1.1.1}
+%{!?noire_version:%global noire_version 1.1.2}
 %{!?noire_release:%global noire_release 1}
 %{!?noire_daemon_stage:%global noire_daemon_stage /nonexistent/noire-daemon}
 %{!?noire_ui_stage:%global noire_ui_stage /nonexistent/noire-ui}
@@ -73,6 +73,9 @@ cp -a %{noire_ui_stage}/. %{buildroot}/
 /usr/share/man/man1/noire.1*
 
 %changelog
+* Mon Aug 24 2026 rayan6ms - 1.1.2-1
+- Fix legacy AppImage launchers, control layout, and signal-path icons
+
 * Mon Aug 24 2026 rayan6ms - 1.1.1-1
 - Fix portable startup, desktop behavior, and microphone labels
 
