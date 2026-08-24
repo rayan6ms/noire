@@ -28,6 +28,47 @@ fi
 # An AppImage is portable and must not silently install or overwrite desktop
 # launchers. Desktop integration remains an explicit user or AppImage-manager
 # choice; the metadata embedded at the AppDir root supports those tools.
+#
+# Noire 1.1.0 did install its canonical launcher automatically. When an
+# AppImage manager has integrated the same image, remove that legacy launcher
+# only after proving that both files point to this exact AppImage. This works
+# regardless of which duplicate the user opens, while leaving native-package
+# launchers and unrelated AppImages untouched.
+cleanup_legacy_desktop_launcher() {
+    [ -n "${APPIMAGE:-}" ] || return 0
+    case "$APPIMAGE" in
+        /*) ;;
+        *) return 0 ;;
+    esac
+
+    user_data_dir=${XDG_DATA_HOME:-${HOME:+"$HOME/.local/share"}}
+    case "$user_data_dir" in
+        /*) ;;
+        *) return 0 ;;
+    esac
+    application_dir="$user_data_dir/applications"
+    legacy_launcher="$application_dir/io.github.rayan6ms.Noire.desktop"
+    [ -f "$legacy_launcher" ] && [ ! -L "$legacy_launcher" ] || return 0
+
+    legacy_matches=false
+    if grep -Fqx "Exec=\"$APPIMAGE\"" "$legacy_launcher" ||
+        grep -Fqx "Exec=$APPIMAGE" "$legacy_launcher"
+    then
+        legacy_matches=true
+    fi
+    [ "$legacy_matches" = true ] || return 0
+
+    for integrated_launcher in "$application_dir"/*.desktop; do
+        [ "$integrated_launcher" != "$legacy_launcher" ] || continue
+        [ -f "$integrated_launcher" ] && [ ! -L "$integrated_launcher" ] || continue
+        grep -Fqx "TryExec=$APPIMAGE" "$integrated_launcher" || continue
+        grep -Fqx "X-AppImage-Name=Noire" "$integrated_launcher" || continue
+        rm -f -- "$legacy_launcher"
+        return 0
+    done
+}
+
+cleanup_legacy_desktop_launcher
 
 # Informational commands do not need the audio service and may exit before the
 # AppImage runtime has mounted long enough for a background daemon to remain.

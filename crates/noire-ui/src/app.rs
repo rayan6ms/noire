@@ -734,9 +734,12 @@ impl NoireView {
                                 .border_color(rgb(p.border_soft))
                                 .flex()
                                 .items_center()
+                                .justify_between()
                                 .gap_5()
                                 .child(
                                     div()
+                                        .flex_1()
+                                        .min_w_0()
                                         .flex()
                                         .items_center()
                                         .gap_4()
@@ -754,13 +757,7 @@ impl NoireView {
                                                         .child(presentation.detail),
                                                 ),
                                         ),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .mt_4()
-                                .flex()
-                                .justify_center()
+                                )
                                 .child(self.processing_button(
                                     active,
                                     presentation.controls_enabled,
