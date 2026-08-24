@@ -77,23 +77,29 @@ case "${1:-}" in
 esac
 
 # Keep one controller and one tray registration per desktop session. A repeated
-# AppImage launch exits quietly before it can race another daemon or create
-# another tray icon. Activating a StatusNotifier item without a compositor
-# startup token makes GNOME display a broken “null is ready” notification, so a
-# headless repeat launch deliberately performs no window activation.
+# AppImage launch asks the existing controller to show its window instead of
+# racing another daemon or creating another tray icon.
 runtime_dir=${XDG_RUNTIME_DIR:-}
 if [ ! -d "$runtime_dir" ] || [ ! -w "$runtime_dir" ]; then
     runtime_dir=
 fi
 flock_bin=$(command -v flock || true)
 owns_session_lock=false
+activation_file=
 if [ -n "$runtime_dir" ] && [ -n "$flock_bin" ]; then
     lock_file="$runtime_dir/noire-appimage.lock"
+    activation_file="$runtime_dir/noire-controller.activate"
     if { exec 9>>"$lock_file"; } 2>/dev/null; then
         if ! "$flock_bin" -n 9; then
+            activation_request="$activation_file.$$"
+            if (umask 077 && printf '%s\n' show >"$activation_request"); then
+                mv -f -- "$activation_request" "$activation_file"
+            fi
             exit 0
         fi
         owns_session_lock=true
+        rm -f -- "$activation_file"
+        export NOIRE_ACTIVATION_FILE="$activation_file"
     fi
 fi
 

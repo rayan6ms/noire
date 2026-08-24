@@ -12,8 +12,20 @@ runtime_dir="$work_dir/run"
 fake_appimage="$work_dir/Noire.AppImage"
 mkdir -p "$app_dir/usr/bin" "$data_dir/applications" "$runtime_dir"
 install -m 0755 "$repo_dir/packaging/appimage/AppRun" "$app_dir/AppRun"
+# The generated script, rather than this parent, expands these variables.
+# shellcheck disable=SC2016
 {
     echo '#!/bin/sh'
+    echo 'if [ "${NOIRE_SMOKE_HOLD:-}" = 1 ]; then'
+    echo '    printf ready >"$XDG_RUNTIME_DIR/controller-ready"'
+    echo '    attempt=0'
+    echo '    while [ ! -s "$NOIRE_ACTIVATION_FILE" ] && [ "$attempt" -lt 40 ]; do'
+    echo '        sleep 0.05'
+    echo '        attempt=$((attempt + 1))'
+    echo '    done'
+    echo '    cat "$NOIRE_ACTIVATION_FILE" >"$XDG_RUNTIME_DIR/activation-request"'
+    echo '    exit 0'
+    echo 'fi'
     echo "echo 'noire 1.1.0'"
 } >"$app_dir/usr/bin/noire"
 chmod 0755 "$app_dir/usr/bin/noire"
@@ -22,10 +34,10 @@ chmod 0755 "$app_dir/usr/bin/noire"
     echo 'exit 1'
 } >"$app_dir/usr/bin/noirectl"
 chmod 0755 "$app_dir/usr/bin/noirectl"
+# The generated script, rather than this parent, expands these variables.
+# shellcheck disable=SC2016
 {
     printf '%s\n' '#!/bin/sh'
-    # The generated script, rather than this parent, expands these variables.
-    # shellcheck disable=SC2016
     printf '%s\n' 'printf "%s\n" "${NOIRE_PORTABLE_CONTROLLER_PID:-}" >"$XDG_RUNTIME_DIR/controller-pid"'
 } >"$app_dir/usr/bin/noired"
 chmod 0755 "$app_dir/usr/bin/noired"
@@ -87,4 +99,24 @@ case "$controller_pid" in
 esac
 [ "$controller_pid" -gt 1 ]
 
-echo 'NOIRE_APPIMAGE_APPRUN legacy_migration=pass unrelated_launcher=preserved lifecycle=pass'
+# A repeated launcher request must reach the existing controller rather than
+# silently doing nothing or starting a second UI/tray instance.
+runtime_activation="$work_dir/run-activation"
+mkdir -p "$runtime_activation"
+APPDIR="$app_dir" APPIMAGE="$app_dir/AppRun" HOME="$home_dir" \
+    NOIRE_SMOKE_HOLD=1 XDG_DATA_HOME="$data_dir" XDG_RUNTIME_DIR="$runtime_activation" \
+    "$app_dir/AppRun" >/dev/null &
+controller=$!
+attempt=0
+while [ ! -s "$runtime_activation/controller-ready" ] && [ "$attempt" -lt 40 ]; do
+    sleep 0.05
+    attempt=$((attempt + 1))
+done
+[ -s "$runtime_activation/controller-ready" ]
+APPDIR="$app_dir" APPIMAGE="$app_dir/AppRun" HOME="$home_dir" \
+    NOIRE_SMOKE_HOLD=1 XDG_DATA_HOME="$data_dir" XDG_RUNTIME_DIR="$runtime_activation" \
+    "$app_dir/AppRun" >/dev/null
+wait "$controller"
+[ "$(cat "$runtime_activation/activation-request")" = show ]
+
+echo 'NOIRE_APPIMAGE_APPRUN legacy_migration=pass unrelated_launcher=preserved lifecycle=pass activation=pass'

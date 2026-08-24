@@ -19,8 +19,20 @@ mkdir -p "$bin_dir" "$runtime_dir"
     # shellcheck disable=SC2016
     printf '%s\n' 'printf "%s\n" "${NOIRE_PORTABLE_CONTROLLER_PID:-}" >"$XDG_RUNTIME_DIR/controller-pid"'
 } >"$bin_dir/noired"
+# The generated script, rather than this parent, expands these variables.
+# shellcheck disable=SC2016
 {
     printf '%s\n' '#!/bin/sh'
+    printf '%s\n' 'if [ "${NOIRE_SMOKE_HOLD:-}" = 1 ]; then'
+    printf '%s\n' '    printf ready >"$XDG_RUNTIME_DIR/controller-ready"'
+    printf '%s\n' '    attempt=0'
+    printf '%s\n' '    while [ ! -s "$NOIRE_ACTIVATION_FILE" ] && [ "$attempt" -lt 40 ]; do'
+    printf '%s\n' '        sleep 0.05'
+    printf '%s\n' '        attempt=$((attempt + 1))'
+    printf '%s\n' '    done'
+    printf '%s\n' '    cat "$NOIRE_ACTIVATION_FILE" >"$XDG_RUNTIME_DIR/activation-request"'
+    printf '%s\n' '    exit 0'
+    printf '%s\n' 'fi'
     printf '%s\n' 'exit 0'
 } >"$bin_dir/noire"
 chmod 0755 "$bin_dir/noirectl" "$bin_dir/noired" "$bin_dir/noire"
@@ -39,4 +51,20 @@ case "$controller_pid" in
 esac
 [ "$controller_pid" -gt 1 ]
 
-echo 'NOIRE_FLATPAK_WRAPPER single_instance=pass controller_lifetime=pass'
+runtime_activation="$work_dir/run-activation"
+mkdir -p "$runtime_activation"
+PATH="$bin_dir:$PATH" NOIRE_SMOKE_HOLD=1 XDG_RUNTIME_DIR="$runtime_activation" \
+    "$repo_dir/packaging/flatpak/noire-wrapper" &
+controller=$!
+attempt=0
+while [ ! -s "$runtime_activation/controller-ready" ] && [ "$attempt" -lt 40 ]; do
+    sleep 0.05
+    attempt=$((attempt + 1))
+done
+[ -s "$runtime_activation/controller-ready" ]
+PATH="$bin_dir:$PATH" NOIRE_SMOKE_HOLD=1 XDG_RUNTIME_DIR="$runtime_activation" \
+    "$repo_dir/packaging/flatpak/noire-wrapper"
+wait "$controller"
+[ "$(cat "$runtime_activation/activation-request")" = show ]
+
+echo 'NOIRE_FLATPAK_WRAPPER single_instance=pass controller_lifetime=pass activation=pass'

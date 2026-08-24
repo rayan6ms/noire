@@ -271,9 +271,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes \
-            libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
+            dbus-x11 libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
             libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
-            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev
+            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev xauth xvfb
 
       - name: Restore Cargo sources
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -311,6 +311,12 @@ jobs:
             .github/scripts/run_portable_daemon_lifecycle_smoke.sh \
               "$PWD/target/release/noired"
           } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/release-smoke.log"
+
+      - name: Exercise real GPUI startup
+        run: |
+          dbus-run-session -- xvfb-run --auto-servernum \
+            .github/scripts/run_ui_startup_smoke.sh target/release/noire \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/ui-startup-smoke.log"
 
       - name: Upload failure evidence
         if: ${{ failure() }}
@@ -440,7 +446,7 @@ jobs:
           {
             sudo apt-get update
             sudo apt-get install --no-install-recommends --yes \
-              gcc pkg-config libclang-dev dbus-x11 weston \
+              gcc pkg-config libclang-dev dbus-x11 weston xauth xvfb \
               libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
               libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
               libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev \
@@ -469,10 +475,13 @@ jobs:
             cargo +1.97.0 test --workspace --all-features --locked \
             2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-test.log"
 
-      - name: Smoke-test the GPUI command interface
+      - name: Smoke-test the GPUI command interface and startup
         run: |
-          cargo +1.97.0 run --package noire-ui --locked -- --help \
-            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/ui-smoke.log"
+          {
+            cargo +1.97.0 run --package noire-ui --locked -- --help
+            dbus-run-session -- xvfb-run --auto-servernum \
+              .github/scripts/run_ui_startup_smoke.sh target/debug/noire
+          } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/ui-smoke.log"
 
       - name: Upload failure evidence
         if: ${{ failure() }}

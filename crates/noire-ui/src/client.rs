@@ -52,7 +52,7 @@ pub(crate) struct WorkerChannels {
     pub responses: Receiver<Response>,
 }
 
-pub(crate) fn spawn() -> WorkerChannels {
+pub(crate) fn spawn(subscribe_to_meters: bool) -> WorkerChannels {
     let (request_sender, request_receiver) = tokio::sync::mpsc::channel(8);
     let (response_sender, response_receiver) = mpsc::sync_channel(8);
     let startup_errors = response_sender.clone();
@@ -77,7 +77,11 @@ pub(crate) fn spawn() -> WorkerChannels {
                     return;
                 }
             };
-            runtime.block_on(worker_loop(request_receiver, response_sender));
+            runtime.block_on(worker_loop(
+                request_receiver,
+                response_sender,
+                subscribe_to_meters,
+            ));
         });
     if let Err(_error) = spawn_result {
         let _ignored = startup_errors.send(Response::Rejected {
@@ -205,7 +209,7 @@ fn tray_control_loop(
     commands: &Receiver<TrayControlCommand>,
     busy: &AtomicBool,
 ) {
-    let channels = spawn();
+    let channels = spawn(false);
     if channels.requests.blocking_send(Request::Refresh).is_err() {
         let _ignored = initialized.send(false);
         return;
@@ -226,8 +230,7 @@ fn tray_control_loop(
                     {
                         pending = Some(PendingTrayAction::Toggle);
                     } else {
-                        busy.store(false, Ordering::Release);
-                        tray.set_busy(false);
+                        clear_tray_busy(tray, busy);
                     }
                 }
                 TrayControlCommand::Toggle => {}
@@ -263,11 +266,7 @@ fn tray_control_loop(
                     matches!(pending.as_ref(), Some(PendingTrayAction::Startup(_)));
                 if request_complete || initialization_completed {
                     let action = pending.take();
-                    let should_exit = complete_tray_action(action, true, snapshot.active);
-                    busy.store(false, Ordering::Release);
-                    tray.set_busy(false);
-                    if should_exit {
-                        let _ignored = channels.requests.blocking_send(Request::Shutdown);
+                    if finish_tray_action(&channels, tray, busy, action, true, snapshot.active) {
                         return;
                     }
                 }
@@ -284,6 +283,10 @@ fn tray_control_loop(
                 if let Some((snapshot, _)) = recovered {
                     tray.set_active(snapshot.active);
                 }
+                if complete_pending_startup(&mut pending, request_complete, authoritative, active) {
+                    clear_tray_busy(tray, busy);
+                    continue;
+                }
                 if request_complete
                     && !matches!(pending.as_ref(), Some(PendingTrayAction::Startup(_)))
                 {
@@ -291,11 +294,7 @@ fn tray_control_loop(
                         continue;
                     }
                     let action = pending.take();
-                    let should_exit = complete_tray_action(action, authoritative, active);
-                    busy.store(false, Ordering::Release);
-                    tray.set_busy(false);
-                    if should_exit {
-                        let _ignored = channels.requests.blocking_send(Request::Shutdown);
+                    if finish_tray_action(&channels, tray, busy, action, authoritative, active) {
                         return;
                     }
                 }
@@ -308,6 +307,41 @@ fn tray_control_loop(
             }
         }
     }
+}
+
+fn clear_tray_busy(tray: &TrayRuntime, busy: &AtomicBool) {
+    busy.store(false, Ordering::Release);
+    tray.set_busy(false);
+}
+
+fn finish_tray_action(
+    channels: &WorkerChannels,
+    tray: &TrayRuntime,
+    busy: &AtomicBool,
+    action: Option<PendingTrayAction>,
+    succeeded: bool,
+    active: bool,
+) -> bool {
+    let should_exit = complete_tray_action(action, succeeded, active);
+    clear_tray_busy(tray, busy);
+    if should_exit {
+        let _ignored = channels.requests.blocking_send(Request::Shutdown);
+    }
+    should_exit
+}
+
+fn complete_pending_startup(
+    pending: &mut Option<PendingTrayAction>,
+    request_complete: bool,
+    succeeded: bool,
+    active: bool,
+) -> bool {
+    if !request_complete || !matches!(pending.as_ref(), Some(PendingTrayAction::Startup(_))) {
+        return false;
+    }
+    let action = pending.take();
+    let _ignored = complete_tray_action(action, succeeded, active);
+    true
 }
 
 fn retry_pending_stop(channels: &WorkerChannels, pending: &mut Option<PendingTrayAction>) -> bool {
@@ -362,6 +396,7 @@ const MAX_RECONNECT_BACKOFF: Duration = Duration::from_secs(4);
 async fn worker_loop(
     mut requests: tokio::sync::mpsc::Receiver<Request>,
     responses: SyncSender<Response>,
+    subscribe_to_meters: bool,
 ) {
     let Some(mut request) = requests.recv().await else {
         return;
@@ -404,6 +439,7 @@ async fn worker_loop(
             &mut requests,
             &responses,
             &mut established,
+            subscribe_to_meters,
         )
         .await
         {
@@ -444,6 +480,7 @@ async fn serve_connection(
     requests: &mut tokio::sync::mpsc::Receiver<Request>,
     responses: &SyncSender<Response>,
     established: &mut bool,
+    subscribe_to_meters: bool,
 ) -> bool {
     let proxy = match Noire1Proxy::new(connection).await {
         Ok(proxy) => proxy,
@@ -468,7 +505,7 @@ async fn serve_connection(
         let _ignored = responses.send(rejected(daemon_unavailable(), initial_request_complete));
         return false;
     };
-    if proxy.subscribe_meters().await.is_err() {
+    if subscribe_to_meters && proxy.subscribe_meters().await.is_err() {
         let _ignored = responses.send(rejected(daemon_unavailable(), initial_request_complete));
         return false;
     }
@@ -496,11 +533,15 @@ async fn serve_connection(
         tokio::select! {
             request = requests.recv() => {
                 let Some(request) = request else {
-                    let _ignored = proxy.unsubscribe_meters().await;
+                    if subscribe_to_meters {
+                        let _ignored = proxy.unsubscribe_meters().await;
+                    }
                     return true;
                 };
                 if matches!(request, Request::Shutdown) {
-                    let _ignored = proxy.unsubscribe_meters().await;
+                    if subscribe_to_meters {
+                        let _ignored = proxy.unsubscribe_meters().await;
+                    }
                     return true;
                 }
                 let response = execute(&proxy, request).await;
@@ -528,7 +569,7 @@ async fn serve_connection(
                     return true;
                 }
             }
-            signal = meter_changes.next() => {
+            signal = meter_changes.next(), if subscribe_to_meters => {
                 let Some(signal) = signal else {
                     return false;
                 };
@@ -654,18 +695,21 @@ async fn execute(proxy: &Noire1Proxy<'_>, request: Request) -> Response {
     };
 
     match result {
-        Ok(snapshot) => match (
-            proxy.list_inputs().await,
-            proxy.get_start_with_noise_reduction().await,
-        ) {
-            (Ok(inputs), Ok(start_with_noise_reduction)) => Response::State {
+        Ok(snapshot) => match proxy.list_inputs().await {
+            Ok(inputs) => Response::State {
                 snapshot,
                 inputs,
-                start_with_noise_reduction,
+                // This preference was added after the original version-one
+                // interface. Keep core controls usable with an older native
+                // daemon while package upgrades converge.
+                start_with_noise_reduction: proxy
+                    .get_start_with_noise_reduction()
+                    .await
+                    .unwrap_or(false),
                 refresh: is_refresh,
                 request_complete: false,
             },
-            (Err(_error), _) | (_, Err(_error)) => Response::Rejected {
+            Err(_error) => Response::Rejected {
                 error: communication_error(
                     "daemon-state-incomplete",
                     "Noire could not load all daemon settings.",
@@ -795,7 +839,7 @@ mod tests {
 
     use super::{
         INITIAL_RECONNECT_BACKOFF, MAX_RECONNECT_BACKOFF, PendingTrayAction, Request, Response,
-        complete_tray_action, mutation_error_copy, next_backoff, spawn,
+        complete_pending_startup, complete_tray_action, mutation_error_copy, next_backoff, spawn,
     };
 
     #[derive(Default)]
@@ -987,6 +1031,17 @@ mod tests {
     }
 
     #[test]
+    fn rejected_startup_clears_pending_state_and_reports_initialization() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let mut pending = Some(PendingTrayAction::Startup(sender));
+        assert!(!complete_pending_startup(&mut pending, false, false, false));
+        assert!(pending.is_some());
+        assert!(complete_pending_startup(&mut pending, true, false, false));
+        assert!(pending.is_none());
+        assert!(!receiver.recv().unwrap_or(true));
+    }
+
+    #[test]
     #[ignore = "requires a private dbus-run-session"]
     fn dbus_worker_converges_after_external_change_rejection_and_restart()
     -> Result<(), Box<dyn Error>> {
@@ -995,7 +1050,7 @@ mod tests {
             .enable_all()
             .build()?;
         let server = runtime.block_on(start_server(store.clone()))?;
-        let channels = spawn();
+        let channels = spawn(true);
 
         channels.requests.blocking_send(Request::Refresh)?;
         let initial = state(receive_completed(&runtime, &channels)?)?;

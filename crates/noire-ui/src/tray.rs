@@ -1,9 +1,15 @@
 //! Freedesktop `StatusNotifierItem` bridge for the GPUI application.
 
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-    mpsc::{self, Receiver, RecvError, Sender, TryRecvError},
+use std::{
+    fs,
+    path::PathBuf,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, RecvError, Sender, TryRecvError},
+    },
+    thread,
+    time::Duration,
 };
 
 use ksni::blocking::{Handle, TrayMethods};
@@ -194,14 +200,80 @@ pub(crate) struct TrayRuntime {
 struct TrayInner {
     commands: Mutex<Receiver<TrayCommand>>,
     handle: Option<Handle<NoireTray>>,
+    _activation: Option<ActivationListener>,
     active: AtomicBool,
     busy: AtomicBool,
+}
+
+struct ActivationListener {
+    path: PathBuf,
+    stop: Sender<()>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl ActivationListener {
+    fn start(commands: Sender<TrayCommand>) -> Option<Self> {
+        let path = activation_path()?;
+        let (stop, stop_receiver) = mpsc::channel();
+        let listener_path = path.clone();
+        let thread = thread::Builder::new()
+            .name("noire-activation".to_owned())
+            .spawn(move || {
+                while matches!(
+                    stop_receiver.recv_timeout(Duration::from_millis(50)),
+                    Err(mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    let is_small_file = fs::symlink_metadata(&listener_path)
+                        .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= 64);
+                    if !is_small_file {
+                        continue;
+                    }
+                    let request = fs::read_to_string(&listener_path);
+                    let _ignored = fs::remove_file(&listener_path);
+                    if request.is_ok_and(|request| request.trim() == "show")
+                        && commands.send(TrayCommand::Show).is_err()
+                    {
+                        return;
+                    }
+                }
+            })
+            .ok()?;
+        Some(Self {
+            path,
+            stop,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for ActivationListener {
+    fn drop(&mut self) {
+        let _ignored = self.stop.send(());
+        if let Some(thread) = self.thread.take() {
+            let _ignored = thread.join();
+        }
+        if fs::symlink_metadata(&self.path).is_ok_and(|metadata| metadata.is_file()) {
+            let _ignored = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn activation_path() -> Option<PathBuf> {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)?;
+    let expected = runtime.join("noire-controller.activate");
+    let configured = std::env::var_os("NOIRE_ACTIVATION_FILE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)?;
+    (configured == expected).then_some(configured)
 }
 
 impl TrayRuntime {
     /// Starts the system tray. The application remains usable if the desktop has no tray host.
     pub fn start() -> Self {
         let (sender, commands) = mpsc::channel();
+        let activation = ActivationListener::start(sender.clone());
         let tray = NoireTray {
             active: false,
             busy: false,
@@ -219,6 +291,7 @@ impl TrayRuntime {
             inner: Arc::new(TrayInner {
                 commands: Mutex::new(commands),
                 handle,
+                _activation: activation,
                 active: AtomicBool::new(false),
                 busy: AtomicBool::new(false),
             }),

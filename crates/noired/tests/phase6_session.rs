@@ -27,6 +27,7 @@ use noired::{
 struct FakeEngine {
     meter_tick: u64,
     autonomous_recovery: Arc<AtomicBool>,
+    meter_enabled: Arc<AtomicBool>,
 }
 
 impl AudioEngine for FakeEngine {
@@ -65,6 +66,11 @@ impl AudioEngine for FakeEngine {
         };
         Ok(observation)
     }
+
+    fn set_meter_monitoring(&mut self, enabled: bool) -> Result<(), EngineError> {
+        self.meter_enabled.store(enabled, Ordering::Relaxed);
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -101,11 +107,13 @@ async fn same_user_contract_rejects_stale_invalid_and_malformed_requests()
     let (root, store) = temporary_store()?;
     let server = zbus::Connection::session().await?;
     let autonomous_recovery = Arc::new(AtomicBool::new(false));
+    let meter_enabled = Arc::new(AtomicBool::new(false));
     let daemon = Daemon::new(
         store,
         Box::new(FakeEngine {
             meter_tick: 0,
             autonomous_recovery: Arc::clone(&autonomous_recovery),
+            meter_enabled: Arc::clone(&meter_enabled),
         }),
         LoadOutcome {
             config: Config::default(),
@@ -135,6 +143,7 @@ async fn same_user_contract_rejects_stale_invalid_and_malformed_requests()
     let mut meters = proxy.receive_meters_changed().await?;
     let mut unsubscribed_meters = second_proxy.receive_meters_changed().await?;
     proxy.subscribe_meters().await?;
+    assert!(meter_enabled.load(Ordering::Relaxed));
     let first_meter = tokio::time::timeout(Duration::from_millis(250), meters.next())
         .await?
         .ok_or("meter stream ended")?;
@@ -150,11 +159,24 @@ async fn same_user_contract_rejects_stale_invalid_and_malformed_requests()
             .is_err()
     );
     proxy.unsubscribe_meters().await?;
+    assert!(!meter_enabled.load(Ordering::Relaxed));
     assert!(
         tokio::time::timeout(Duration::from_millis(150), meters.next())
             .await
             .is_err()
     );
+    let abandoned_client = zbus::Connection::session().await?;
+    let abandoned_proxy = Noire1Proxy::new(&abandoned_client).await?;
+    abandoned_proxy.subscribe_meters().await?;
+    assert!(meter_enabled.load(Ordering::Relaxed));
+    drop(abandoned_proxy);
+    drop(abandoned_client);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while meter_enabled.load(Ordering::Relaxed) {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await?;
     let introspection = zbus::fdo::IntrospectableProxy::builder(&client)
         .destination(noire_ipc::BUS_NAME)?
         .path(noire_ipc::OBJECT_PATH)?

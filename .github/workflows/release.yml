@@ -64,11 +64,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes \
-            build-essential ca-certificates clang curl dpkg-dev file libclang-dev \
+            build-essential ca-certificates clang curl dbus-x11 dpkg-dev file libclang-dev \
             libegl1-mesa-dev libfontconfig-dev libpipewire-0.3-dev libspa-0.2-dev \
             libspa-0.2-modules libvulkan-dev libwayland-dev libx11-xcb-dev libxcb1-dev \
             libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
-            libxkbcommon-dev libxkbcommon-x11-dev pipewire-bin pkg-config xz-utils
+            libxkbcommon-dev libxkbcommon-x11-dev pipewire-bin pkg-config xauth xvfb xz-utils
           rustup toolchain install 1.97.0 --profile minimal --no-self-update
 
       - name: Restore Cargo sources
@@ -118,6 +118,13 @@ jobs:
           git archive --format=tar \
             --prefix="noire-${{ needs.prepare.outputs.version }}/" HEAD | \
             xz --threads=1 -9e >"dist/source/noire-${{ needs.prepare.outputs.version }}.tar.xz"
+
+      - name: Exercise the finished AppImage startup
+        run: |
+          appimage=$(find dist/appimage -maxdepth 1 -type f -name '*.AppImage' -print -quit)
+          test -n "$appimage"
+          dbus-run-session -- xvfb-run --auto-servernum \
+            .github/scripts/run_ui_startup_smoke.sh "$appimage"
 
       - name: Upload Debian packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

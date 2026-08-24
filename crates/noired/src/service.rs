@@ -2,7 +2,10 @@
 
 use std::{
     collections::BTreeSet,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -23,6 +26,7 @@ pub struct NoireService {
     launch_manager: Arc<dyn LaunchManager>,
     error_limiter: Arc<Mutex<EventRateLimiter>>,
     meter_subscribers: Arc<Mutex<BTreeSet<String>>>,
+    meter_monitoring: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for NoireService {
@@ -42,6 +46,7 @@ impl NoireService {
             launch_manager,
             error_limiter: Arc::new(Mutex::new(EventRateLimiter::new(Duration::from_secs(5)))),
             meter_subscribers: Arc::new(Mutex::new(BTreeSet::new())),
+            meter_monitoring: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -109,22 +114,29 @@ impl NoireService {
             .iter()
             .cloned()
             .collect();
-        if subscribers.is_empty() {
-            return;
-        }
-        let Ok(bus) = zbus::fdo::DBusProxy::new(connection).await else {
-            return;
-        };
-        for subscriber in subscribers {
-            let Ok(name) = zbus::names::BusName::try_from(subscriber.as_str()) else {
-                continue;
+        let mut disconnected = Vec::new();
+        if !subscribers.is_empty() {
+            let Ok(bus) = zbus::fdo::DBusProxy::new(connection).await else {
+                return;
             };
-            if !matches!(bus.name_has_owner(name).await, Ok(true)) {
-                self.meter_subscribers.lock().await.remove(&subscriber);
+            for subscriber in subscribers {
+                let Ok(name) = zbus::names::BusName::try_from(subscriber.as_str()) else {
+                    continue;
+                };
+                if !matches!(bus.name_has_owner(name).await, Ok(true)) {
+                    disconnected.push(subscriber);
+                }
             }
         }
-        if self.meter_subscribers.lock().await.is_empty() {
-            let _ignored = self.daemon.lock().await.set_meter_monitoring(false);
+        let mut subscribers = self.meter_subscribers.lock().await;
+        for subscriber in disconnected {
+            subscribers.remove(&subscriber);
+        }
+        if subscribers.is_empty()
+            && self.meter_monitoring.load(Ordering::Acquire)
+            && self.daemon.lock().await.set_meter_monitoring(false).is_ok()
+        {
+            self.meter_monitoring.store(false, Ordering::Release);
         }
     }
 
@@ -349,17 +361,14 @@ impl NoireService {
         #[zbus(header)] header: Header<'_>,
     ) -> Result<(), ServiceError> {
         let caller = Self::caller(&header)?;
-        let first_subscriber = {
-            let mut subscribers = self.meter_subscribers.lock().await;
-            let inserted = subscribers.insert(caller);
-            inserted && subscribers.len() == 1
-        };
-        if first_subscriber {
-            self.daemon
-                .lock()
-                .await
-                .set_meter_monitoring(true)
-                .map_err(map_error)?;
+        let mut subscribers = self.meter_subscribers.lock().await;
+        let inserted = subscribers.insert(caller.clone());
+        if inserted && !self.meter_monitoring.load(Ordering::Acquire) {
+            if let Err(error) = self.daemon.lock().await.set_meter_monitoring(true) {
+                subscribers.remove(&caller);
+                return Err(map_error(error));
+            }
+            self.meter_monitoring.store(true, Ordering::Release);
         }
         Ok(())
     }
@@ -369,16 +378,14 @@ impl NoireService {
         #[zbus(header)] header: Header<'_>,
     ) -> Result<(), ServiceError> {
         let caller = Self::caller(&header)?;
-        let last_subscriber = {
-            let mut subscribers = self.meter_subscribers.lock().await;
-            subscribers.remove(&caller) && subscribers.is_empty()
-        };
-        if last_subscriber {
-            self.daemon
-                .lock()
-                .await
-                .set_meter_monitoring(false)
-                .map_err(map_error)?;
+        let mut subscribers = self.meter_subscribers.lock().await;
+        let last_subscriber = subscribers.remove(&caller) && subscribers.is_empty();
+        if last_subscriber && self.meter_monitoring.load(Ordering::Acquire) {
+            if let Err(error) = self.daemon.lock().await.set_meter_monitoring(false) {
+                subscribers.insert(caller);
+                return Err(map_error(error));
+            }
+            self.meter_monitoring.store(false, Ordering::Release);
         }
         Ok(())
     }

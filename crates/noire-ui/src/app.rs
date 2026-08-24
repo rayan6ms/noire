@@ -183,6 +183,8 @@ impl AppRuntime {
         let runtime = cx.entity();
         let runtime_for_close = runtime.clone();
         let tray_available = self.tray.available();
+        let initial_active = self.tray.active();
+        let tray_controller = self.tray_controller.clone();
         let bounds = Bounds::centered(None, size(px(680.0), px(512.0)), cx);
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -208,7 +210,17 @@ impl AppRuntime {
                 }
                 false
             });
-            cx.new(|cx| NoireView::new(preferences, runtime, tray_available, window, cx))
+            cx.new(|cx| {
+                NoireView::new(
+                    preferences,
+                    runtime,
+                    tray_controller,
+                    tray_available,
+                    initial_active,
+                    window,
+                    cx,
+                )
+            })
         }) {
             Ok(handle) => {
                 let handle = AnyWindowHandle::from(handle);
@@ -259,7 +271,9 @@ impl NoireView {
     fn new(
         preferences: DesktopPreferences,
         runtime: Entity<AppRuntime>,
+        tray_controller: client::TrayController,
         tray_available: bool,
+        initial_active: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -284,11 +298,9 @@ impl NoireView {
         })
         .detach();
 
-        let initial_active = runtime.read(cx).tray.active();
-        let tray_controller = runtime.read(cx).tray_controller.clone();
         let mut this = Self {
             state: UiState::default(),
-            channels: client::spawn(),
+            channels: client::spawn(true),
             outstanding: 0,
             page: Page::Home,
             preferences,
@@ -1493,6 +1505,11 @@ fn status_icon(active: bool, p: Palette) -> Div {
 }
 
 fn path_node(icon: &'static str, label: &str, p: Palette) -> Div {
+    let icon_size = if icon == "icons/shield.svg" {
+        px(18.0)
+    } else {
+        px(17.0)
+    };
     div()
         .flex_1()
         .min_w_0()
@@ -1506,7 +1523,7 @@ fn path_node(icon: &'static str, label: &str, p: Palette) -> Div {
         .justify_center()
         .gap_2()
         .px_3()
-        .child(svg().path(icon).size(px(17.0)).text_color(rgb(p.muted)))
+        .child(svg().path(icon).size(icon_size).text_color(rgb(p.muted)))
         .child(
             div()
                 .min_w_0()
