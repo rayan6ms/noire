@@ -30,6 +30,16 @@
   <url type="homepage">https://github.com/rayan6ms/noire</url>
   <url type="bugtracker">https://github.com/rayan6ms/noire/issues</url>
   <releases>
+    <release version="1.1.3" date="2026-08-24" type="stable">
+      <description>
+        <p>Makes tray control and startup behavior reliable.</p>
+        <ul>
+          <li>Keeps the window, tray icon, and tray actions synchronized with acknowledged daemon state.</li>
+          <li>Starts noise reduction off by default and adds a separate opt-in for enabling it on startup.</li>
+          <li>Stops processing on Quit and retires stale AppImage or Flatpak background services safely.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.2" date="2026-08-24" type="stable">
       <description>
         <p>Fixes AppImage integration and desktop layout.</p>

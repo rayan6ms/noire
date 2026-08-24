@@ -5,6 +5,8 @@ repo_root=$(git rev-parse --show-toplevel)
 generator="$repo_root/packaging/generate-release-metadata.py"
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/noire-release-metadata.XXXXXX")
 dirty_marker="$repo_root/.noire-release-metadata-smoke-dirty"
+version=$(cargo metadata --locked --no-deps --format-version 1 | \
+  python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(package["version"] for package in data["packages"] if package["name"] == "noire-ui"))')
 
 cleanup() {
   rm -rf -- "$scratch"
@@ -19,15 +21,15 @@ fi
 
 mkdir -p "$scratch/appimage" "$scratch/deb" "$scratch/flatpak" "$scratch/rpm" \
   "$scratch/output-a" "$scratch/output-b"
-printf 'synthetic AppImage release artifact\n' > "$scratch/appimage/Noire-1.1.0-x86_64.AppImage"
-printf 'synthetic Debian release artifact\n' > "$scratch/deb/noire_1.1.0-1_amd64.deb"
-printf 'synthetic daemon Debian release artifact\n' > "$scratch/deb/noire-daemon_1.1.0-1_amd64.deb"
-printf 'synthetic Flatpak release artifact\n' > "$scratch/flatpak/Noire-1.1.0-x86_64.flatpak"
-printf 'synthetic Fedora release artifact\n' > "$scratch/rpm/noire-1.1.0-1.x86_64.rpm"
+printf 'synthetic AppImage release artifact\n' > "$scratch/appimage/Noire-$version-x86_64.AppImage"
+printf 'synthetic Debian release artifact\n' > "$scratch/deb/noire_$version-1_amd64.deb"
+printf 'synthetic daemon Debian release artifact\n' > "$scratch/deb/noire-daemon_$version-1_amd64.deb"
+printf 'synthetic Flatpak release artifact\n' > "$scratch/flatpak/Noire-$version-x86_64.flatpak"
+printf 'synthetic Fedora release artifact\n' > "$scratch/rpm/noire-$version-1.x86_64.rpm"
 
 printf 'dirty-source policy fixture\n' > "$dirty_marker"
 if SOURCE_DATE_EPOCH=1786579200 "$generator" generate \
-  --version 1.1.0 \
+  --version "$version" \
   --artifact-dir "$scratch/appimage" \
   --artifact-dir "$scratch/deb" \
   --artifact-dir "$scratch/flatpak" \
@@ -47,7 +49,7 @@ generate() {
   local output_dir=$1
   SOURCE_DATE_EPOCH=1786579200 NOIRE_RELEASE_ALLOW_DIRTY_SOURCE=1 \
     "$generator" generate \
-      --version 1.1.0 \
+      --version "$version" \
       --artifact-dir "$scratch/appimage" \
       --artifact-dir "$scratch/deb" \
       --artifact-dir "$scratch/flatpak" \
@@ -60,21 +62,22 @@ generate "$scratch/output-b"
 diff --recursive --no-dereference "$scratch/output-a" "$scratch/output-b"
 
 "$generator" verify \
-  --version 1.1.0 \
+  --version "$version" \
   --artifact-dir "$scratch/appimage" \
   --artifact-dir "$scratch/deb" \
   --artifact-dir "$scratch/flatpak" \
   --artifact-dir "$scratch/rpm" \
   --metadata-dir "$scratch/output-a"
 
-python3 - "$scratch/output-a" <<'PY'
+python3 - "$scratch/output-a" "$version" <<'PY'
 import json
 import pathlib
 import sys
 
 root = pathlib.Path(sys.argv[1])
-spdx = json.loads((root / "noire-1.1.0.spdx.json").read_text(encoding="utf-8"))
-provenance = json.loads((root / "noire-1.1.0.intoto.jsonl").read_text(encoding="utf-8"))
+version = sys.argv[2]
+spdx = json.loads((root / f"noire-{version}.spdx.json").read_text(encoding="utf-8"))
+provenance = json.loads((root / f"noire-{version}.intoto.jsonl").read_text(encoding="utf-8"))
 sums = (root / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
 assert spdx["spdxVersion"] == "SPDX-2.3"
 assert provenance["predicateType"] == "https://slsa.dev/provenance/v1"
@@ -89,7 +92,7 @@ PY
 cp -a "$scratch/output-a" "$scratch/tampered"
 printf 'tampered\n' >> "$scratch/tampered/THIRD_PARTY_LICENSES.md"
 if "$generator" verify \
-  --version 1.1.0 \
+  --version "$version" \
   --artifact-dir "$scratch/appimage" \
   --artifact-dir "$scratch/deb" \
   --artifact-dir "$scratch/flatpak" \
