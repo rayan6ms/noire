@@ -30,6 +30,16 @@
   <url type="homepage">https://github.com/rayan6ms/noire</url>
   <url type="bugtracker">https://github.com/rayan6ms/noire/issues</url>
   <releases>
+    <release version="1.1.1" date="2026-08-24" type="stable">
+      <description>
+        <p>Fixes portable startup and desktop behavior.</p>
+        <ul>
+          <li>Repairs AppImage PipeWire startup and prevents portable launches from writing desktop files.</li>
+          <li>Follows the system appearance by default, adds a true light theme, and repositions Start and Stop.</li>
+          <li>Improves microphone names and guards against conflicting control requests.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.0" date="2026-08-21" type="stable">
       <description>
         <p>Replaces the GTK interface with a native GPUI controller and ships FastEnhancer-B noise reduction.</p>

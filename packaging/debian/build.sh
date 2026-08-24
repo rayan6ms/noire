@@ -95,7 +95,7 @@ add_debian_docs() {
         echo
         echo "  * Release Noire $binary_version."
         echo
-        echo " -- rayan6ms  Fri, 21 Aug 2026 00:00:00 +0000"
+        echo " -- rayan6ms  Mon, 24 Aug 2026 00:00:00 +0000"
     } | gzip -9n >"$root/usr/share/doc/$package/changelog.Debian.gz"
     if [ -d "$root/usr/share/man" ]; then
         find "$root/usr/share/man" -type f -name '*.1' -exec gzip -9n '{}' \;

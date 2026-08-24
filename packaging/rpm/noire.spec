@@ -1,4 +1,4 @@
-%{!?noire_version:%global noire_version 1.1.0}
+%{!?noire_version:%global noire_version 1.1.1}
 %{!?noire_release:%global noire_release 1}
 %{!?noire_daemon_stage:%global noire_daemon_stage /nonexistent/noire-daemon}
 %{!?noire_ui_stage:%global noire_ui_stage /nonexistent/noire-ui}
@@ -73,6 +73,9 @@ cp -a %{noire_ui_stage}/. %{buildroot}/
 /usr/share/man/man1/noire.1*
 
 %changelog
+* Mon Aug 24 2026 rayan6ms - 1.1.1-1
+- Fix portable startup, desktop behavior, and microphone labels
+
 * Fri Aug 21 2026 rayan6ms - 1.1.0-1
 - Replace GTK4 interface with GPUI and ship FastEnhancer-B 48 kHz
 
