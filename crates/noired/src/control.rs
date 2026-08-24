@@ -49,6 +49,8 @@ pub struct EngineObservation {
     pub metrics: Metrics,
     /// Current classified runtime fault, absent while healthy or intentionally stopped.
     pub fault: Option<EngineError>,
+    /// Latest coalesced stable input descriptors observed by the native owner thread.
+    pub devices: Vec<InputDescriptor>,
 }
 
 impl Default for EngineObservation {
@@ -59,6 +61,7 @@ impl Default for EngineObservation {
             pipewire_version: String::new(),
             metrics: Metrics::default(),
             fault: None,
+            devices: Vec::new(),
         }
     }
 }
@@ -160,6 +163,14 @@ pub enum ControlError {
     /// Persistence failed and runtime state was rolled back.
     #[error("persistence failed: {0}")]
     Persistence(String),
+    /// Persistence failed and the previous runtime state could not be restored.
+    #[error("persistence failed: {persistence}; runtime rollback failed: {rollback}")]
+    PersistenceRollback {
+        /// Durable-save error detail.
+        persistence: String,
+        /// Classified rollback failure.
+        rollback: EngineError,
+    },
     /// A newer config file has disabled writes.
     #[error("configuration belongs to a newer schema and is read-only")]
     ReadOnly,
@@ -217,13 +228,14 @@ impl Daemon {
                 }
             }
         };
+        let devices = observation.devices.clone();
         Self {
             store,
             config: loaded.config,
             writable: loaded.writable,
             revision: 1,
-            device_revision: 0,
-            devices: Vec::new(),
+            device_revision: u64::from(!devices.is_empty()),
+            devices,
             engine,
             observation,
             started_at: Instant::now(),
@@ -306,6 +318,10 @@ impl Daemon {
                 {
                     self.last_error = None;
                 }
+                if observation.devices != self.devices {
+                    self.devices.clone_from(&observation.devices);
+                    self.device_revision = self.device_revision.saturating_add(1);
+                }
                 self.observation = observation;
             }
             Err(error) => {
@@ -331,9 +347,10 @@ impl Daemon {
     pub fn inputs(&mut self) -> Result<Vec<InputDescriptor>, ControlError> {
         let next = self.engine.inputs().map_err(ControlError::Audio)?;
         if next != self.devices {
-            self.devices = next;
+            self.devices.clone_from(&next);
             self.device_revision = self.device_revision.saturating_add(1);
         }
+        self.observation.devices = next;
         Ok(self.devices.clone())
     }
 
@@ -582,9 +599,22 @@ impl Daemon {
             ControlError::Audio(error)
         })?;
         if let Err(error) = self.store.save(&candidate) {
-            let _ = self.engine.apply(&previous);
-            self.observation = previous_observation;
-            return Err(ControlError::Persistence(error.to_string()));
+            let persistence = error.to_string();
+            match self.engine.apply(&previous) {
+                Ok(restored) => self.observation = restored,
+                Err(rollback) => {
+                    self.last_error = Some(error_info(&rollback));
+                    self.observation = previous_observation;
+                    self.observation.state = LifecycleState::Degraded;
+                    self.observation.fault = Some(rollback.clone());
+                    self.revision = self.revision.saturating_add(1);
+                    return Err(ControlError::PersistenceRollback {
+                        persistence,
+                        rollback,
+                    });
+                }
+            }
+            return Err(ControlError::Persistence(persistence));
         }
         self.config = candidate;
         self.observation = observation;
@@ -682,6 +712,11 @@ mod tests {
         observation: Arc<Mutex<EngineObservation>>,
     }
 
+    #[derive(Default)]
+    struct FailingRollbackEngine {
+        apply_count: usize,
+    }
+
     impl AudioEngine for RecordingEngine {
         fn apply(&mut self, config: &Config) -> Result<EngineObservation, EngineError> {
             self.applied
@@ -722,6 +757,28 @@ mod tests {
                 .lock()
                 .map_err(|_| test_engine_error("observation lock poisoned"))
                 .map(|observation| observation.clone())
+        }
+
+        fn inputs(&mut self) -> Result<Vec<InputDescriptor>, EngineError> {
+            Ok(Vec::new())
+        }
+    }
+
+    impl AudioEngine for FailingRollbackEngine {
+        fn apply(&mut self, config: &Config) -> Result<EngineObservation, EngineError> {
+            let call = self.apply_count;
+            self.apply_count = self.apply_count.saturating_add(1);
+            if call == 2 {
+                return Err(test_engine_error("rollback failed"));
+            }
+            Ok(EngineObservation {
+                state: if config.active {
+                    LifecycleState::Running
+                } else {
+                    LifecycleState::Stopped
+                },
+                ..EngineObservation::default()
+            })
         }
 
         fn inputs(&mut self) -> Result<Vec<InputDescriptor>, EngineError> {
@@ -801,6 +858,21 @@ mod tests {
         assert!(!daemon.refresh_observation());
         assert_eq!(daemon.revision(), recovered_revision);
         assert_eq!(daemon.snapshot().metrics.callback_p50_ns, 10);
+
+        observation
+            .lock()
+            .map_err(|_| "observation lock poisoned")?
+            .devices = vec![InputDescriptor {
+            stable_id: "alsa_input.hotplug".to_owned(),
+            display_name: "Hotplug Microphone".to_owned(),
+            is_default: true,
+            availability: "available".to_owned(),
+        }];
+        let previous_device_revision = daemon.device_revision();
+        assert!(!daemon.refresh_observation());
+        assert_eq!(daemon.revision(), recovered_revision);
+        assert!(daemon.device_revision() > previous_device_revision);
+        assert_eq!(daemon.devices[0].stable_id, "alsa_input.hotplug");
         if root.exists() {
             fs::remove_dir_all(root)?;
         }
@@ -868,6 +940,32 @@ mod tests {
         if root.exists() {
             fs::remove_dir_all(root)?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn rollback_failure_is_public_and_marks_runtime_degraded() -> Result<(), Box<dyn Error>> {
+        let (root, _) = temporary_store("audio-rollback")?;
+        fs::create_dir_all(&root)?;
+        let blocker = root.join("blocked");
+        fs::write(&blocker, "not a directory")?;
+        let store = ConfigStore::new(blocker.join("config.toml"));
+        let mut daemon = Daemon::new(
+            store,
+            Box::new(FailingRollbackEngine::default()),
+            defaults(),
+        );
+
+        let result = daemon.set_strength(0.75, daemon.revision());
+
+        assert!(matches!(
+            result,
+            Err(ControlError::PersistenceRollback { .. })
+        ));
+        assert_eq!(daemon.snapshot().state, "degraded");
+        assert!(daemon.snapshot().has_error);
+        assert_eq!(daemon.revision(), 2);
+        fs::remove_dir_all(root)?;
         Ok(())
     }
 

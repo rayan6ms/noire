@@ -5,7 +5,7 @@ use std::{
     rc::Rc,
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU8, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -24,6 +24,9 @@ use crate::{
 };
 
 const BYTES_PER_SAMPLE: usize = size_of::<f32>();
+const AUDIO_COMMAND_NONE: u8 = 0;
+const AUDIO_COMMAND_DISCARD: u8 = 1;
+const AUDIO_COMMAND_CLEAR: u8 = 2;
 
 /// Delay before the last consumer pauses physical capture.
 pub const CONSUMER_IDLE_DEBOUNCE: Duration = Duration::from_millis(500);
@@ -142,6 +145,7 @@ struct SourceAudio {
 #[derive(Debug)]
 struct SourceProcessor {
     audio: Rc<RefCell<SourceAudio>>,
+    audio_command: Arc<AtomicU8>,
     telemetry: SourceTelemetry,
 }
 
@@ -177,6 +181,7 @@ pub struct VirtualSourceStream {
     stream: StreamRc,
     control: Rc<RefCell<ControlState>>,
     audio: Rc<RefCell<SourceAudio>>,
+    audio_command: Arc<AtomicU8>,
     telemetry: SourceTelemetry,
 }
 
@@ -225,8 +230,10 @@ impl VirtualSourceStream {
             output,
             scratch: [0.0; MAX_CALLBACK_FRAMES],
         }));
+        let audio_command = Arc::new(AtomicU8::new(AUDIO_COMMAND_NONE));
         let processor = SourceProcessor {
             audio: Rc::clone(&audio),
+            audio_command: Arc::clone(&audio_command),
             telemetry: telemetry.clone(),
         };
 
@@ -282,6 +289,7 @@ impl VirtualSourceStream {
             stream,
             control,
             audio,
+            audio_command,
             telemetry,
         })
     }
@@ -316,18 +324,24 @@ impl VirtualSourceStream {
         resolve_demand_transition(&mut self.control.borrow_mut(), now)
     }
 
-    /// Clears all source-owned sensitive samples while callbacks are paused.
+    /// Clears all source-owned sensitive samples without overlapping a callback borrow.
     pub fn clear_sensitive(&self) {
-        let mut audio = self.audio.borrow_mut();
-        audio.output.clear_sensitive();
-        audio.scratch.fill(0.0);
+        self.schedule_audio_command(AUDIO_COMMAND_CLEAR);
     }
 
     /// Drains pending source audio without ending the current generation.
     pub fn discard_pending_sensitive(&self) {
-        let mut audio = self.audio.borrow_mut();
-        audio.output.discard_pending_sensitive();
-        audio.scratch.fill(0.0);
+        self.schedule_audio_command(AUDIO_COMMAND_DISCARD);
+    }
+
+    fn schedule_audio_command(&self, command: u8) {
+        // CLEAR dominates DISCARD when control events race. The atomic command
+        // is authoritative; applying it eagerly is only an optimization for
+        // the common owner-thread path where no process callback holds audio.
+        self.audio_command.fetch_max(command, Ordering::AcqRel);
+        if let Ok(mut audio) = self.audio.try_borrow_mut() {
+            apply_audio_command(&mut audio, &self.audio_command);
+        }
     }
 
     /// Removes the latest negotiated format event.
@@ -424,6 +438,7 @@ fn process_available_buffers(stream: &pipewire::stream::Stream, processor: &mut 
         }
 
         let mut audio = processor.audio.borrow_mut();
+        apply_audio_command(&mut audio, &processor.audio_command);
         let SourceAudio { output, scratch } = &mut *audio;
         let samples = &mut scratch[..frame_count];
         let published_frames = fill_output(output, samples);
@@ -446,6 +461,15 @@ fn process_available_buffers(stream: &pipewire::stream::Stream, processor: &mut 
             .empty_dequeues
             .fetch_add(1, Ordering::Relaxed);
     }
+}
+
+fn apply_audio_command(audio: &mut SourceAudio, command: &AtomicU8) {
+    match command.swap(AUDIO_COMMAND_NONE, Ordering::AcqRel) {
+        AUDIO_COMMAND_CLEAR => audio.output.clear_sensitive(),
+        AUDIO_COMMAND_DISCARD => audio.output.discard_pending_sensitive(),
+        _ => return,
+    }
+    audio.scratch.fill(0.0);
 }
 
 fn fill_output(output: &mut BypassOutput, samples: &mut [f32]) -> usize {
@@ -490,12 +514,18 @@ fn resolve_demand_transition(control: &mut ControlState, now: Instant) -> Option
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        sync::atomic::{AtomicU8, Ordering},
+        time::{Duration, Instant},
+    };
 
     use super::{
-        CONSUMER_IDLE_DEBOUNCE, ConsumerDemand, ControlState, DemandTransition, SourceStreamState,
-        StreamLatency, resolve_demand_transition,
+        AUDIO_COMMAND_CLEAR, AUDIO_COMMAND_DISCARD, AUDIO_COMMAND_NONE, CONSUMER_IDLE_DEBOUNCE,
+        ConsumerDemand, ControlState, DemandTransition, SourceAudio, SourceStreamState,
+        StreamLatency, apply_audio_command, resolve_demand_transition,
     };
+    use crate::create_bypass_channel;
+    use noire_dsp::MAX_CALLBACK_FRAMES;
 
     #[test]
     fn latency_profiles_request_distinct_bounded_quanta() {
@@ -529,5 +559,21 @@ mod tests {
             Some(DemandTransition::Deactivate)
         );
         assert_eq!(state.demand, ConsumerDemand::Idle);
+    }
+
+    #[test]
+    fn callback_side_clear_dominates_a_pending_discard() {
+        let (_producer, output, _control, _telemetry) = create_bypass_channel();
+        let mut audio = SourceAudio {
+            output,
+            scratch: [1.0; MAX_CALLBACK_FRAMES],
+        };
+        let command = AtomicU8::new(AUDIO_COMMAND_DISCARD);
+        command.fetch_max(AUDIO_COMMAND_CLEAR, Ordering::AcqRel);
+
+        apply_audio_command(&mut audio, &command);
+
+        assert_eq!(command.load(Ordering::Acquire), AUDIO_COMMAND_NONE);
+        assert!(audio.scratch.iter().all(|sample| *sample == 0.0));
     }
 }

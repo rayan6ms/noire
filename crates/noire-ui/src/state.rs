@@ -268,6 +268,10 @@ fn lifecycle_copy(snapshot: &Snapshot, input: &str) -> (String, String) {
             "Reconnecting".to_owned(),
             format!("Restoring {input}; output remains safely muted until ready."),
         ),
+        "degraded" => (
+            "Noise reduction is recovering".to_owned(),
+            format!("Audio from {input} is safely muted while Noire restores processing."),
+        ),
         "stopping" => (
             "Stopping".to_owned(),
             "Removing the virtual microphone safely.".to_owned(),
@@ -333,6 +337,19 @@ mod tests {
         assert!(presentation.detail.contains("Desk microphone"));
         assert_eq!(presentation.primary_action, "Stop");
         assert!(presentation.controls_enabled);
+    }
+
+    #[test]
+    fn degraded_state_never_presents_as_stopped() {
+        let mut value = snapshot();
+        value.state = "degraded".to_owned();
+        value.active = true;
+        let mut state = UiState::default();
+        state.converge(value, Vec::new());
+
+        let presentation = state.presentation();
+        assert_eq!(presentation.status, "Noise reduction is recovering");
+        assert!(presentation.detail.contains("safely muted"));
     }
 
     #[test]

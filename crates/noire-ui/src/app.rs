@@ -122,7 +122,6 @@ struct AppRuntime {
     tray_controller: client::TrayController,
     window: Option<AnyWindowHandle>,
     close_to_tray: Arc<AtomicBool>,
-    quit_requested: Arc<AtomicBool>,
 }
 
 impl AppRuntime {
@@ -130,14 +129,12 @@ impl AppRuntime {
         tray: TrayRuntime,
         tray_controller: client::TrayController,
         close_to_tray: Arc<AtomicBool>,
-        quit_requested: Arc<AtomicBool>,
     ) -> Self {
         Self {
             tray,
             tray_controller,
             window: None,
             close_to_tray,
-            quit_requested,
         }
     }
 
@@ -159,7 +156,6 @@ impl AppRuntime {
                     self.tray_controller.toggle();
                 }
                 TrayCommand::Quit => {
-                    self.quit_requested.store(true, Ordering::Relaxed);
                     cx.quit();
                 }
             }
@@ -250,7 +246,6 @@ struct NoireView {
     diagnostics: Option<String>,
     toast: Option<Toast>,
     toast_expires: Option<Instant>,
-    last_daemon_error: Option<String>,
     processing_transition: Option<ProcessingTransition>,
     optimistic_active: Option<bool>,
     start_with_noise_reduction: bool,
@@ -311,7 +306,6 @@ impl NoireView {
             diagnostics: None,
             toast: None,
             toast_expires: None,
-            last_daemon_error: None,
             processing_transition: None,
             optimistic_active: Some(initial_active),
             start_with_noise_reduction: false,
@@ -390,16 +384,9 @@ impl NoireView {
                         recovery: snapshot.last_error.recovery.clone(),
                         retryable: snapshot.last_error.retryable,
                     });
-                    let daemon_error_code = snapshot
-                        .has_error
-                        .then(|| snapshot.last_error.code.clone())
-                        .filter(|code| !code.is_empty());
-                    if daemon_error_code != self.last_daemon_error
-                        && let Some(toast) = daemon_error
-                    {
+                    if let Some(toast) = daemon_error {
                         self.show_toast(toast);
                     }
-                    self.last_daemon_error = daemon_error_code;
                     self.start_with_noise_reduction = start_with_noise_reduction;
                     if refresh {
                         self.state.refresh(snapshot, inputs);
@@ -427,14 +414,7 @@ impl NoireView {
                 }) => {
                     let displayed_active = self.display_active();
                     let toast = Toast::from(&error);
-                    if self
-                        .last_daemon_error
-                        .as_deref()
-                        .is_none_or(|code| code != error.code)
-                    {
-                        self.show_toast(toast);
-                    }
-                    self.last_daemon_error = Some(error.code.clone());
+                    self.show_toast(toast);
                     self.state.reject(error, recovered);
                     let authoritative_active = self
                         .state
@@ -486,11 +466,12 @@ impl NoireView {
     }
 
     fn show_toast(&mut self, toast: Toast) {
-        if self.toast.as_ref() == Some(&toast) {
-            return;
-        }
-        self.toast = Some(toast);
-        self.toast_expires = Some(Instant::now() + TOAST_LIFETIME);
+        refresh_toast(
+            &mut self.toast,
+            &mut self.toast_expires,
+            toast,
+            Instant::now(),
+        );
     }
 
     fn expire_toast(&mut self) {
@@ -1274,7 +1255,6 @@ impl NoireView {
                                     .on_click(cx.listener(|view, _, _, cx| {
                                         view.toast = None;
                                         view.toast_expires = None;
-                                        view.last_daemon_error = None;
                                         view.send(Request::Retry, true);
                                         cx.notify();
                                     }))
@@ -1290,6 +1270,16 @@ impl NoireView {
                 ),
         )
     }
+}
+
+fn refresh_toast(
+    visible: &mut Option<Toast>,
+    expires: &mut Option<Instant>,
+    toast: Toast,
+    now: Instant,
+) {
+    *visible = Some(toast);
+    *expires = Some(now + TOAST_LIFETIME);
 }
 
 impl Render for NoireView {
@@ -1339,58 +1329,36 @@ pub(crate) fn run(start_minimized: bool) {
     let (tray_controller, initialization) = client::TrayController::start(tray.clone());
     let _initialized = initialization.recv_timeout(Duration::from_secs(3));
     let close_to_tray = Arc::new(AtomicBool::new(preferences.close_to_tray && tray_available));
-    let quit_requested = Arc::new(AtomicBool::new(false));
-    let mut show_requested = !hidden;
-
-    loop {
-        if show_requested {
-            run_window_session(
-                tray.clone(),
-                tray_controller.clone(),
-                Arc::clone(&close_to_tray),
-                Arc::clone(&quit_requested),
-            );
-            show_requested = false;
-        }
-
-        if quit_requested.load(Ordering::Relaxed)
-            || !tray.available()
-            || !close_to_tray.load(Ordering::Relaxed)
-        {
-            break;
-        }
-
-        match tray.recv() {
-            Ok(TrayCommand::Show) => show_requested = true,
-            Ok(TrayCommand::ToggleProcessing) => tray_controller.toggle(),
-            Ok(TrayCommand::Quit) | Err(_) => break,
-        }
-    }
-
-    if !tray_controller.stop_and_shutdown(Duration::from_secs(3)) {
-        eprintln!("Noire could not confirm that noise reduction stopped before exit.");
-    }
-}
-
-const fn should_start_hidden(
-    command_line_minimized: bool,
-    preference_minimized: bool,
-    tray_available: bool,
-) -> bool {
-    (command_line_minimized || preference_minimized) && tray_available
-}
-
-fn run_window_session(
-    tray: TrayRuntime,
-    tray_controller: client::TrayController,
-    close_to_tray: Arc<AtomicBool>,
-    quit_requested: Arc<AtomicBool>,
-) {
+    let application_tray = tray.clone();
+    let application_controller = tray_controller.clone();
+    let application_close_to_tray = Arc::clone(&close_to_tray);
     Application::new()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
-            let runtime =
-                cx.new(|_| AppRuntime::new(tray, tray_controller, close_to_tray, quit_requested));
+            // GPUI's Linux event loop stops after its final platform window is
+            // removed. Keep one never-shown controller window alive so tray
+            // sessions can close and reopen the visible window inside a single
+            // Application instance without relying on unsupported reuse.
+            let _controller_window = cx.open_window(
+                WindowOptions {
+                    show: false,
+                    window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                        None,
+                        size(px(1.0), px(1.0)),
+                        cx,
+                    ))),
+                    window_decorations: Some(WindowDecorations::Client),
+                    ..Default::default()
+                },
+                |_window, cx| cx.new(|_| ControllerWindow),
+            );
+            let runtime = cx.new(|_| {
+                AppRuntime::new(
+                    application_tray,
+                    application_controller,
+                    application_close_to_tray,
+                )
+            });
             let runtime_task = runtime.clone();
             cx.spawn(async move |cx| {
                 loop {
@@ -1401,10 +1369,32 @@ fn run_window_session(
                 }
             })
             .detach();
-            runtime.update(cx, |runtime, cx| {
-                runtime.show_window(cx);
-            });
+            if !hidden {
+                runtime.update(cx, |runtime, cx| {
+                    runtime.show_window(cx);
+                });
+            }
         });
+
+    if !tray_controller.stop_and_shutdown(Duration::from_secs(3)) {
+        eprintln!("Noire could not confirm that noise reduction stopped before exit.");
+    }
+}
+
+struct ControllerWindow;
+
+impl Render for ControllerWindow {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+const fn should_start_hidden(
+    command_line_minimized: bool,
+    preference_minimized: bool,
+    tray_available: bool,
+) -> bool {
+    (command_line_minimized || preference_minimized) && tray_available
 }
 
 fn window_button(
@@ -1646,6 +1636,7 @@ fn toggle_row(
 }
 
 fn strength_row(strength: f64, interactive: bool, p: Palette, cx: &mut Context<NoireView>) -> Div {
+    let has_selected_preset = strength_is_preset(strength);
     div()
         .flex()
         .flex_col()
@@ -1695,8 +1686,28 @@ fn strength_row(strength: f64, interactive: bool, p: Palette, cx: &mut Context<N
                                 })
                                 .child(format!("{:.0}%", value * 100.0))
                         }),
-                ),
+                )
+                .when(!has_selected_preset, |row| {
+                    row.child(
+                        div()
+                            .flex_1()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(rgb(p.accent))
+                            .bg(rgb(p.accent_soft))
+                            .py_2()
+                            .text_center()
+                            .text_sm()
+                            .child("Custom"),
+                    )
+                }),
         )
+}
+
+fn strength_is_preset(strength: f64) -> bool {
+    [0.35, 0.55, 0.75, 1.0]
+        .into_iter()
+        .any(|preset| (strength - preset).abs() < 0.01)
 }
 
 fn theme_row(selected: ThemePreference, p: Palette, cx: &mut Context<NoireView>) -> Div {
@@ -1955,8 +1966,8 @@ mod tests {
     use std::time::Instant;
 
     use super::{
-        ProcessingTransition, meter_level, scrollbar_thumb_geometry, should_start_hidden,
-        transition_targets,
+        ProcessingTransition, TOAST_LIFETIME, Toast, meter_level, refresh_toast,
+        scrollbar_thumb_geometry, should_start_hidden, strength_is_preset, transition_targets,
     };
 
     #[test]
@@ -1996,6 +2007,29 @@ mod tests {
         assert!((meter_level(0.01) - (1.0 / 3.0)).abs() < 0.001);
         assert!((meter_level(0.1) - (2.0 / 3.0)).abs() < 0.001);
         assert!((meter_level(1.0) - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn externally_configured_strengths_are_identified_as_custom() {
+        assert!(strength_is_preset(0.55));
+        assert!(!strength_is_preset(0.42));
+    }
+
+    #[test]
+    fn recurring_toast_refreshes_its_visible_lifetime() {
+        let toast = Toast {
+            cause: "ongoing failure".to_owned(),
+            recovery: "retry".to_owned(),
+            retryable: true,
+        };
+        let started = Instant::now();
+        let mut visible = None;
+        let mut expires = None;
+        refresh_toast(&mut visible, &mut expires, toast.clone(), started);
+        let repeated = started + TOAST_LIFETIME;
+        refresh_toast(&mut visible, &mut expires, toast, repeated);
+
+        assert_eq!(expires, Some(repeated + TOAST_LIFETIME));
     }
 
     #[test]

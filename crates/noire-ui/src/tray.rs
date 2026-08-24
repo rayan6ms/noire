@@ -6,7 +6,7 @@ use std::{
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
-        mpsc::{self, Receiver, RecvError, Sender, TryRecvError},
+        mpsc::{self, Receiver, Sender, TryRecvError},
     },
     thread,
     time::Duration,
@@ -315,14 +315,6 @@ impl TrayRuntime {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .try_recv()
-    }
-
-    pub fn recv(&self) -> Result<TrayCommand, RecvError> {
-        self.inner
-            .commands
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .recv()
     }
 
     /// Keeps the tray label/action synchronized with authoritative daemon state.

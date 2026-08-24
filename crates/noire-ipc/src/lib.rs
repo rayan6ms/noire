@@ -53,6 +53,12 @@ pub const ERROR_CATALOG: &[ErrorCatalogEntry] = &[
         retryable: true,
     },
     ErrorCatalogEntry {
+        code: "config-rollback-failed",
+        cause: "Noire could not restore the previous audio state after a configuration save failed.",
+        recovery: "Restart Noire, then check configuration permissions and free storage.",
+        retryable: false,
+    },
+    ErrorCatalogEntry {
         code: "config-newer-schema",
         cause: "The configuration was written by a newer incompatible daemon.",
         recovery: "Run a daemon supporting that schema; the file remains untouched.",
@@ -113,6 +119,12 @@ pub const ERROR_CATALOG: &[ErrorCatalogEntry] = &[
         retryable: true,
     },
     ErrorCatalogEntry {
+        code: "audio-transport-failed",
+        cause: "The processed audio transport stalled and output was safely muted.",
+        recovery: "Allow automatic recovery; restart Noire if silence persists.",
+        retryable: true,
+    },
+    ErrorCatalogEntry {
         code: "audio-graph-unavailable",
         cause: "The live microphone processing graph could not be created.",
         recovery: "Verify PipeWire and the selected input, then retry.",
@@ -128,6 +140,12 @@ pub const ERROR_CATALOG: &[ErrorCatalogEntry] = &[
         code: "model-initialization-failed",
         cause: "The bundled suppression model could not initialize.",
         recovery: "Restart Noire; reinstall if the condition persists.",
+        retryable: true,
+    },
+    ErrorCatalogEntry {
+        code: "model-processing-failed",
+        cause: "The suppression model failed while processing microphone audio.",
+        recovery: "Allow automatic recovery; restart Noire if the failure persists.",
         retryable: true,
     },
     ErrorCatalogEntry {

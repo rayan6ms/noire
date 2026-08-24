@@ -1,7 +1,11 @@
 //! Bounded command adapter owning all `PipeWire` objects on one native thread.
 
 use std::{
-    sync::mpsc::{self, Receiver, SyncSender, TrySendError},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, SyncSender, TrySendError},
+    },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
@@ -34,16 +38,20 @@ const LIVE_FAILURE_RESET_INTERVAL: Duration = Duration::from_millis(250);
 enum NativeCommand {
     Apply {
         config: Config,
+        cancelled: Arc<AtomicBool>,
         reply: SyncSender<Result<EngineObservation, EngineError>>,
     },
     Inputs {
+        cancelled: Arc<AtomicBool>,
         reply: SyncSender<Result<Vec<InputDescriptor>, EngineError>>,
     },
     Observe {
+        cancelled: Arc<AtomicBool>,
         reply: SyncSender<Result<EngineObservation, EngineError>>,
     },
     SetMeterMonitoring {
         enabled: bool,
+        cancelled: Arc<AtomicBool>,
         reply: SyncSender<Result<(), EngineError>>,
     },
     Shutdown,
@@ -91,43 +99,68 @@ impl NativeAudioEngine {
 
     fn request<T>(
         &self,
-        build: impl FnOnce(SyncSender<Result<T, EngineError>>) -> NativeCommand,
+        build: impl FnOnce(SyncSender<Result<T, EngineError>>, Arc<AtomicBool>) -> NativeCommand,
+    ) -> Result<T, EngineError> {
+        self.request_with_timeout(build, COMMAND_TIMEOUT)
+    }
+
+    fn request_with_timeout<T>(
+        &self,
+        build: impl FnOnce(SyncSender<Result<T, EngineError>>, Arc<AtomicBool>) -> NativeCommand,
+        timeout: Duration,
     ) -> Result<T, EngineError> {
         let (reply, receive) = mpsc::sync_channel(1);
+        let cancelled = Arc::new(AtomicBool::new(false));
         self.commands
             .as_ref()
             .ok_or_else(stopped_error)?
-            .try_send(build(reply))
+            .try_send(build(reply, Arc::clone(&cancelled)))
             .map_err(command_error)?;
-        receive
-            .recv_timeout(COMMAND_TIMEOUT)
-            .map_err(|_| EngineError {
-                code: "audio-command-timeout",
-                message: "the audio control thread did not respond within 450 ms".to_owned(),
-                recovery: "retry; restart Noire if the condition persists",
-                retryable: true,
-            })?
+        match receive.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // A timed-out command may still be sitting in the bounded FIFO.
+                // Mark it before returning so the native owner skips stale
+                // work instead of applying it after the caller has retried.
+                cancelled.store(true, Ordering::Release);
+                Err(EngineError {
+                    code: "audio-command-timeout",
+                    message: "the audio control thread did not respond within 450 ms".to_owned(),
+                    recovery: "retry; restart Noire if the condition persists",
+                    retryable: true,
+                })
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                cancelled.store(true, Ordering::Release);
+                Err(stopped_error())
+            }
+        }
     }
 }
 
 impl AudioEngine for NativeAudioEngine {
     fn apply(&mut self, config: &Config) -> Result<EngineObservation, EngineError> {
-        self.request(|reply| NativeCommand::Apply {
+        self.request(|reply, cancelled| NativeCommand::Apply {
             config: config.clone(),
+            cancelled,
             reply,
         })
     }
 
     fn inputs(&mut self) -> Result<Vec<InputDescriptor>, EngineError> {
-        self.request(|reply| NativeCommand::Inputs { reply })
+        self.request(|reply, cancelled| NativeCommand::Inputs { cancelled, reply })
     }
 
     fn observe(&mut self, _previous: &EngineObservation) -> Result<EngineObservation, EngineError> {
-        self.request(|reply| NativeCommand::Observe { reply })
+        self.request(|reply, cancelled| NativeCommand::Observe { cancelled, reply })
     }
 
     fn set_meter_monitoring(&mut self, enabled: bool) -> Result<(), EngineError> {
-        self.request(|reply| NativeCommand::SetMeterMonitoring { enabled, reply })
+        self.request(|reply, cancelled| NativeCommand::SetMeterMonitoring {
+            enabled,
+            cancelled,
+            reply,
+        })
     }
 }
 
@@ -184,7 +217,14 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
     let mut recovery = RecoveryController::default();
     loop {
         match receiver.recv_timeout(DISPATCH_QUANTUM) {
-            Ok(NativeCommand::Apply { config, reply }) => {
+            Ok(NativeCommand::Apply {
+                config,
+                cancelled,
+                reply,
+            }) => {
+                if cancelled.load(Ordering::Acquire) {
+                    continue;
+                }
                 let previous_config = applied.clone();
                 let previous_observation = observation.clone();
                 let result = apply_native(
@@ -229,27 +269,45 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
                 }
                 let _ = reply.send(result);
             }
-            Ok(NativeCommand::Inputs { reply }) => {
+            Ok(NativeCommand::Inputs { cancelled, reply }) => {
+                if cancelled.load(Ordering::Acquire) {
+                    continue;
+                }
                 let result = ensure_connection(&mut connection).map(|connection| {
                     refresh_registry(connection);
-                    input_descriptors(connection)
+                    input_descriptors(&connection.registry_snapshot_now())
                 });
+                if let (Ok(devices), Some(observation)) = (result.as_ref(), observation.as_mut()) {
+                    observation.devices.clone_from(devices);
+                }
                 let _ = reply.send(result);
             }
-            Ok(NativeCommand::Observe { reply }) => {
+            Ok(NativeCommand::Observe { cancelled, reply }) => {
+                if cancelled.load(Ordering::Acquire) {
+                    continue;
+                }
                 if let (Some(connection), Some(graph), Some(previous)) =
                     (connection.as_ref(), graph.as_ref(), observation.as_ref())
                 {
-                    observation = Some(observe_graph(
+                    let mut next = observe_graph(
                         graph,
                         previous.input_display_name.clone(),
                         connection.runtime_version().unwrap_or_default(),
                         applied.as_ref().is_some_and(|config| config.active),
-                    ));
+                    );
+                    next.devices.clone_from(&previous.devices);
+                    observation = Some(next);
                 }
                 let _ = reply.send(Ok(observation.clone().unwrap_or_default()));
             }
-            Ok(NativeCommand::SetMeterMonitoring { enabled, reply }) => {
+            Ok(NativeCommand::SetMeterMonitoring {
+                enabled,
+                cancelled,
+                reply,
+            }) => {
+                if cancelled.load(Ordering::Acquire) {
+                    continue;
+                }
                 let result = update_meter_monitoring(
                     &mut connection,
                     &mut graph,
@@ -326,9 +384,19 @@ fn service_native(
         }
     }
 
-    if let (Some(current), Some(active_graph), Some(config)) =
-        (connection.as_ref(), graph.as_ref(), applied)
+    // Registry callbacks are already dispatched by the native owner loop.
+    // Consume their debounced snapshot once and carry the cached descriptors
+    // through Observe replies, keeping the 40 ms service monitor O(1) instead
+    // of issuing a synchronous ~50 ms round trip on every tick.
+    let registry_snapshot = connection
+        .as_ref()
+        .and_then(PipewireConnection::registry_snapshot_if_due);
+    if let (Some(snapshot), Some(observation)) = (registry_snapshot.as_ref(), observation.as_mut())
     {
+        observation.devices = input_descriptors(snapshot);
+    }
+
+    if let (Some(active_graph), Some(config)) = (graph.as_ref(), applied) {
         let graph_fault = active_graph.take_health_issue().map(|issue| match issue {
             GraphHealthIssue::CaptureStream | GraphHealthIssue::CaptureFormat => {
                 RecoveryFault::CaptureStream
@@ -337,9 +405,8 @@ fn service_native(
                 RecoveryFault::SourceStream
             }
         });
-        let snapshot = current.registry_snapshot_if_due();
         let resolved_fault = graph_fault.or_else(|| {
-            snapshot.as_ref().and_then(|snapshot| {
+            registry_snapshot.as_ref().and_then(|snapshot| {
                 resolve_input(snapshot, config).map_or(
                     Some(RecoveryFault::InputUnavailable),
                     |node| {
@@ -596,7 +663,7 @@ fn apply_native(
             recovery: "retry; restart PipeWire if the meter remains unavailable",
             retryable: true,
         })?;
-    Ok(observe_graph(
+    let mut next = observe_graph(
         graph,
         selected_label,
         connection
@@ -604,7 +671,18 @@ fn apply_native(
             .and_then(PipewireConnection::runtime_version)
             .unwrap_or_default(),
         config.active,
-    ))
+    );
+    next.devices = if requires_rebuild {
+        connection
+            .as_ref()
+            .map(|connection| input_descriptors(&connection.registry_snapshot_now()))
+            .unwrap_or_default()
+    } else {
+        previous_observation
+            .map(|observation| observation.devices.clone())
+            .unwrap_or_default()
+    };
+    Ok(next)
 }
 
 fn stopped_observation(
@@ -618,10 +696,14 @@ fn stopped_observation(
         .filter(|_| input_unchanged)
         .map(|observation| observation.input_display_name.as_str())
         .filter(|label| !label.is_empty());
+    let mut devices = previous_observation
+        .map(|observation| observation.devices.clone())
+        .unwrap_or_default();
     let resolved_label = previous_label.map(ToOwned::to_owned).or_else(|| {
         let connection = ensure_connection(connection).ok()?;
         refresh_registry(connection);
         let snapshot = connection.registry_snapshot_now();
+        devices = input_descriptors(&snapshot);
         resolve_input(&snapshot, config).and_then(|node_name| {
             snapshot
                 .candidates()
@@ -646,6 +728,7 @@ fn stopped_observation(
                 previous_observation.map(|observation| observation.pipewire_version.clone())
             })
             .unwrap_or_default(),
+        devices,
         ..EngineObservation::default()
     }
 }
@@ -678,9 +761,8 @@ fn refresh_registry(connection: &PipewireConnection) {
     }
 }
 
-fn input_descriptors(connection: &PipewireConnection) -> Vec<InputDescriptor> {
-    connection
-        .registry_snapshot_now()
+fn input_descriptors(snapshot: &RegistrySnapshot) -> Vec<InputDescriptor> {
+    snapshot
         .candidates()
         .iter()
         .map(|node| InputDescriptor {
@@ -717,10 +799,13 @@ fn observe_graph(
     let live = graph.telemetry().snapshot();
     let capture = graph.capture().telemetry().snapshot();
     let source = graph.source().telemetry().snapshot();
+    let fault = processing_active
+        .then(|| live_state_error(live.state))
+        .flatten();
     EngineObservation {
         state: if !processing_active {
             LifecycleState::Stopped
-        } else if live.state == LiveState::Running {
+        } else if fault.is_none() {
             LifecycleState::Running
         } else {
             LifecycleState::Degraded
@@ -756,16 +841,39 @@ fn observe_graph(
             rms: f64::from(live.rms),
             peak: f64::from(live.peak),
         },
-        fault: None,
+        fault,
+        devices: Vec::new(),
+    }
+}
+
+fn live_state_error(state: LiveState) -> Option<EngineError> {
+    match state {
+        LiveState::Running | LiveState::DegradedPerformance => None,
+        LiveState::ModelFailed => Some(EngineError {
+            code: "model-processing-failed",
+            message: "the suppression model failed while processing audio".to_owned(),
+            recovery: "allow automatic recovery; restart Noire if the failure persists",
+            retryable: true,
+        }),
+        LiveState::TransportFailed => Some(EngineError {
+            code: "audio-transport-failed",
+            message: "the processed audio transport stalled".to_owned(),
+            recovery: "allow automatic recovery; restart Noire if silence persists",
+            retryable: true,
+        }),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::{
+        sync::{atomic::Ordering, mpsc},
+        time::{Duration, Instant},
+    };
 
     use super::{
-        LIVE_FAILURE_RESET_INTERVAL, LiveState, live_failure_latched, live_failure_reset_due,
+        LIVE_FAILURE_RESET_INTERVAL, LiveState, NativeAudioEngine, NativeCommand,
+        live_failure_latched, live_failure_reset_due, live_state_error,
     };
 
     #[test]
@@ -792,5 +900,49 @@ mod tests {
             live_failure_reset_due(Some(now), due),
             "recovery after a transient stall must not wait longer than one interval"
         );
+    }
+
+    #[test]
+    fn performance_degradation_does_not_publish_a_lifecycle_fault() {
+        assert!(live_state_error(LiveState::DegradedPerformance).is_none());
+        assert_eq!(
+            live_state_error(LiveState::ModelFailed).map(|error| error.code),
+            Some("model-processing-failed")
+        );
+        assert_eq!(
+            live_state_error(LiveState::TransportFailed).map(|error| error.code),
+            Some("audio-transport-failed")
+        );
+    }
+
+    #[test]
+    fn queued_command_is_cancelled_when_its_caller_times_out() {
+        let (commands, receiver) = mpsc::sync_channel(1);
+        let (shutdown_complete, shutdown_wait) = mpsc::sync_channel(1);
+        let mut engine = NativeAudioEngine {
+            commands: Some(commands),
+            shutdown_complete: shutdown_wait,
+            thread: None,
+        };
+
+        let result = engine.request_with_timeout(
+            |reply, cancelled| NativeCommand::Observe { cancelled, reply },
+            Duration::from_millis(1),
+        );
+        assert_eq!(
+            result.as_ref().err().map(|error| error.code),
+            Some("audio-command-timeout")
+        );
+        let cancelled = match receiver.recv_timeout(Duration::from_millis(10)) {
+            Ok(NativeCommand::Observe { cancelled, .. }) => Some(cancelled),
+            _ => None,
+        };
+        assert!(
+            cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Acquire)),
+            "expected a cancelled queued observe command"
+        );
+
+        engine.commands.take();
+        let _ = shutdown_complete.send(());
     }
 }

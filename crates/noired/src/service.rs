@@ -71,9 +71,8 @@ impl NoireService {
 
             let (state_changed, device_changed, snapshot) = {
                 let mut daemon = self.daemon.lock().await;
-                let state_changed = daemon.refresh_observation();
                 let before = daemon.device_revision();
-                let _ignored = daemon.inputs();
+                let state_changed = daemon.refresh_observation();
                 let device_changed = before != daemon.device_revision();
                 (state_changed, device_changed, daemon.snapshot())
             };
@@ -467,6 +466,7 @@ fn map_error(error: ControlError) -> ServiceError {
         ControlError::Persistence(_) | ControlError::ReadOnly => {
             ServiceError::Persistence(error.to_string())
         }
+        ControlError::PersistenceRollback { .. } => ServiceError::Unavailable(error.to_string()),
         ControlError::LaunchManager(_) => ServiceError::LaunchManager(error.to_string()),
     }
 }
@@ -477,6 +477,9 @@ fn public_error(error: &ControlError) -> (&'static str, ErrorInfo) {
         ControlError::Invalid(_) => ("control.invalid", "invalid-argument", "control"),
         ControlError::Audio(engine) => ("audio.unavailable", engine.code, "audio"),
         ControlError::Persistence(_) => ("config.persistence", "config-persistence", "config"),
+        ControlError::PersistenceRollback { .. } => {
+            ("config.rollback-failed", "config-rollback-failed", "audio")
+        }
         ControlError::ReadOnly => ("config.read-only", "config-newer-schema", "config"),
         ControlError::LaunchManager(_) => {
             ("systemd.manager", "launch-manager-unavailable", "systemd")
@@ -552,6 +555,7 @@ mod tests {
             "conflict",
             "invalid-argument",
             "config-persistence",
+            "config-rollback-failed",
             "config-newer-schema",
             "config-recovered",
         ]);
@@ -581,6 +585,15 @@ mod tests {
                 retryable: false,
             }),
             ControlError::Persistence("test filesystem detail".to_owned()),
+            ControlError::PersistenceRollback {
+                persistence: "test filesystem detail".to_owned(),
+                rollback: EngineError {
+                    code: "audio-stream-failed",
+                    message: "test rollback detail".to_owned(),
+                    recovery: "restart test",
+                    retryable: false,
+                },
+            },
             ControlError::ReadOnly,
             ControlError::LaunchManager("test manager detail".to_owned()),
         ];
