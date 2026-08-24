@@ -22,6 +22,14 @@ use crate::{
 const COMMAND_CAPACITY: usize = 16;
 const COMMAND_TIMEOUT: Duration = Duration::from_millis(450);
 const DISPATCH_QUANTUM: Duration = Duration::from_millis(2);
+/// Minimum spacing between latched live-failure deactivated resets.
+///
+/// A latched [`LiveState::ModelFailed`] or [`LiveState::TransportFailed`] sink
+/// stays silent until its documented deactivated reset runs. The interval
+/// bounds the reset rate so a persistently failing model cannot turn the
+/// control loop into a hot reset cycle while remaining fast enough to restore
+/// audio within a fraction of a second after a transient stall.
+const LIVE_FAILURE_RESET_INTERVAL: Duration = Duration::from_millis(250);
 
 enum NativeCommand {
     Apply {
@@ -171,6 +179,7 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
     let mut applied: Option<Config> = None;
     let mut observation: Option<EngineObservation> = None;
     let mut meter_monitoring = false;
+    let mut last_live_failure_reset: Option<Instant> = None;
     let recovery_origin = Instant::now();
     let mut recovery = RecoveryController::default();
     loop {
@@ -264,6 +273,7 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
             &mut recovery,
             recovery_origin,
             meter_monitoring,
+            &mut last_live_failure_reset,
         );
     }
     drop(graph);
@@ -293,6 +303,7 @@ fn update_meter_monitoring(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn service_native(
     connection: &mut Option<PipewireConnection>,
     graph: &mut Option<LiveGraph>,
@@ -301,6 +312,7 @@ fn service_native(
     recovery: &mut RecoveryController,
     origin: Instant,
     meter_monitoring: bool,
+    last_live_failure_reset: &mut Option<Instant>,
 ) {
     let now = Instant::now();
     let now_millis = elapsed_millis(origin);
@@ -345,6 +357,19 @@ fn service_native(
             *graph = None;
             mark_degraded(observation, RecoveryFault::CaptureStream);
             recovery.fault(RecoveryFault::CaptureStream, now_millis);
+        } else if live_failure_latched(active_graph.telemetry().snapshot().state)
+            && live_failure_reset_due(*last_live_failure_reset, now)
+        {
+            // The live sink latches model and transport faults until its
+            // documented deactivated reset runs. Without this poll a single
+            // transient transport overflow or model error keeps the processed
+            // output silent forever while consumers hold the source streaming,
+            // because no demand edge or health fault ever fires. Advancing the
+            // input generation rebuilds capture-side sink and model state
+            // through the concurrency-safe atomic command; consumers drain the
+            // superseded generation themselves.
+            let _ = active_graph.capture().advance_input_generation();
+            *last_live_failure_reset = Some(now);
         }
     }
 
@@ -374,6 +399,18 @@ fn service_native(
         }
         recovery.failed(now_millis);
     }
+}
+
+/// Whether the live pipeline latched a failure that silences processed output.
+#[must_use]
+fn live_failure_latched(state: LiveState) -> bool {
+    matches!(state, LiveState::ModelFailed | LiveState::TransportFailed)
+}
+
+/// Whether another latched-failure deactivated reset is due.
+#[must_use]
+fn live_failure_reset_due(last: Option<Instant>, now: Instant) -> bool {
+    last.is_none_or(|previous| now.duration_since(previous) >= LIVE_FAILURE_RESET_INTERVAL)
 }
 
 fn resolve_input(snapshot: &RegistrySnapshot, config: &Config) -> Option<String> {
@@ -720,5 +757,40 @@ fn observe_graph(
             peak: f64::from(live.peak),
         },
         fault: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use super::{
+        LIVE_FAILURE_RESET_INTERVAL, LiveState, live_failure_latched, live_failure_reset_due,
+    };
+
+    #[test]
+    fn only_silence_latching_live_states_schedule_a_reset() {
+        assert!(live_failure_latched(LiveState::ModelFailed));
+        assert!(live_failure_latched(LiveState::TransportFailed));
+        assert!(!live_failure_latched(LiveState::Running));
+        // Degraded performance keeps producing audio, so it must never
+        // trigger a deactivated reset.
+        assert!(!live_failure_latched(LiveState::DegradedPerformance));
+    }
+
+    #[test]
+    fn latched_failure_resets_are_rate_limited_but_prompt() {
+        let now = Instant::now();
+        assert!(live_failure_reset_due(None, now));
+
+        assert!(
+            !live_failure_reset_due(Some(now), now),
+            "an immediate second reset would hot-loop on persistent failures"
+        );
+        let due = now + LIVE_FAILURE_RESET_INTERVAL;
+        assert!(
+            live_failure_reset_due(Some(now), due),
+            "recovery after a transient stall must not wait longer than one interval"
+        );
     }
 }
