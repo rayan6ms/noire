@@ -6,11 +6,50 @@ if [ ! -d "$runtime_dir" ] || [ ! -w "$runtime_dir" ]; then
     runtime_dir=
 fi
 flock_bin=$(command -v flock || true)
+owns_session_lock=false
 if [ -n "$runtime_dir" ] && [ -n "$flock_bin" ]; then
     lock_file="$runtime_dir/noire-flatpak.lock"
     if { exec 9>>"$lock_file"; } 2>/dev/null; then
         if ! "$flock_bin" -n 9; then
             exit 0
+        fi
+        owns_session_lock=true
+    fi
+fi
+
+# Retire a daemon left by a wrapper released before controller-lifetime
+# tracking. The session lock proves that another Flatpak controller is not
+# using it, and the executable/UID checks exclude native-package daemons.
+if [ "$owns_session_lock" = true ]; then
+    current_uid=$(id -u)
+    stale_pids=
+    for process_dir in /proc/[0-9]*; do
+        pid=${process_dir#/proc/}
+        [ "$pid" != "$$" ] || continue
+        executable=$(readlink "$process_dir/exe" 2>/dev/null || true)
+        [ "$executable" = /app/bin/noired ] || continue
+        process_uid=$(awk '/^Uid:/ { print $2; exit }' "$process_dir/status" 2>/dev/null || true)
+        [ "$process_uid" = "$current_uid" ] || continue
+        stale_pids="$stale_pids $pid"
+    done
+    if [ -n "$stale_pids" ]; then
+        noirectl stop >/dev/null 2>&1 || true
+        for pid in $stale_pids; do
+            kill -TERM "$pid" 2>/dev/null || true
+        done
+        attempt=0
+        while [ "$attempt" -lt 20 ]; do
+            still_running=false
+            for pid in $stale_pids; do
+                [ ! -d "/proc/$pid" ] || still_running=true
+            done
+            [ "$still_running" = true ] || break
+            sleep 0.05
+            attempt=$((attempt + 1))
+        done
+        if [ "$still_running" = true ]; then
+            echo "Noire could not stop its stale Flatpak background service." >&2
+            exit 1
         fi
     fi
 fi
@@ -20,6 +59,6 @@ if ! noirectl status >/dev/null 2>&1; then
     if [ -n "$runtime_dir" ]; then
         daemon_log="$runtime_dir/noire-flatpak.log"
     fi
-    noired 9>&- >>"$daemon_log" 2>&1 &
+    NOIRE_PORTABLE_CONTROLLER_PID=$$ noired 9>&- >>"$daemon_log" 2>&1 &
 fi
 exec noire "$@"

@@ -1,25 +1,29 @@
 //! Background D-Bus worker isolated from the GPUI main thread.
 
 use std::{
-    sync::mpsc::{self, Receiver, SyncSender, TrySendError},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, SyncSender, TrySendError},
+    },
     time::Duration,
 };
 
 use futures_util::StreamExt;
 use noire_ipc::{DiagnosticReport, InputDescriptor, Metrics, Noire1Proxy, Snapshot};
 
-use crate::state::UserError;
+use crate::{state::UserError, tray::TrayRuntime};
 
 #[derive(Clone, Debug)]
 pub(crate) enum Request {
     Refresh,
     SetActive(bool),
+    SetStartWithNoiseReduction(bool),
     SelectInput(String),
     SetSuppressionEnabled(bool),
     SetStrength(f64),
     SetLatencyProfile(String),
     SetFailMode(String),
-    SetLaunchAtLogin(bool),
     Retry,
     Diagnostics,
     Shutdown,
@@ -30,6 +34,7 @@ pub(crate) enum Response {
     State {
         snapshot: Snapshot,
         inputs: Vec<InputDescriptor>,
+        start_with_noise_reduction: bool,
         refresh: bool,
         request_complete: bool,
     },
@@ -89,6 +94,265 @@ pub(crate) fn spawn() -> WorkerChannels {
     WorkerChannels {
         requests: request_sender,
         responses: response_receiver,
+    }
+}
+
+enum TrayControlCommand {
+    Toggle,
+    StopAndShutdown(SyncSender<bool>),
+}
+
+enum PendingTrayAction {
+    Startup(SyncSender<bool>),
+    Toggle,
+    Stop {
+        reply: SyncSender<bool>,
+        attempts: u8,
+    },
+}
+
+/// Keeps tray state synchronized even while no GPUI window exists.
+#[derive(Clone)]
+pub(crate) struct TrayController {
+    commands: SyncSender<TrayControlCommand>,
+    busy: Arc<AtomicBool>,
+    tray: TrayRuntime,
+}
+
+impl TrayController {
+    pub(crate) fn start(tray: TrayRuntime) -> (Self, Receiver<bool>) {
+        let (commands, command_receiver) = mpsc::sync_channel(4);
+        let (initialized, initialization) = mpsc::sync_channel(1);
+        let busy = Arc::new(AtomicBool::new(true));
+        tray.set_busy(true);
+        let worker_tray = tray.clone();
+        let worker_busy = Arc::clone(&busy);
+        let spawn_result = std::thread::Builder::new()
+            .name("noire-tray-control".to_owned())
+            .spawn(move || {
+                tray_control_loop(&worker_tray, initialized, &command_receiver, &worker_busy);
+                worker_busy.store(false, Ordering::Release);
+                worker_tray.set_busy(false);
+            });
+        if spawn_result.is_err() {
+            busy.store(false, Ordering::Release);
+            tray.set_busy(false);
+        }
+        (
+            Self {
+                commands,
+                busy,
+                tray,
+            },
+            initialization,
+        )
+    }
+
+    pub(crate) fn toggle(&self) {
+        if self
+            .busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        self.tray.set_busy(true);
+        if self.commands.try_send(TrayControlCommand::Toggle).is_err() {
+            self.busy.store(false, Ordering::Release);
+            self.tray.set_busy(false);
+        }
+    }
+
+    pub(crate) fn begin_external_change(&self) -> bool {
+        if self
+            .busy
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+        self.tray.set_busy(true);
+        true
+    }
+
+    pub(crate) fn finish_external_change(&self) {
+        self.busy.store(false, Ordering::Release);
+        self.tray.set_busy(false);
+    }
+
+    #[must_use]
+    pub(crate) fn busy(&self) -> bool {
+        self.busy.load(Ordering::Acquire)
+    }
+
+    #[must_use]
+    pub(crate) fn stop_and_shutdown(&self, timeout: Duration) -> bool {
+        let (reply, response) = mpsc::sync_channel(1);
+        if self
+            .commands
+            .send(TrayControlCommand::StopAndShutdown(reply))
+            .is_err()
+        {
+            return false;
+        }
+        response.recv_timeout(timeout).unwrap_or(false)
+    }
+}
+
+fn tray_control_loop(
+    tray: &TrayRuntime,
+    initialized: SyncSender<bool>,
+    commands: &Receiver<TrayControlCommand>,
+    busy: &AtomicBool,
+) {
+    let channels = spawn();
+    if channels.requests.blocking_send(Request::Refresh).is_err() {
+        let _ignored = initialized.send(false);
+        return;
+    }
+    let mut pending = Some(PendingTrayAction::Startup(initialized));
+    let mut queued_stop = None;
+
+    loop {
+        while let Ok(command) = commands.try_recv() {
+            match command {
+                TrayControlCommand::Toggle if pending.is_none() && queued_stop.is_none() => {
+                    tray.set_busy(true);
+                    let target = !tray.active();
+                    if channels
+                        .requests
+                        .blocking_send(Request::SetActive(target))
+                        .is_ok()
+                    {
+                        pending = Some(PendingTrayAction::Toggle);
+                    } else {
+                        busy.store(false, Ordering::Release);
+                        tray.set_busy(false);
+                    }
+                }
+                TrayControlCommand::Toggle => {}
+                TrayControlCommand::StopAndShutdown(reply) => queued_stop = Some(reply),
+            }
+        }
+
+        if pending.is_none()
+            && let Some(reply) = queued_stop.take()
+        {
+            busy.store(true, Ordering::Release);
+            tray.set_busy(true);
+            if channels
+                .requests
+                .blocking_send(Request::SetActive(false))
+                .is_ok()
+            {
+                pending = Some(PendingTrayAction::Stop { reply, attempts: 1 });
+            } else {
+                let _ignored = reply.send(false);
+                return;
+            }
+        }
+
+        match channels.responses.recv_timeout(Duration::from_millis(33)) {
+            Ok(Response::State {
+                snapshot,
+                request_complete,
+                ..
+            }) => {
+                tray.set_active(snapshot.active);
+                let initialization_completed =
+                    matches!(pending.as_ref(), Some(PendingTrayAction::Startup(_)));
+                if request_complete || initialization_completed {
+                    let action = pending.take();
+                    let should_exit = complete_tray_action(action, true, snapshot.active);
+                    busy.store(false, Ordering::Release);
+                    tray.set_busy(false);
+                    if should_exit {
+                        let _ignored = channels.requests.blocking_send(Request::Shutdown);
+                        return;
+                    }
+                }
+            }
+            Ok(Response::Rejected {
+                recovered,
+                request_complete,
+                ..
+            }) => {
+                let authoritative = recovered.is_some();
+                let active = recovered
+                    .as_ref()
+                    .is_some_and(|(snapshot, _)| snapshot.active);
+                if let Some((snapshot, _)) = recovered {
+                    tray.set_active(snapshot.active);
+                }
+                if request_complete
+                    && !matches!(pending.as_ref(), Some(PendingTrayAction::Startup(_)))
+                {
+                    if (!authoritative || active) && retry_pending_stop(&channels, &mut pending) {
+                        continue;
+                    }
+                    let action = pending.take();
+                    let should_exit = complete_tray_action(action, authoritative, active);
+                    busy.store(false, Ordering::Release);
+                    tray.set_busy(false);
+                    if should_exit {
+                        let _ignored = channels.requests.blocking_send(Request::Shutdown);
+                        return;
+                    }
+                }
+            }
+            Ok(Response::Diagnostics(_) | Response::Meters(_))
+            | Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                fail_pending_tray_actions(pending.take(), queued_stop.take());
+                return;
+            }
+        }
+    }
+}
+
+fn retry_pending_stop(channels: &WorkerChannels, pending: &mut Option<PendingTrayAction>) -> bool {
+    let Some(PendingTrayAction::Stop { attempts, .. }) = pending.as_mut() else {
+        return false;
+    };
+    if *attempts >= 3
+        || channels
+            .requests
+            .blocking_send(Request::SetActive(false))
+            .is_err()
+    {
+        return false;
+    }
+    *attempts += 1;
+    true
+}
+
+fn fail_pending_tray_actions(
+    pending: Option<PendingTrayAction>,
+    queued_stop: Option<SyncSender<bool>>,
+) {
+    match pending {
+        Some(PendingTrayAction::Startup(reply) | PendingTrayAction::Stop { reply, .. }) => {
+            let _ignored = reply.send(false);
+        }
+        Some(PendingTrayAction::Toggle) | None => {}
+    }
+    if let Some(reply) = queued_stop {
+        let _ignored = reply.send(false);
+    }
+}
+
+fn complete_tray_action(action: Option<PendingTrayAction>, succeeded: bool, active: bool) -> bool {
+    match action {
+        Some(PendingTrayAction::Startup(reply)) => {
+            let _ignored = reply.send(succeeded);
+            false
+        }
+        Some(PendingTrayAction::Toggle) | None => false,
+        Some(PendingTrayAction::Stop { reply, .. }) => {
+            let stopped = succeeded && !active;
+            let _ignored = reply.send(stopped);
+            true
+        }
     }
 }
 
@@ -299,11 +563,13 @@ fn with_completion(response: Response, request_complete: bool) -> Response {
         Response::State {
             snapshot,
             inputs,
+            start_with_noise_reduction,
             refresh,
             ..
         } => Response::State {
             snapshot,
             inputs,
+            start_with_noise_reduction,
             refresh,
             request_complete,
         },
@@ -357,6 +623,11 @@ async fn execute(proxy: &Noire1Proxy<'_>, request: Request) -> Response {
             match mutation {
                 Request::SetActive(true) => proxy.start(revision).await,
                 Request::SetActive(false) => proxy.stop(revision).await,
+                Request::SetStartWithNoiseReduction(enabled) => {
+                    proxy
+                        .set_start_with_noise_reduction(enabled, revision)
+                        .await
+                }
                 Request::SelectInput(stable_id) => proxy.select_input(&stable_id, revision).await,
                 Request::SetSuppressionEnabled(enabled) => {
                     proxy.set_suppression_enabled(enabled, revision).await
@@ -366,9 +637,6 @@ async fn execute(proxy: &Noire1Proxy<'_>, request: Request) -> Response {
                     proxy.set_latency_profile(&profile, revision).await
                 }
                 Request::SetFailMode(mode) => proxy.set_fail_mode(&mode, revision).await,
-                Request::SetLaunchAtLogin(enabled) => {
-                    proxy.set_launch_at_login(enabled, revision).await
-                }
                 Request::Retry => proxy.retry(revision).await,
                 Request::Refresh | Request::Diagnostics | Request::Shutdown => {
                     return rejected(
@@ -386,18 +654,22 @@ async fn execute(proxy: &Noire1Proxy<'_>, request: Request) -> Response {
     };
 
     match result {
-        Ok(snapshot) => match proxy.list_inputs().await {
-            Ok(inputs) => Response::State {
+        Ok(snapshot) => match (
+            proxy.list_inputs().await,
+            proxy.get_start_with_noise_reduction().await,
+        ) {
+            (Ok(inputs), Ok(start_with_noise_reduction)) => Response::State {
                 snapshot,
                 inputs,
+                start_with_noise_reduction,
                 refresh: is_refresh,
                 request_complete: false,
             },
-            Err(_error) => Response::Rejected {
+            (Err(_error), _) | (_, Err(_error)) => Response::Rejected {
                 error: communication_error(
-                    "input-list-unavailable",
-                    "Daemon state loaded, but microphones could not be listed.",
-                    "Retry; restart PipeWire if no microphones appear.",
+                    "daemon-state-incomplete",
+                    "Noire could not load all daemon settings.",
+                    "Restart the Noire controller and background service, then retry.",
                 ),
                 recovered: Some((snapshot, Vec::new())),
                 request_complete: false,
@@ -510,7 +782,7 @@ mod tests {
         future::{self, Future},
         path::PathBuf,
         pin::Pin,
-        sync::Arc,
+        sync::{Arc, mpsc},
         time::{Duration, SystemTime},
     };
 
@@ -522,8 +794,8 @@ mod tests {
     };
 
     use super::{
-        INITIAL_RECONNECT_BACKOFF, MAX_RECONNECT_BACKOFF, Request, Response, mutation_error_copy,
-        next_backoff, spawn,
+        INITIAL_RECONNECT_BACKOFF, MAX_RECONNECT_BACKOFF, PendingTrayAction, Request, Response,
+        complete_tray_action, mutation_error_copy, next_backoff, spawn,
     };
 
     #[derive(Default)]
@@ -690,6 +962,31 @@ mod tests {
     }
 
     #[test]
+    fn tray_quit_acknowledges_only_authoritative_stopped_state() {
+        let (stopped_sender, stopped_receiver) = mpsc::sync_channel(1);
+        assert!(complete_tray_action(
+            Some(PendingTrayAction::Stop {
+                reply: stopped_sender,
+                attempts: 1,
+            }),
+            true,
+            false,
+        ));
+        assert!(stopped_receiver.recv().unwrap_or(false));
+
+        let (active_sender, active_receiver) = mpsc::sync_channel(1);
+        assert!(complete_tray_action(
+            Some(PendingTrayAction::Stop {
+                reply: active_sender,
+                attempts: 1,
+            }),
+            true,
+            true,
+        ));
+        assert!(!active_receiver.recv().unwrap_or(true));
+    }
+
+    #[test]
     #[ignore = "requires a private dbus-run-session"]
     fn dbus_worker_converges_after_external_change_rejection_and_restart()
     -> Result<(), Box<dyn Error>> {
@@ -704,6 +1001,34 @@ mod tests {
         let initial = state(receive_completed(&runtime, &channels)?)?;
         assert_eq!(initial.revision, 1);
         assert_strength(initial.strength, 0.55);
+
+        channels
+            .requests
+            .blocking_send(Request::SetStartWithNoiseReduction(true))?;
+        match receive_completed(&runtime, &channels)? {
+            Response::State {
+                snapshot,
+                start_with_noise_reduction,
+                ..
+            } => {
+                assert!(start_with_noise_reduction);
+                assert!(!snapshot.active);
+            }
+            response => {
+                return Err(format!("expected startup preference state: {response:?}").into());
+            }
+        }
+        channels
+            .requests
+            .blocking_send(Request::SetStartWithNoiseReduction(false))?;
+        let startup_disabled = receive_completed(&runtime, &channels)?;
+        assert!(matches!(
+            startup_disabled,
+            Response::State {
+                start_with_noise_reduction: false,
+                ..
+            }
+        ));
 
         channels.requests.blocking_send(Request::Diagnostics)?;
         match receive_completed(&runtime, &channels)? {

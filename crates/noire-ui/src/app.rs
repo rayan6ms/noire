@@ -19,6 +19,7 @@ use noire_ipc::DiagnosticReport;
 
 use crate::{
     assets::Assets,
+    autostart,
     client::{self, Request, Response, WorkerChannels},
     preferences::{DesktopPreferences, ThemePreference},
     state::{UiState, UserError},
@@ -117,8 +118,8 @@ impl From<&UserError> for Toast {
 
 struct AppRuntime {
     tray: TrayRuntime,
+    tray_controller: client::TrayController,
     window: Option<AnyWindowHandle>,
-    active: bool,
     close_to_tray: Arc<AtomicBool>,
     quit_requested: Arc<AtomicBool>,
 }
@@ -126,14 +127,14 @@ struct AppRuntime {
 impl AppRuntime {
     fn new(
         tray: TrayRuntime,
+        tray_controller: client::TrayController,
         close_to_tray: Arc<AtomicBool>,
         quit_requested: Arc<AtomicBool>,
     ) -> Self {
-        let active = tray.active();
         Self {
             tray,
+            tray_controller,
             window: None,
-            active,
             close_to_tray,
             quit_requested,
         }
@@ -144,7 +145,6 @@ impl AppRuntime {
     }
 
     fn set_active(&mut self, active: bool) {
-        self.active = active;
         self.tray.set_active(active);
     }
 
@@ -155,27 +155,13 @@ impl AppRuntime {
                     self.show_window(cx);
                 }
                 TrayCommand::ToggleProcessing => {
-                    self.toggle_processing(cx);
+                    self.tray_controller.toggle();
                 }
                 TrayCommand::Quit => {
                     self.quit_requested.store(true, Ordering::Relaxed);
                     cx.quit();
                 }
             }
-        }
-    }
-
-    fn toggle_processing(&mut self, cx: &mut Context<Self>) {
-        let desired = !self.active;
-        if let Some(handle) = self.show_window(cx) {
-            let _ignored = handle.update(cx, move |view, _, cx| {
-                if let Ok(view) = view.downcast::<NoireView>() {
-                    view.update(cx, |view, cx| {
-                        view.begin_active_change(desired, cx);
-                        cx.notify();
-                    });
-                }
-            });
         }
     }
 
@@ -246,6 +232,7 @@ struct NoireView {
     page: Page,
     preferences: DesktopPreferences,
     runtime: Entity<AppRuntime>,
+    tray_controller: client::TrayController,
     settings_scroll: ScrollHandle,
     diagnostics: Option<String>,
     toast: Option<Toast>,
@@ -253,12 +240,17 @@ struct NoireView {
     last_daemon_error: Option<String>,
     processing_transition: Option<ProcessingTransition>,
     optimistic_active: Option<bool>,
+    start_with_noise_reduction: bool,
+    processing_request_pending: bool,
     system_dark_theme: bool,
     _appearance_subscription: Subscription,
 }
 
 impl Drop for NoireView {
     fn drop(&mut self) {
+        if self.processing_request_pending {
+            self.tray_controller.finish_external_change();
+        }
         let _ignored = self.channels.requests.try_send(Request::Shutdown);
     }
 }
@@ -292,6 +284,8 @@ impl NoireView {
         })
         .detach();
 
+        let initial_active = runtime.read(cx).tray.active();
+        let tray_controller = runtime.read(cx).tray_controller.clone();
         let mut this = Self {
             state: UiState::default(),
             channels: client::spawn(),
@@ -299,13 +293,16 @@ impl NoireView {
             page: Page::Home,
             preferences,
             runtime,
+            tray_controller,
             settings_scroll: ScrollHandle::new(),
             diagnostics: None,
             toast: None,
             toast_expires: None,
             last_daemon_error: None,
             processing_transition: None,
-            optimistic_active: None,
+            optimistic_active: Some(initial_active),
+            start_with_noise_reduction: false,
+            processing_request_pending: false,
             system_dark_theme: appearance_is_dark(window.appearance()),
             _appearance_subscription: appearance_subscription,
         };
@@ -369,6 +366,7 @@ impl NoireView {
                 Ok(Response::State {
                     snapshot,
                     inputs,
+                    start_with_noise_reduction,
                     refresh,
                     request_complete,
                 }) => {
@@ -389,6 +387,7 @@ impl NoireView {
                         self.show_toast(toast);
                     }
                     self.last_daemon_error = daemon_error_code;
+                    self.start_with_noise_reduction = start_with_noise_reduction;
                     if refresh {
                         self.state.refresh(snapshot, inputs);
                     } else {
@@ -404,9 +403,7 @@ impl NoireView {
                         });
                     }
                     self.sync_runtime_active(active, cx);
-                    if request_complete {
-                        self.outstanding = self.outstanding.saturating_sub(1);
-                    }
+                    self.complete_request(request_complete);
                 }
                 Ok(Response::Rejected {
                     error,
@@ -437,9 +434,7 @@ impl NoireView {
                             started: Instant::now(),
                         });
                     }
-                    if request_complete {
-                        self.outstanding = self.outstanding.saturating_sub(1);
-                    }
+                    self.complete_request(request_complete);
                 }
                 Ok(Response::Diagnostics(report)) => {
                     self.diagnostics = Some(diagnostic_report_text(&report));
@@ -512,7 +507,21 @@ impl NoireView {
             .update(cx, |runtime, _| runtime.set_active(active));
     }
 
-    fn begin_active_change(&mut self, target: bool, cx: &mut Context<Self>) {
+    fn finish_processing_request(&mut self) {
+        if self.processing_request_pending {
+            self.processing_request_pending = false;
+            self.tray_controller.finish_external_change();
+        }
+    }
+
+    fn complete_request(&mut self, request_complete: bool) {
+        if request_complete {
+            self.finish_processing_request();
+            self.outstanding = self.outstanding.saturating_sub(1);
+        }
+    }
+
+    fn begin_active_change(&mut self, target: bool) {
         if self.state.snapshot().is_none() || self.state.request_pending() {
             return;
         }
@@ -520,11 +529,14 @@ impl NoireView {
         if active == target {
             return;
         }
-        if !self.send(Request::SetActive(target), true) {
+        if !self.tray_controller.begin_external_change() {
             return;
         }
-        self.optimistic_active = Some(target);
-        self.sync_runtime_active(target, cx);
+        if !self.send(Request::SetActive(target), true) {
+            self.tray_controller.finish_external_change();
+            return;
+        }
+        self.processing_request_pending = true;
         self.processing_transition = Some(ProcessingTransition {
             from: active,
             to: target,
@@ -532,8 +544,8 @@ impl NoireView {
         });
     }
 
-    fn toggle_active(&mut self, cx: &mut Context<Self>) {
-        self.begin_active_change(!self.display_active(), cx);
+    fn toggle_active(&mut self) {
+        self.begin_active_change(!self.display_active());
     }
 
     fn close_window(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -820,7 +832,7 @@ impl NoireView {
 
     fn processing_button(&self, active: bool, interactive: bool, cx: &mut Context<Self>) -> Div {
         let p = self.palette();
-        let pending = self.state.request_pending();
+        let pending = self.state.request_pending() || self.tray_controller.busy();
         let content = if let Some(transition) = self.processing_transition {
             let progress = (transition.started.elapsed().as_secs_f32() / 0.16).clamp(0.0, 1.0);
             div()
@@ -862,7 +874,7 @@ impl NoireView {
                     button
                         .hover(move |style| style.bg(rgb(p.hover)))
                         .on_click(cx.listener(|view, _, _, cx| {
-                            view.toggle_active(cx);
+                            view.toggle_active();
                             cx.notify();
                         }))
                 })
@@ -880,7 +892,12 @@ impl NoireView {
         let latency = snapshot.map_or("low", |snapshot| snapshot.latency_profile.as_str());
         let fail_mode = snapshot.map_or("closed", |snapshot| snapshot.fail_mode.as_str());
         let suppression = snapshot.is_none_or(|snapshot| snapshot.suppression_enabled);
-        let launch_at_login = snapshot.is_some_and(|snapshot| snapshot.launch_at_login);
+        let autostart = autostart::status();
+        let autostart_description = if autostart.available {
+            "Launch Noire in the tray when you sign in."
+        } else {
+            "Login startup is unavailable for this package or desktop session."
+        };
         let tray_available = self.runtime.read(cx).tray_available();
         let choices = self.state.input_choices();
 
@@ -1026,16 +1043,37 @@ impl NoireView {
                     .child(toggle_row(
                         "launch-at-login",
                         "Start at login",
-                        "Start the background audio service with your desktop session.",
-                        launch_at_login,
+                        autostart_description,
+                        autostart.enabled,
+                        autostart.available,
+                        p,
+                        cx.listener(|view, _, _, cx| {
+                            let status = autostart::status();
+                            if let Err(_error) = autostart::set_enabled(!status.enabled) {
+                                view.show_toast(Toast {
+                                    cause: "Noire could not update login startup.".to_owned(),
+                                    recovery: "Check the desktop autostart directory permissions, then retry."
+                                        .to_owned(),
+                                    retryable: true,
+                                });
+                            }
+                            cx.notify();
+                        }),
+                    ))
+                    .child(toggle_row(
+                        "start-with-noise-reduction",
+                        "Start with noise reduction enabled",
+                        "Apply noise reduction automatically when the background service starts.",
+                        self.start_with_noise_reduction,
                         controls_enabled,
                         p,
                         cx.listener(|view, _, _, cx| {
-                            let enabled = view
-                                .state
-                                .snapshot()
-                                .is_some_and(|snapshot| snapshot.launch_at_login);
-                            view.send(Request::SetLaunchAtLogin(!enabled), true);
+                            view.send(
+                                Request::SetStartWithNoiseReduction(
+                                    !view.start_with_noise_reduction,
+                                ),
+                                true,
+                            );
                             cx.notify();
                         }),
                     ))
@@ -1270,19 +1308,22 @@ pub(crate) fn run(start_minimized: bool) {
     let preferences = DesktopPreferences::load();
     let tray = TrayRuntime::start();
     let tray_available = tray.available();
-    let hidden = (start_minimized || preferences.start_minimized) && tray_available;
+    let hidden = should_start_hidden(start_minimized, preferences.start_minimized, tray_available);
+    let (tray_controller, initialization) = client::TrayController::start(tray.clone());
+    let _initialized = initialization.recv_timeout(Duration::from_secs(3));
     let close_to_tray = Arc::new(AtomicBool::new(preferences.close_to_tray && tray_available));
     let quit_requested = Arc::new(AtomicBool::new(false));
-    let mut session_action = (!hidden).then_some(false);
+    let mut show_requested = !hidden;
 
     loop {
-        if let Some(toggle_on_launch) = session_action.take() {
+        if show_requested {
             run_window_session(
                 tray.clone(),
+                tray_controller.clone(),
                 Arc::clone(&close_to_tray),
                 Arc::clone(&quit_requested),
-                toggle_on_launch,
             );
+            show_requested = false;
         }
 
         if quit_requested.load(Ordering::Relaxed)
@@ -1293,23 +1334,36 @@ pub(crate) fn run(start_minimized: bool) {
         }
 
         match tray.recv() {
-            Ok(TrayCommand::Show) => session_action = Some(false),
-            Ok(TrayCommand::ToggleProcessing) => session_action = Some(true),
+            Ok(TrayCommand::Show) => show_requested = true,
+            Ok(TrayCommand::ToggleProcessing) => tray_controller.toggle(),
             Ok(TrayCommand::Quit) | Err(_) => break,
         }
     }
+
+    if !tray_controller.stop_and_shutdown(Duration::from_secs(3)) {
+        eprintln!("Noire could not confirm that noise reduction stopped before exit.");
+    }
+}
+
+const fn should_start_hidden(
+    command_line_minimized: bool,
+    preference_minimized: bool,
+    tray_available: bool,
+) -> bool {
+    (command_line_minimized || preference_minimized) && tray_available
 }
 
 fn run_window_session(
     tray: TrayRuntime,
+    tray_controller: client::TrayController,
     close_to_tray: Arc<AtomicBool>,
     quit_requested: Arc<AtomicBool>,
-    toggle_on_launch: bool,
 ) {
     Application::new()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
-            let runtime = cx.new(|_| AppRuntime::new(tray, close_to_tray, quit_requested));
+            let runtime =
+                cx.new(|_| AppRuntime::new(tray, tray_controller, close_to_tray, quit_requested));
             let runtime_task = runtime.clone();
             cx.spawn(async move |cx| {
                 loop {
@@ -1322,9 +1376,6 @@ fn run_window_session(
             .detach();
             runtime.update(cx, |runtime, cx| {
                 runtime.show_window(cx);
-                if toggle_on_launch {
-                    runtime.toggle_processing(cx);
-                }
             });
         });
 }
@@ -1860,7 +1911,15 @@ fn diagnostic_report_text(report: &DiagnosticReport) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{meter_level, scrollbar_thumb_geometry};
+    use super::{meter_level, scrollbar_thumb_geometry, should_start_hidden};
+
+    #[test]
+    fn minimized_start_requires_a_tray_and_honors_both_entry_points() {
+        assert!(should_start_hidden(true, false, true));
+        assert!(should_start_hidden(false, true, true));
+        assert!(!should_start_hidden(false, false, true));
+        assert!(!should_start_hidden(true, true, false));
+    }
 
     #[test]
     fn meter_level_maps_quiet_linear_audio_into_a_visible_range() {

@@ -8,6 +8,8 @@
     <method name="ListInputs"><arg name="inputs" type="a(ssbs)" direction="out"/></method>
     <method name="Start"><arg name="expected_revision" type="t" direction="in"/><arg name="snapshot" type="(ussttsbbssssbssbdssustb(ssssbt)(ttttttttttttttttddd))" direction="out"/></method>
     <method name="Stop"><arg name="expected_revision" type="t" direction="in"/><arg name="snapshot" type="(ussttsbbssssbssbdssustb(ssssbt)(ttttttttttttttttddd))" direction="out"/></method>
+    <method name="GetStartWithNoiseReduction"><arg name="enabled" type="b" direction="out"/></method>
+    <method name="SetStartWithNoiseReduction"><arg name="enabled" type="b" direction="in"/><arg name="expected_revision" type="t" direction="in"/><arg name="snapshot" type="(ussttsbbssssbssbdssustb(ssssbt)(ttttttttttttttttddd))" direction="out"/></method>
     <method name="SelectInput"><arg name="stable_id" type="s" direction="in"/><arg name="expected_revision" type="t" direction="in"/><arg name="snapshot" type="(ussttsbbssssbssbdssustb(ssssbt)(ttttttttttttttttddd))" direction="out"/></method>
     <method name="SetSuppressionEnabled"><arg name="enabled" type="b" direction="in"/><arg name="expected_revision" type="t" direction="in"/><arg name="snapshot" type="(ussttsbbssssbssbdssustb(ssssbt)(ttttttttttttttttddd))" direction="out"/></method>
     <method name="SetStrength"><arg name="strength" type="d" direction="in"/><arg name="expected_revision" type="t" direction="in"/><arg name="snapshot" type="(ussttsbbssssbssbdssustb(ssssbt)(ttttttttttttttttddd))" direction="out"/></method>

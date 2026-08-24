@@ -25,7 +25,7 @@ zbus = { workspace = true, optional = true }
 
 [dev-dependencies]
 noire-config.workspace = true
-noired.workspace = true
+noired = { workspace = true, features = ["runtime"] }
 
 [features]
 default = ["gpui-ui"]

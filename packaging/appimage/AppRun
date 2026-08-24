@@ -86,13 +86,58 @@ if [ ! -d "$runtime_dir" ] || [ ! -w "$runtime_dir" ]; then
     runtime_dir=
 fi
 flock_bin=$(command -v flock || true)
+owns_session_lock=false
 if [ -n "$runtime_dir" ] && [ -n "$flock_bin" ]; then
     lock_file="$runtime_dir/noire-appimage.lock"
     if { exec 9>>"$lock_file"; } 2>/dev/null; then
         if ! "$flock_bin" -n 9; then
             exit 0
         fi
+        owns_session_lock=true
     fi
+fi
+
+# A pre-1.1.3 portable daemon could outlive its controller and keep the old
+# AppImage mount and D-Bus API alive. Reaching this point proves that no other
+# AppImage controller owns the session lock, so stop and terminate only an
+# exact same-user noired executable inside an AppImage mount.
+cleanup_stale_portable_daemons() {
+    current_uid=$(id -u)
+    stale_pids=
+    for process_dir in /proc/[0-9]*; do
+        pid=${process_dir#/proc/}
+        [ "$pid" != "$$" ] || continue
+        executable=$(readlink "$process_dir/exe" 2>/dev/null || true)
+        case "$executable" in
+            /tmp/.mount_noire.*/usr/bin/noired|/tmp/.mount_noire.*/usr/bin/noired\ \(deleted\)) ;;
+            *) continue ;;
+        esac
+        process_uid=$(awk '/^Uid:/ { print $2; exit }' "$process_dir/status" 2>/dev/null || true)
+        [ "$process_uid" = "$current_uid" ] || continue
+        stale_pids="$stale_pids $pid"
+    done
+    [ -n "$stale_pids" ] || return 0
+
+    "$app_dir/usr/bin/noirectl" stop >/dev/null 2>&1 || true
+    for pid in $stale_pids; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    attempt=0
+    while [ "$attempt" -lt 20 ]; do
+        still_running=false
+        for pid in $stale_pids; do
+            [ ! -d "/proc/$pid" ] || still_running=true
+        done
+        [ "$still_running" = true ] || return 0
+        sleep 0.05
+        attempt=$((attempt + 1))
+    done
+    echo "Noire could not stop its stale portable background service." >&2
+    return 1
+}
+
+if [ "$owns_session_lock" = true ] && [ "$runtime_dir" = "/run/user/$(id -u)" ]; then
+    cleanup_stale_portable_daemons
 fi
 
 # Native packages use D-Bus activation. The portable image starts its bundled
@@ -103,7 +148,8 @@ if ! "$app_dir/usr/bin/noirectl" status >/dev/null 2>&1; then
         daemon_log="$runtime_dir/noire-appimage.log"
     fi
     if [ -n "${APPIMAGE:-}" ] && [ -x "$APPIMAGE" ]; then
-        NOIRE_APPIMAGE_ROLE=daemon env -u LD_LIBRARY_PATH -u XDG_DATA_DIRS \
+        NOIRE_APPIMAGE_ROLE=daemon NOIRE_PORTABLE_CONTROLLER_PID=$$ \
+            env -u LD_LIBRARY_PATH -u XDG_DATA_DIRS \
             -u PIPEWIRE_MODULE_DIR -u SPA_PLUGIN_DIR -u PIPEWIRE_CONFIG_DIR \
             "$APPIMAGE" 9>&- >>"$daemon_log" 2>&1 &
     else

@@ -207,6 +207,24 @@ impl NoireService {
         self.publish(result, &emitter).await
     }
 
+    async fn get_start_with_noise_reduction(&self) -> bool {
+        self.daemon.lock().await.start_with_noise_reduction()
+    }
+
+    async fn set_start_with_noise_reduction(
+        &self,
+        enabled: bool,
+        expected_revision: u64,
+        #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+    ) -> Result<Snapshot, ServiceError> {
+        let result = self
+            .daemon
+            .lock()
+            .await
+            .set_start_with_noise_reduction(enabled, expected_revision);
+        self.publish(result, &emitter).await
+    }
+
     async fn select_input(
         &self,
         stable_id: &str,

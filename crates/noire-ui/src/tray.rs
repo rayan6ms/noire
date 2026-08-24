@@ -18,6 +18,7 @@ pub(crate) enum TrayCommand {
 
 struct NoireTray {
     active: bool,
+    busy: bool,
     commands: Sender<TrayCommand>,
 }
 
@@ -27,7 +28,9 @@ impl ksni::Tray for NoireTray {
     }
 
     fn title(&self) -> String {
-        if self.active {
+        if self.busy {
+            "Noire — changing noise reduction state"
+        } else if self.active {
             "Noire — noise reduction active"
         } else {
             "Noire — noise reduction off"
@@ -63,12 +66,15 @@ impl ksni::Tray for NoireTray {
             }
             .into(),
             StandardItem {
-                label: if self.active {
+                label: if self.busy {
+                    "Changing noise reduction…"
+                } else if self.active {
                     "Stop noise reduction"
                 } else {
                     "Start noise reduction"
                 }
                 .to_owned(),
+                enabled: !self.busy,
                 activate: Box::new(|tray: &mut Self| {
                     let _ignored = tray.commands.send(TrayCommand::ToggleProcessing);
                 }),
@@ -189,6 +195,7 @@ struct TrayInner {
     commands: Mutex<Receiver<TrayCommand>>,
     handle: Option<Handle<NoireTray>>,
     active: AtomicBool,
+    busy: AtomicBool,
 }
 
 impl TrayRuntime {
@@ -197,6 +204,7 @@ impl TrayRuntime {
         let (sender, commands) = mpsc::channel();
         let tray = NoireTray {
             active: false,
+            busy: false,
             commands: sender,
         };
         let sandboxed = std::env::var_os("FLATPAK_ID").is_some();
@@ -212,6 +220,7 @@ impl TrayRuntime {
                 commands: Mutex::new(commands),
                 handle,
                 active: AtomicBool::new(false),
+                busy: AtomicBool::new(false),
             }),
         }
     }
@@ -249,6 +258,16 @@ impl TrayRuntime {
         if let Some(handle) = &self.inner.handle {
             let _ignored = handle.update(|tray| {
                 tray.active = active;
+            });
+        }
+    }
+
+    /// Prevents repeated tray mutations while one authoritative change is pending.
+    pub fn set_busy(&self, busy: bool) {
+        self.inner.busy.store(busy, Ordering::Release);
+        if let Some(handle) = &self.inner.handle {
+            let _ignored = handle.update(|tray| {
+                tray.busy = busy;
             });
         }
     }

@@ -162,7 +162,7 @@ pub struct Snapshot {
     pub device_revision: u64,
     /// Stable lifecycle state name.
     pub state: String,
-    /// Persisted intended active state.
+    /// Current intended active state.
     pub active: bool,
     /// Whether launch at login is enabled.
     pub launch_at_login: bool,
@@ -347,6 +347,14 @@ pub trait Noire1 {
     fn start(&self, expected_revision: u64) -> zbus::Result<Snapshot>;
     /// Stops processing if the revision is current.
     fn stop(&self, expected_revision: u64) -> zbus::Result<Snapshot>;
+    /// Returns whether processing is explicitly enabled for daemon startup.
+    fn get_start_with_noise_reduction(&self) -> zbus::Result<bool>;
+    /// Changes whether processing is enabled for future daemon starts.
+    fn set_start_with_noise_reduction(
+        &self,
+        enabled: bool,
+        expected_revision: u64,
+    ) -> zbus::Result<Snapshot>;
     /// Selects a stable input.
     /// An empty selector restores follow-default policy.
     fn select_input(&self, stable_id: &str, expected_revision: u64) -> zbus::Result<Snapshot>;
@@ -458,6 +466,8 @@ mod tests {
             "ListInputs",
             "Start",
             "Stop",
+            "GetStartWithNoiseReduction",
+            "SetStartWithNoiseReduction",
             "SelectInput",
             "SetSuppressionEnabled",
             "SetStrength",

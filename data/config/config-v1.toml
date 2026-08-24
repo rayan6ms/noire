@@ -1,5 +1,6 @@
 schema_version = 1
 active = false
+start_with_noise_reduction = false
 launch_at_login = false
 
 [input]

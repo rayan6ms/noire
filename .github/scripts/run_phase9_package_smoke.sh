@@ -125,5 +125,6 @@ if command -v rpmbuild >/dev/null 2>&1 && command -v rpm >/dev/null 2>&1; then
 fi
 
 sh "$repo_dir/.github/scripts/run_appimage_apprun_smoke.sh"
+sh "$repo_dir/.github/scripts/run_flatpak_wrapper_smoke.sh"
 
-echo "NOIRE_PHASE9_PACKAGE content=pass metadata=pass split=pass appimage_migration=pass formats=$formats"
+echo "NOIRE_PHASE9_PACKAGE content=pass metadata=pass split=pass portable_lifecycle=pass formats=$formats"

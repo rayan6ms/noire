@@ -23,8 +23,11 @@ pub const CONFIG_RELATIVE_PATH: &str = "noire/config.toml";
 pub struct Config {
     /// Schema version written into the file.
     pub schema_version: u32,
-    /// Intended processing state restored on daemon restart.
+    /// Current intended processing state.
     pub active: bool,
+    /// Whether a newly started daemon should enable processing automatically.
+    #[serde(default)]
+    pub start_with_noise_reduction: bool,
     /// Whether the systemd user unit is enabled for login.
     pub launch_at_login: bool,
     /// Input selection policy.
@@ -42,6 +45,7 @@ impl Default for Config {
         Self {
             schema_version: CONFIG_SCHEMA_VERSION,
             active: false,
+            start_with_noise_reduction: false,
             launch_at_login: false,
             input: InputConfig::default(),
             output: OutputConfig::default(),
@@ -684,7 +688,9 @@ mod tests {
             decode_and_migrate(include_str!("../../../data/config/config-v1.toml"))?,
             config
         );
-        assert!(text.starts_with("schema_version = 1\nactive = false\n"));
+        assert!(text.starts_with(
+            "schema_version = 1\nactive = false\nstart_with_noise_reduction = false\n"
+        ));
         Ok(())
     }
 

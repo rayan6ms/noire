@@ -308,6 +308,8 @@ jobs:
             target/release/noired --help >/dev/null
             target/release/noire --help >/dev/null
             target/release/noirectl --help >/dev/null
+            .github/scripts/run_portable_daemon_lifecycle_smoke.sh \
+              "$PWD/target/release/noired"
           } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/release-smoke.log"
 
       - name: Upload failure evidence

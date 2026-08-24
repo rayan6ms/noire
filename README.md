@@ -53,8 +53,10 @@ Choose one format:
 3. Select **Noire Microphone ☾** as the input in the receiving app.
 
 Disable noise suppression in the receiving app to avoid processing the voice
-twice. Closing Noire keeps it available in the tray by default and does not stop
-the virtual microphone.
+twice. With **Close to tray** enabled, closing the window hides it and keeps
+noise reduction running. **Quit Noire** stops noise reduction before exiting.
+New sessions start with noise reduction off unless **Start with noise reduction
+enabled** is explicitly enabled. **Start at login** launches Noire minimized.
 
 ## Troubleshooting
 

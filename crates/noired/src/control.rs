@@ -189,7 +189,15 @@ impl Daemon {
     /// realize persisted active intent produces degraded state while D-Bus
     /// remains controllable.
     #[must_use]
-    pub fn new(store: ConfigStore, mut engine: Box<dyn AudioEngine>, loaded: LoadOutcome) -> Self {
+    pub fn new(
+        store: ConfigStore,
+        mut engine: Box<dyn AudioEngine>,
+        mut loaded: LoadOutcome,
+    ) -> Self {
+        // `active` is live intent, not permission to resume unexpectedly after
+        // a login, crash, upgrade, or daemon restart. Startup is deliberately
+        // off unless the user opted in with the separate startup preference.
+        loaded.config.active = loaded.config.start_with_noise_reduction;
         let mut last_error = loaded.warning.as_deref().map(|_message| {
             catalog_error_info(
                 match loaded.source {
@@ -346,6 +354,10 @@ impl Daemon {
     ///
     /// Returns conflict, validation, audio, read-only, or persistence failure.
     pub fn start(&mut self, expected: u64) -> Result<Snapshot, ControlError> {
+        self.check_revision(expected)?;
+        if self.config.active {
+            return Ok(self.snapshot());
+        }
         self.mutate(expected, |config| config.active = true)
     }
 
@@ -355,7 +367,47 @@ impl Daemon {
     ///
     /// Returns conflict, audio, read-only, or persistence failure.
     pub fn stop(&mut self, expected: u64) -> Result<Snapshot, ControlError> {
+        self.check_revision(expected)?;
+        if !self.config.active {
+            return Ok(self.snapshot());
+        }
         self.mutate(expected, |config| config.active = false)
+    }
+
+    /// Whether new daemon sessions should begin with processing enabled.
+    #[must_use]
+    pub const fn start_with_noise_reduction(&self) -> bool {
+        self.config.start_with_noise_reduction
+    }
+
+    /// Atomically changes the explicit processing-on-start preference.
+    ///
+    /// This does not change the current processing state.
+    ///
+    /// # Errors
+    ///
+    /// Returns conflict, validation, audio, read-only, or persistence failure.
+    pub fn set_start_with_noise_reduction(
+        &mut self,
+        enabled: bool,
+        expected: u64,
+    ) -> Result<Snapshot, ControlError> {
+        self.check_revision(expected)?;
+        if !self.writable {
+            return Err(ControlError::ReadOnly);
+        }
+        if self.config.start_with_noise_reduction == enabled {
+            return Ok(self.snapshot());
+        }
+        let mut candidate = self.config.clone();
+        candidate.start_with_noise_reduction = enabled;
+        self.store
+            .save(&candidate)
+            .map_err(|error| ControlError::Persistence(error.to_string()))?;
+        self.config = candidate;
+        self.last_error = None;
+        self.revision = self.revision.saturating_add(1);
+        Ok(self.snapshot())
     }
 
     /// Atomically selects a stable input.
@@ -717,6 +769,7 @@ mod tests {
         }));
         let mut loaded = defaults();
         loaded.config.active = true;
+        loaded.config.start_with_noise_reduction = true;
         let mut daemon = Daemon::new(
             store,
             Box::new(RecoveryProbeEngine {
@@ -775,7 +828,7 @@ mod tests {
     }
 
     #[test]
-    fn restart_restores_persisted_intended_state_without_stale_audio() -> Result<(), Box<dyn Error>>
+    fn restart_is_off_by_default_and_respects_explicit_startup_opt_in() -> Result<(), Box<dyn Error>>
     {
         let (root, store) = temporary_store("restart")?;
         let mut first = Daemon::new(
@@ -786,6 +839,14 @@ mod tests {
         let started = first.start(1)?;
         assert!(started.active);
         drop(first);
+        let loaded = store.load()?;
+        let mut second = Daemon::new(store.clone(), Box::new(RecordingEngine::default()), loaded);
+        assert!(!second.snapshot().active);
+        assert_eq!(second.snapshot().state, "stopped");
+
+        let opted_in = second.set_start_with_noise_reduction(true, second.revision())?;
+        assert!(!opted_in.active);
+        drop(second);
         let loaded = store.load()?;
         let second = Daemon::new(store, Box::new(RecordingEngine::default()), loaded);
         assert!(second.snapshot().active);

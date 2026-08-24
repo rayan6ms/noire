@@ -58,7 +58,35 @@ async fn main() -> anyhow::Result<()> {
     let service = NoireService::new(daemon, launch_manager);
     register_and_claim(&connection, service.clone()).await?;
     tracing::info!(event = "daemon.ready", bus_name = noire_ipc::BUS_NAME);
-    service.monitor(&connection).await;
-    tracing::info!(event = "daemon.session-closed");
+    if let Some(controller_pid) = portable_controller_pid() {
+        tokio::select! {
+            () = service.monitor(&connection) => {
+                tracing::info!(event = "daemon.session-closed");
+            }
+            () = wait_for_controller_exit(controller_pid) => {
+                tracing::info!(event = "daemon.portable-controller-exited");
+            }
+        }
+    } else {
+        service.monitor(&connection).await;
+        tracing::info!(event = "daemon.session-closed");
+    }
     Ok(())
+}
+
+#[cfg(feature = "runtime")]
+fn portable_controller_pid() -> Option<u32> {
+    let pid = std::env::var("NOIRE_PORTABLE_CONTROLLER_PID")
+        .ok()?
+        .parse::<u32>()
+        .ok()?;
+    (pid > 1 && pid != std::process::id()).then_some(pid)
+}
+
+#[cfg(feature = "runtime")]
+async fn wait_for_controller_exit(pid: u32) {
+    let process = std::path::PathBuf::from(format!("/proc/{pid}"));
+    while process.exists() {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
 }

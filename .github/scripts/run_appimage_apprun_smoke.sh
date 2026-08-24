@@ -17,6 +17,18 @@ install -m 0755 "$repo_dir/packaging/appimage/AppRun" "$app_dir/AppRun"
     echo "echo 'noire 1.1.0'"
 } >"$app_dir/usr/bin/noire"
 chmod 0755 "$app_dir/usr/bin/noire"
+{
+    echo '#!/bin/sh'
+    echo 'exit 1'
+} >"$app_dir/usr/bin/noirectl"
+chmod 0755 "$app_dir/usr/bin/noirectl"
+{
+    printf '%s\n' '#!/bin/sh'
+    # The generated script, rather than this parent, expands these variables.
+    # shellcheck disable=SC2016
+    printf '%s\n' 'printf "%s\n" "${NOIRE_PORTABLE_CONTROLLER_PID:-}" >"$XDG_RUNTIME_DIR/controller-pid"'
+} >"$app_dir/usr/bin/noired"
+chmod 0755 "$app_dir/usr/bin/noired"
 : >"$fake_appimage"
 chmod 0755 "$fake_appimage"
 
@@ -55,4 +67,24 @@ APPDIR="$app_dir" APPIMAGE="$fake_appimage" HOME="$home_dir" \
     "$app_dir/AppRun" --version >/dev/null
 [ -f "$legacy_launcher" ]
 
-echo 'NOIRE_APPIMAGE_APPRUN legacy_migration=pass unrelated_launcher=preserved'
+# A portable daemon receives the stable AppRun/controller PID so it can stop
+# its audio graph and exit when the controller truly exits. The isolated
+# runtime directory also proves this test cannot inspect or signal live user
+# processes.
+runtime_lifecycle="$work_dir/run-lifecycle"
+mkdir -p "$runtime_lifecycle"
+APPDIR="$app_dir" APPIMAGE="$app_dir/AppRun" HOME="$home_dir" \
+    XDG_DATA_HOME="$data_dir" XDG_RUNTIME_DIR="$runtime_lifecycle" \
+    "$app_dir/AppRun" >/dev/null
+attempt=0
+while [ ! -s "$runtime_lifecycle/controller-pid" ] && [ "$attempt" -lt 20 ]; do
+    sleep 0.05
+    attempt=$((attempt + 1))
+done
+controller_pid=$(cat "$runtime_lifecycle/controller-pid")
+case "$controller_pid" in
+    ''|*[!0-9]*) echo 'Portable controller PID was not propagated' >&2; exit 1 ;;
+esac
+[ "$controller_pid" -gt 1 ]
+
+echo 'NOIRE_APPIMAGE_APPRUN legacy_migration=pass unrelated_launcher=preserved lifecycle=pass'
