@@ -15,7 +15,7 @@ use gpui::{
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
     WindowDecorations, WindowOptions, div, img, prelude::*, px, relative, rgb, size, svg,
 };
-use noire_ipc::DiagnosticReport;
+use noire_ipc::{DiagnosticReport, ErrorInfo, Snapshot};
 
 use crate::{
     assets::Assets,
@@ -30,6 +30,7 @@ const APPLICATION_ID: &str = "io.github.rayan6ms.Noire";
 const RESPONSE_INTERVAL: Duration = Duration::from_millis(33);
 const TRANSITION_DURATION: Duration = Duration::from_millis(160);
 const TOAST_LIFETIME: Duration = Duration::from_secs(6);
+const TRAY_LOSS_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Page {
@@ -107,10 +108,63 @@ struct ProcessingTransition {
     started: Instant,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TrayHostTransition {
+    None,
+    Lost,
+    Recovered,
+    FallbackDue,
+}
+
+struct TrayHostState {
+    available: bool,
+    loss_started: Option<Instant>,
+}
+
+impl TrayHostState {
+    const fn new(available: bool) -> Self {
+        Self {
+            available,
+            loss_started: None,
+        }
+    }
+
+    fn observe(&mut self, available: bool, now: Instant) -> TrayHostTransition {
+        if available != self.available {
+            self.available = available;
+            if available {
+                self.loss_started = None;
+                return TrayHostTransition::Recovered;
+            }
+            self.loss_started = Some(now);
+            return TrayHostTransition::Lost;
+        }
+        if !available
+            && self
+                .loss_started
+                .is_some_and(|started| now.saturating_duration_since(started) >= TRAY_LOSS_GRACE)
+        {
+            self.loss_started = None;
+            return TrayHostTransition::FallbackDue;
+        }
+        TrayHostTransition::None
+    }
+}
+
 impl From<&UserError> for Toast {
     fn from(error: &UserError) -> Self {
         Self {
             cause: error.cause.clone(),
+            recovery: error.recovery.clone(),
+            retryable: error.retryable,
+        }
+    }
+}
+
+impl From<&ErrorInfo> for Toast {
+    fn from(error: &ErrorInfo) -> Self {
+        Self {
+            cause: error.message.clone(),
             recovery: error.recovery.clone(),
             retryable: error.retryable,
         }
@@ -122,7 +176,7 @@ struct AppRuntime {
     tray_controller: client::TrayController,
     window: Option<AnyWindowHandle>,
     close_to_tray: Arc<AtomicBool>,
-    tray_was_available: bool,
+    tray_host: TrayHostState,
 }
 
 impl AppRuntime {
@@ -131,13 +185,13 @@ impl AppRuntime {
         tray_controller: client::TrayController,
         close_to_tray: Arc<AtomicBool>,
     ) -> Self {
-        let tray_was_available = tray.available();
+        let tray_host = TrayHostState::new(tray.available());
         Self {
             tray,
             tray_controller,
             window: None,
             close_to_tray,
-            tray_was_available,
+            tray_host,
         }
     }
 
@@ -161,27 +215,29 @@ impl AppRuntime {
                 TrayCommand::Quit => {
                     cx.quit();
                 }
-                TrayCommand::HostOnline => {
-                    self.tray_was_available = true;
-                }
-                TrayCommand::HostOffline => {
-                    self.handle_tray_loss(cx);
-                }
+                // The atomic availability value is authoritative. Coalescing
+                // callbacks here prevents a quick watcher restart from
+                // creating or focusing a window between offline and online.
+                TrayCommand::HostOnline | TrayCommand::HostOffline => {}
             }
         }
         let tray_available = self.tray.available();
-        if tray_host_lost(self.tray_was_available, tray_available) {
-            self.handle_tray_loss(cx);
+        match self.tray_host.observe(tray_available, Instant::now()) {
+            TrayHostTransition::None => {}
+            TrayHostTransition::Lost => {
+                // Closing must never hide the final visible window while no
+                // tray host can bring it back.
+                self.close_to_tray.store(false, Ordering::Relaxed);
+            }
+            TrayHostTransition::Recovered => {
+                let preferences = DesktopPreferences::load();
+                self.close_to_tray
+                    .store(preferences.close_to_tray, Ordering::Relaxed);
+            }
+            TrayHostTransition::FallbackDue => {
+                self.show_window(cx);
+            }
         }
-    }
-
-    fn handle_tray_loss(&mut self, cx: &mut Context<Self>) {
-        if !self.tray_was_available {
-            return;
-        }
-        self.tray_was_available = false;
-        self.close_to_tray.store(false, Ordering::Relaxed);
-        self.show_window(cx);
     }
 
     fn show_window(&mut self, cx: &mut Context<Self>) -> Option<AnyWindowHandle> {
@@ -402,22 +458,22 @@ impl NoireView {
                     request_complete,
                 }) => {
                     let previous_active = self.state.snapshot().map(|snapshot| snapshot.active);
+                    let previously_had_error = self.state.has_error();
                     let active = snapshot.active;
-                    let daemon_error = snapshot.has_error.then(|| Toast {
-                        cause: snapshot.last_error.message.clone(),
-                        recovery: snapshot.last_error.recovery.clone(),
-                        retryable: snapshot.last_error.retryable,
-                    });
-                    if let Some(toast) = daemon_error {
-                        self.show_toast(toast);
-                    } else {
-                        self.dismissed_toast = None;
-                    }
+                    let daemon_error = snapshot
+                        .has_error
+                        .then(|| Toast::from(&snapshot.last_error));
                     self.start_with_noise_reduction = start_with_noise_reduction;
                     if refresh {
                         self.state.refresh(snapshot, inputs);
                     } else {
                         self.state.converge(snapshot, inputs);
+                    }
+                    if error_resolved(previously_had_error, self.state.has_error()) {
+                        self.dismissed_toast = None;
+                    }
+                    if let Some(toast) = daemon_error {
+                        self.show_toast(toast);
                     }
                     if self.optimistic_active == Some(active) {
                         self.optimistic_active = None;
@@ -732,8 +788,7 @@ impl NoireView {
         let presentation = self.state.presentation();
         let snapshot = self.state.snapshot();
         let active = self.display_active();
-        let healthy =
-            snapshot.is_some_and(|snapshot| snapshot.state == "running" && !snapshot.has_error);
+        let healthy = processing_is_healthy(snapshot);
         let voice = snapshot.map_or(0.0, |snapshot| meter_level(snapshot.metrics.rms));
         let peak = snapshot.map_or(0.0, |snapshot| meter_level(snapshot.metrics.peak));
         let model = snapshot.map_or("FastEnhancer-B", |snapshot| snapshot.model_id.as_str());
@@ -751,7 +806,7 @@ impl NoireView {
                     div()
                         .rounded_xl()
                         .border_1()
-                        .border_color(rgb(if active { p.accent } else { p.border }))
+                        .border_color(rgb(if healthy { p.accent } else { p.border }))
                         .bg(rgb(p.surface))
                         .p_5()
                         .child(
@@ -818,6 +873,7 @@ impl NoireView {
                                 )
                                 .child(self.processing_button(
                                     active,
+                                    healthy,
                                     presentation.controls_enabled,
                                     cx,
                                 )),
@@ -876,7 +932,13 @@ impl NoireView {
         )
     }
 
-    fn processing_button(&self, active: bool, interactive: bool, cx: &mut Context<Self>) -> Div {
+    fn processing_button(
+        &self,
+        active: bool,
+        healthy: bool,
+        interactive: bool,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let p = self.palette();
         let pending = self.state.request_pending() || self.tray_controller.busy();
         let content = if let Some(transition) = self.processing_transition {
@@ -913,7 +975,7 @@ impl NoireView {
                 .w(px(160.0))
                 .rounded_lg()
                 .border_1()
-                .border_color(rgb(if active { p.success } else { p.border }))
+                .border_color(rgb(if healthy { p.success } else { p.border }))
                 .bg(rgb(p.raised))
                 .text_color(rgb(p.text))
                 .font_weight(FontWeight::SEMIBOLD)
@@ -1479,8 +1541,17 @@ const fn should_start_hidden(
     (command_line_minimized || preference_minimized) && tray_available
 }
 
-const fn tray_host_lost(was_available: bool, is_available: bool) -> bool {
-    was_available && !is_available
+const fn error_resolved(previously_had_error: bool, has_error: bool) -> bool {
+    previously_had_error && !has_error
+}
+
+fn processing_is_healthy(snapshot: Option<&Snapshot>) -> bool {
+    snapshot
+        .is_some_and(|snapshot| processing_state_is_healthy(&snapshot.state, snapshot.has_error))
+}
+
+fn processing_state_is_healthy(state: &str, has_error: bool) -> bool {
+    state == "running" && !has_error
 }
 
 fn window_button(
@@ -2045,12 +2116,15 @@ fn diagnostic_report_text(report: &DiagnosticReport) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
+
+    use noire_ipc::{ERROR_CATALOG, ErrorInfo};
 
     use super::{
-        ProcessingTransition, TOAST_LIFETIME, Toast, admit_toast, meter_level, refresh_toast,
-        scrollbar_thumb_geometry, should_start_hidden, strength_is_preset, transition_targets,
-        tray_host_lost,
+        ProcessingTransition, TOAST_LIFETIME, TRAY_LOSS_GRACE, Toast, TrayHostState,
+        TrayHostTransition, admit_toast, error_resolved, meter_level, processing_state_is_healthy,
+        refresh_toast, scrollbar_thumb_geometry, should_start_hidden, strength_is_preset,
+        transition_targets,
     };
 
     #[test]
@@ -2099,6 +2173,24 @@ mod tests {
     }
 
     #[test]
+    fn every_catalog_error_maps_to_complete_toast() {
+        for entry in ERROR_CATALOG {
+            let error = ErrorInfo {
+                code: entry.code.to_owned(),
+                message: entry.cause.to_owned(),
+                recovery: entry.recovery.to_owned(),
+                component: "test".to_owned(),
+                retryable: entry.retryable,
+                timestamp_millis: 1,
+            };
+            let toast = Toast::from(&error);
+            assert_eq!(toast.cause, entry.cause, "{}", entry.code);
+            assert_eq!(toast.recovery, entry.recovery, "{}", entry.code);
+            assert_eq!(toast.retryable, entry.retryable, "{}", entry.code);
+        }
+    }
+
+    #[test]
     fn recurring_toast_refreshes_its_visible_lifetime() {
         let toast = Toast {
             cause: "ongoing failure".to_owned(),
@@ -2134,10 +2226,55 @@ mod tests {
     }
 
     #[test]
-    fn a_lost_tray_host_requires_a_visible_fallback() {
-        assert!(tray_host_lost(true, false));
-        assert!(!tray_host_lost(true, true));
-        assert!(!tray_host_lost(false, false));
+    fn routine_healthy_snapshots_do_not_end_dismissal_suppression() {
+        assert!(!error_resolved(false, false));
+        assert!(!error_resolved(true, true));
+        assert!(!error_resolved(false, true));
+        assert!(error_resolved(true, false));
+    }
+
+    #[test]
+    fn momentary_tray_loss_is_cancelled_when_the_host_recovers() {
+        let started = Instant::now();
+        let mut host = TrayHostState::new(true);
+
+        assert_eq!(host.observe(false, started), TrayHostTransition::Lost);
+        assert_eq!(
+            host.observe(false, started + Duration::from_secs(1)),
+            TrayHostTransition::None
+        );
+        assert_eq!(
+            host.observe(true, started + Duration::from_secs(1)),
+            TrayHostTransition::Recovered
+        );
+        assert_eq!(
+            host.observe(true, started + TRAY_LOSS_GRACE),
+            TrayHostTransition::None
+        );
+    }
+
+    #[test]
+    fn prolonged_tray_loss_requests_one_visible_fallback() {
+        let started = Instant::now();
+        let mut host = TrayHostState::new(true);
+
+        assert_eq!(host.observe(false, started), TrayHostTransition::Lost);
+        assert_eq!(
+            host.observe(false, started + TRAY_LOSS_GRACE),
+            TrayHostTransition::FallbackDue
+        );
+        assert_eq!(
+            host.observe(false, started + TRAY_LOSS_GRACE + Duration::from_secs(1)),
+            TrayHostTransition::None
+        );
+    }
+
+    #[test]
+    fn degraded_active_processing_is_not_styled_as_healthy() {
+        assert!(processing_state_is_healthy("running", false));
+        assert!(!processing_state_is_healthy("running", true));
+        assert!(!processing_state_is_healthy("degraded", false));
+        assert!(!processing_state_is_healthy("recovering", false));
     }
 
     #[test]

@@ -51,25 +51,15 @@ pub struct UiState {
     client_error: Option<UserError>,
 }
 
-/// Fully derived text and action state for a GPUI render pass.
+/// Fully derived text and control state used by a GPUI render pass.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Presentation {
     /// Short status that never depends on color alone.
     pub status: String,
     /// Additional lifecycle, input, or recovery context.
     pub detail: String,
-    /// Primary start/stop action label.
-    pub primary_action: String,
     /// Whether daemon-backed settings may be changed.
     pub controls_enabled: bool,
-    /// Error cause, when one needs to be presented.
-    pub error_message: Option<String>,
-    /// Stable support code paired with the visible error.
-    pub error_code: Option<String>,
-    /// Actionable recovery text paired with a daemon error.
-    pub recovery: Option<String>,
-    /// Whether Retry is appropriate for the current error.
-    pub retryable: bool,
 }
 
 impl UiState {
@@ -142,6 +132,16 @@ impl UiState {
         self.request_pending
     }
 
+    /// Reports whether either the daemon or the client has a current error.
+    #[must_use]
+    pub fn has_error(&self) -> bool {
+        self.client_error.is_some()
+            || self
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.has_error)
+    }
+
     /// Returns input choices with the session default first.
     #[must_use]
     pub fn input_choices(&self) -> Vec<InputChoice> {
@@ -202,47 +202,16 @@ impl UiState {
                     || "Noire could not reach the background service.".to_owned(),
                     |error| format!("Error code: {}", error.code),
                 ),
-                primary_action: "Start".to_owned(),
                 controls_enabled: false,
-                error_message: client_error.map(|error| error.cause.clone()),
-                error_code: client_error.map(|error| error.code.clone()),
-                recovery: Some(client_error.map_or_else(
-                    || "Start or restart the Noire user service, then retry.".to_owned(),
-                    |error| error.recovery.clone(),
-                )),
-                retryable: client_error.is_none_or(|error| error.retryable),
             };
         };
 
         let input = self.input_display_name();
         let (status, detail) = lifecycle_copy(snapshot, &input);
-        let daemon_error = snapshot.has_error.then_some(&snapshot.last_error);
         Presentation {
             status,
             detail,
-            primary_action: if snapshot.active { "Stop" } else { "Start" }.to_owned(),
             controls_enabled: !self.request_pending,
-            error_message: self
-                .client_error
-                .as_ref()
-                .map(|error| error.cause.clone())
-                .or_else(|| daemon_error.map(|error| error.message.clone())),
-            error_code: self
-                .client_error
-                .as_ref()
-                .map(|error| error.code.clone())
-                .or_else(|| daemon_error.map(|error| error.code.clone()))
-                .filter(|code| !code.is_empty()),
-            recovery: self
-                .client_error
-                .as_ref()
-                .map(|error| error.recovery.clone())
-                .or_else(|| daemon_error.map(|error| error.recovery.clone()))
-                .filter(|recovery| !recovery.is_empty()),
-            retryable: self.client_error.as_ref().map_or_else(
-                || daemon_error.is_some_and(|error| error.retryable),
-                |error| error.retryable,
-            ),
         }
     }
 }
@@ -335,8 +304,8 @@ mod tests {
         let presentation = state.presentation();
         assert_eq!(presentation.status, "Noise reduction is active");
         assert!(presentation.detail.contains("Desk microphone"));
-        assert_eq!(presentation.primary_action, "Stop");
         assert!(presentation.controls_enabled);
+        assert!(!state.has_error());
     }
 
     #[test]
@@ -353,7 +322,7 @@ mod tests {
     }
 
     #[test]
-    fn daemon_error_exposes_code_cause_recovery_and_retry() {
+    fn daemon_error_exposes_visible_status_and_support_code() {
         let mut value = snapshot();
         value.has_error = true;
         value.last_error = ErrorInfo {
@@ -367,16 +336,12 @@ mod tests {
         state.converge(value, Vec::new());
         let presentation = state.presentation();
         assert_eq!(presentation.status, "Needs attention");
-        assert_eq!(
-            presentation.error_message.as_deref(),
-            Some("The selected microphone is unavailable.")
-        );
-        assert!(presentation.recovery.is_some());
-        assert!(presentation.retryable);
+        assert_eq!(presentation.detail, "Error code: input-unavailable");
+        assert!(state.has_error());
     }
 
     #[test]
-    fn every_catalog_error_has_complete_operable_ui_presentation() {
+    fn every_catalog_error_has_visible_status_and_support_code() {
         for entry in ERROR_CATALOG {
             let mut value = snapshot();
             value.has_error = true;
@@ -393,25 +358,13 @@ mod tests {
             let presentation = state.presentation();
             assert_eq!(presentation.status, "Needs attention", "{}", entry.code);
             assert_eq!(
-                presentation.error_code.as_deref(),
-                Some(entry.code),
+                presentation.detail,
+                format!("Error code: {}", entry.code),
                 "{}",
                 entry.code
             );
-            assert_eq!(
-                presentation.error_message.as_deref(),
-                Some(entry.cause),
-                "{}",
-                entry.code
-            );
-            assert_eq!(
-                presentation.recovery.as_deref(),
-                Some(entry.recovery),
-                "{}",
-                entry.code
-            );
-            assert_eq!(presentation.retryable, entry.retryable, "{}", entry.code);
             assert!(presentation.controls_enabled, "{}", entry.code);
+            assert!(state.has_error(), "{}", entry.code);
         }
     }
 
@@ -432,20 +385,9 @@ mod tests {
             Some((old, Vec::new())),
         );
         assert_eq!(state.snapshot().map(|value| value.strength), Some(0.3));
-        assert_eq!(
-            state.presentation().error_message.as_deref(),
-            Some("The setting conflicted with another client.")
-        );
-        assert_eq!(state.presentation().error_code.as_deref(), Some("conflict"));
-        assert_eq!(
-            state.presentation().recovery.as_deref(),
-            Some("Retry against current daemon state.")
-        );
+        assert!(state.has_error());
         state.refresh(snapshot(), Vec::new());
-        assert_eq!(
-            state.presentation().error_message.as_deref(),
-            Some("The setting conflicted with another client.")
-        );
+        assert!(state.has_error());
     }
 
     #[test]
@@ -453,7 +395,7 @@ mod tests {
         let mut state = UiState::default();
         state.reject(client_error(), None);
         state.refresh(snapshot(), Vec::new());
-        assert_eq!(state.presentation().error_message, None);
+        assert!(!state.has_error());
     }
 
     #[test]
@@ -491,7 +433,7 @@ mod tests {
         let presentation = state.presentation();
         assert_eq!(presentation.status, "Daemon unavailable");
         assert!(!presentation.controls_enabled);
-        assert!(presentation.retryable);
+        assert!(state.has_error());
     }
 
     #[test]
