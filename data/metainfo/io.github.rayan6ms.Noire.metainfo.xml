@@ -30,6 +30,17 @@
   <url type="homepage">https://github.com/rayan6ms/noire</url>
   <url type="bugtracker">https://github.com/rayan6ms/noire/issues</url>
   <releases>
+    <release version="1.1.7" date="2026-08-25" type="stable">
+      <description>
+        <p>Polishes tray recovery and desktop error feedback.</p>
+        <ul>
+          <li>Restores the saved close-to-tray behavior after a desktop tray host returns.</li>
+          <li>Waits through brief shell restarts before showing the fallback window, avoiding focus and window churn.</li>
+          <li>Keeps dismissed recurring errors quiet until the underlying error resolves or changes.</li>
+          <li>Aligns degraded processing visuals with recovery status and keeps the presentation contract tied to visible UI.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.6" date="2026-08-24" type="stable">
       <description>
         <p>Hardens recovery feedback and desktop tray behavior.</p>
