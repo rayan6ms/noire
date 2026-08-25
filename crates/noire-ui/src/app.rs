@@ -122,6 +122,7 @@ struct AppRuntime {
     tray_controller: client::TrayController,
     window: Option<AnyWindowHandle>,
     close_to_tray: Arc<AtomicBool>,
+    tray_was_available: bool,
 }
 
 impl AppRuntime {
@@ -130,11 +131,13 @@ impl AppRuntime {
         tray_controller: client::TrayController,
         close_to_tray: Arc<AtomicBool>,
     ) -> Self {
+        let tray_was_available = tray.available();
         Self {
             tray,
             tray_controller,
             window: None,
             close_to_tray,
+            tray_was_available,
         }
     }
 
@@ -158,8 +161,27 @@ impl AppRuntime {
                 TrayCommand::Quit => {
                     cx.quit();
                 }
+                TrayCommand::HostOnline => {
+                    self.tray_was_available = true;
+                }
+                TrayCommand::HostOffline => {
+                    self.handle_tray_loss(cx);
+                }
             }
         }
+        let tray_available = self.tray.available();
+        if tray_host_lost(self.tray_was_available, tray_available) {
+            self.handle_tray_loss(cx);
+        }
+    }
+
+    fn handle_tray_loss(&mut self, cx: &mut Context<Self>) {
+        if !self.tray_was_available {
+            return;
+        }
+        self.tray_was_available = false;
+        self.close_to_tray.store(false, Ordering::Relaxed);
+        self.show_window(cx);
     }
 
     fn show_window(&mut self, cx: &mut Context<Self>) -> Option<AnyWindowHandle> {
@@ -246,6 +268,7 @@ struct NoireView {
     diagnostics: Option<String>,
     toast: Option<Toast>,
     toast_expires: Option<Instant>,
+    dismissed_toast: Option<Toast>,
     processing_transition: Option<ProcessingTransition>,
     optimistic_active: Option<bool>,
     start_with_noise_reduction: bool,
@@ -306,6 +329,7 @@ impl NoireView {
             diagnostics: None,
             toast: None,
             toast_expires: None,
+            dismissed_toast: None,
             processing_transition: None,
             optimistic_active: Some(initial_active),
             start_with_noise_reduction: false,
@@ -386,6 +410,8 @@ impl NoireView {
                     });
                     if let Some(toast) = daemon_error {
                         self.show_toast(toast);
+                    } else {
+                        self.dismissed_toast = None;
                     }
                     self.start_with_noise_reduction = start_with_noise_reduction;
                     if refresh {
@@ -466,12 +492,20 @@ impl NoireView {
     }
 
     fn show_toast(&mut self, toast: Toast) {
+        if !admit_toast(&mut self.dismissed_toast, &toast) {
+            return;
+        }
         refresh_toast(
             &mut self.toast,
             &mut self.toast_expires,
             toast,
             Instant::now(),
         );
+    }
+
+    fn dismiss_toast(&mut self) {
+        self.dismissed_toast = self.toast.take();
+        self.toast_expires = None;
     }
 
     fn expire_toast(&mut self) {
@@ -698,6 +732,8 @@ impl NoireView {
         let presentation = self.state.presentation();
         let snapshot = self.state.snapshot();
         let active = self.display_active();
+        let healthy =
+            snapshot.is_some_and(|snapshot| snapshot.state == "running" && !snapshot.has_error);
         let voice = snapshot.map_or(0.0, |snapshot| meter_level(snapshot.metrics.rms));
         let peak = snapshot.map_or(0.0, |snapshot| meter_level(snapshot.metrics.peak));
         let model = snapshot.map_or("FastEnhancer-B", |snapshot| snapshot.model_id.as_str());
@@ -761,13 +797,17 @@ impl NoireView {
                                         .flex()
                                         .items_center()
                                         .gap_4()
-                                        .child(status_icon(active, p))
+                                        .child(status_icon(healthy, p))
                                         .child(
                                             div()
                                                 .flex()
                                                 .flex_col()
                                                 .gap_1()
-                                                .child(processing_status(active, p))
+                                                .child(processing_status(
+                                                    &presentation.status,
+                                                    healthy,
+                                                    p,
+                                                ))
                                                 .child(
                                                     div()
                                                         .text_sm()
@@ -1236,40 +1276,73 @@ impl NoireView {
                                         .child(toast.recovery.clone()),
                                 ),
                         )
-                        .when(toast.retryable, |toast| {
-                            toast.child(
-                                div()
-                                    .id("toast-retry")
-                                    .cursor_pointer()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .rounded_lg()
-                                    .border_1()
-                                    .border_color(rgb(p.border))
-                                    .bg(rgb(p.surface))
-                                    .px_3()
-                                    .py_2()
-                                    .text_sm()
-                                    .hover(move |style| style.bg(rgb(p.hover)))
-                                    .on_click(cx.listener(|view, _, _, cx| {
-                                        view.toast = None;
-                                        view.toast_expires = None;
-                                        view.send(Request::Retry, true);
-                                        cx.notify();
-                                    }))
-                                    .child(
-                                        svg()
-                                            .path("icons/retry.svg")
-                                            .size(px(15.0))
-                                            .text_color(rgb(p.text)),
-                                    )
-                                    .child("Retry"),
-                            )
-                        }),
+                        .child(toast_actions(toast.retryable, p, cx)),
                 ),
         )
     }
+}
+
+fn toast_actions(retryable: bool, p: Palette, cx: &mut Context<NoireView>) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .when(retryable, |actions| {
+            actions.child(
+                div()
+                    .id("toast-retry")
+                    .cursor_pointer()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(rgb(p.border))
+                    .bg(rgb(p.surface))
+                    .px_3()
+                    .py_2()
+                    .text_sm()
+                    .hover(move |style| style.bg(rgb(p.hover)))
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.toast = None;
+                        view.toast_expires = None;
+                        view.dismissed_toast = None;
+                        view.send(Request::Retry, true);
+                        cx.notify();
+                    }))
+                    .child(
+                        svg()
+                            .path("icons/retry.svg")
+                            .size(px(15.0))
+                            .text_color(rgb(p.text)),
+                    )
+                    .child("Retry"),
+            )
+        })
+        .child(
+            div()
+                .id("toast-dismiss")
+                .cursor_pointer()
+                .flex()
+                .items_center()
+                .rounded_lg()
+                .border_1()
+                .border_color(rgb(p.border))
+                .bg(rgb(p.surface))
+                .px_2()
+                .py_2()
+                .hover(move |style| style.bg(rgb(p.hover)))
+                .on_click(cx.listener(|view, _, _, cx| {
+                    view.dismiss_toast();
+                    cx.notify();
+                }))
+                .child(
+                    svg()
+                        .path("icons/close.svg")
+                        .size(px(15.0))
+                        .text_color(rgb(p.text)),
+                ),
+        )
 }
 
 fn refresh_toast(
@@ -1280,6 +1353,14 @@ fn refresh_toast(
 ) {
     *visible = Some(toast);
     *expires = Some(now + TOAST_LIFETIME);
+}
+
+fn admit_toast(dismissed: &mut Option<Toast>, incoming: &Toast) -> bool {
+    if dismissed.as_ref() == Some(incoming) {
+        return false;
+    }
+    *dismissed = None;
+    true
 }
 
 impl Render for NoireView {
@@ -1342,6 +1423,7 @@ pub(crate) fn run(start_minimized: bool) {
             let _controller_window = cx.open_window(
                 WindowOptions {
                     show: false,
+                    app_id: Some(APPLICATION_ID.to_owned()),
                     window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                         None,
                         size(px(1.0), px(1.0)),
@@ -1397,6 +1479,10 @@ const fn should_start_hidden(
     (command_line_minimized || preference_minimized) && tray_available
 }
 
+const fn tray_host_lost(was_available: bool, is_available: bool) -> bool {
+    was_available && !is_available
+}
+
 fn window_button(
     id: &'static str,
     icon: &'static str,
@@ -1443,19 +1529,15 @@ fn transition_targets(transition: Option<ProcessingTransition>, active: bool) ->
     transition.is_some_and(|transition| transition.to == active)
 }
 
-fn processing_status(active: bool, p: Palette) -> Div {
+fn processing_status(status: &str, healthy: bool, p: Palette) -> Div {
     div()
         .flex()
         .items_center()
         .gap_1()
         .text_xl()
         .font_weight(FontWeight::SEMIBOLD)
-        .child("Noise reduction is:")
-        .child(
-            div()
-                .text_color(rgb(if active { p.success } else { p.danger }))
-                .child(if active { "ON" } else { "OFF" }),
-        )
+        .text_color(rgb(if healthy { p.success } else { p.text }))
+        .child(status.to_owned())
 }
 
 fn processing_action_content(active: bool, opacity: f32, p: Palette) -> Div {
@@ -1490,7 +1572,7 @@ fn processing_action_content(active: bool, opacity: f32, p: Palette) -> Div {
         )
 }
 
-fn status_icon(active: bool, p: Palette) -> Div {
+fn status_icon(healthy: bool, p: Palette) -> Div {
     div()
         .relative()
         .size(px(48.0))
@@ -1498,9 +1580,9 @@ fn status_icon(active: bool, p: Palette) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .bg(rgb(if active { p.accent_soft } else { p.raised }))
+        .bg(rgb(if healthy { p.accent_soft } else { p.raised }))
         .border_1()
-        .border_color(rgb(if active { p.accent } else { p.border }))
+        .border_color(rgb(if healthy { p.accent } else { p.border }))
         .child(
             svg()
                 .path("icons/waveform.svg")
@@ -1514,7 +1596,7 @@ fn status_icon(active: bool, p: Palette) -> Div {
                 .bottom(px(5.0))
                 .size(px(7.0))
                 .rounded_full()
-                .bg(rgb(if active { p.success } else { p.faint })),
+                .bg(rgb(if healthy { p.success } else { p.faint })),
         )
 }
 
@@ -1966,8 +2048,9 @@ mod tests {
     use std::time::Instant;
 
     use super::{
-        ProcessingTransition, TOAST_LIFETIME, Toast, meter_level, refresh_toast,
+        ProcessingTransition, TOAST_LIFETIME, Toast, admit_toast, meter_level, refresh_toast,
         scrollbar_thumb_geometry, should_start_hidden, strength_is_preset, transition_targets,
+        tray_host_lost,
     };
 
     #[test]
@@ -2030,6 +2113,31 @@ mod tests {
         refresh_toast(&mut visible, &mut expires, toast, repeated);
 
         assert_eq!(expires, Some(repeated + TOAST_LIFETIME));
+    }
+
+    #[test]
+    fn dismissed_toast_stays_hidden_until_the_error_changes() {
+        let dismissed = Toast {
+            cause: "ongoing failure".to_owned(),
+            recovery: "retry".to_owned(),
+            retryable: true,
+        };
+        let mut suppression = Some(dismissed.clone());
+
+        assert!(!admit_toast(&mut suppression, &dismissed));
+        let changed = Toast {
+            cause: "different failure".to_owned(),
+            ..dismissed
+        };
+        assert!(admit_toast(&mut suppression, &changed));
+        assert!(suppression.is_none());
+    }
+
+    #[test]
+    fn a_lost_tray_host_requires_a_visible_fallback() {
+        assert!(tray_host_lost(true, false));
+        assert!(!tray_host_lost(true, true));
+        assert!(!tray_host_lost(false, false));
     }
 
     #[test]

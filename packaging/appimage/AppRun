@@ -104,7 +104,6 @@ if [ -n "$runtime_dir" ] && [ -n "$flock_bin" ]; then
         fi
         owns_session_lock=true
         rm -f -- "$activation_file"
-        export NOIRE_ACTIVATION_FILE="$activation_file"
     fi
 fi
 

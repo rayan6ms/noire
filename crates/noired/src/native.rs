@@ -277,8 +277,8 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
                     refresh_registry(connection);
                     input_descriptors(&connection.registry_snapshot_now())
                 });
-                if let (Ok(devices), Some(observation)) = (result.as_ref(), observation.as_mut()) {
-                    observation.devices.clone_from(devices);
+                if let Ok(devices) = result.as_ref() {
+                    cache_observed_devices(&mut observation, devices);
                 }
                 let _ = reply.send(result);
             }
@@ -298,7 +298,10 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
                     next.devices.clone_from(&previous.devices);
                     observation = Some(next);
                 }
-                let _ = reply.send(Ok(observation.clone().unwrap_or_default()));
+                let response = observation
+                    .get_or_insert_with(EngineObservation::default)
+                    .clone();
+                let _ = reply.send(Ok(response));
             }
             Ok(NativeCommand::SetMeterMonitoring {
                 enabled,
@@ -513,6 +516,19 @@ fn degraded_observation(
     observation.state = LifecycleState::Degraded;
     observation.fault = error.cloned();
     observation
+}
+
+fn cache_observed_devices(
+    observation: &mut Option<EngineObservation>,
+    devices: &[InputDescriptor],
+) {
+    let current = observation.get_or_insert_with(|| EngineObservation {
+        state: LifecycleState::Stopped,
+        input_display_name: "System default".to_owned(),
+        ..EngineObservation::default()
+    });
+    current.devices.clear();
+    current.devices.extend_from_slice(devices);
 }
 
 fn recovery_error(fault: RecoveryFault) -> EngineError {
@@ -873,8 +889,10 @@ mod tests {
 
     use super::{
         LIVE_FAILURE_RESET_INTERVAL, LiveState, NativeAudioEngine, NativeCommand,
-        live_failure_latched, live_failure_reset_due, live_state_error,
+        cache_observed_devices, live_failure_latched, live_failure_reset_due, live_state_error,
     };
+    use crate::{EngineObservation, LifecycleState};
+    use noire_ipc::InputDescriptor;
 
     #[test]
     fn only_silence_latching_live_states_schedule_a_reset() {
@@ -913,6 +931,24 @@ mod tests {
             live_state_error(LiveState::TransportFailed).map(|error| error.code),
             Some("audio-transport-failed")
         );
+    }
+
+    #[test]
+    fn successful_input_query_seeds_an_empty_native_observation() {
+        let mut observation: Option<EngineObservation> = None;
+        let devices = vec![InputDescriptor {
+            stable_id: "alsa_input.login-race".to_owned(),
+            display_name: "Recovered microphone".to_owned(),
+            is_default: true,
+            availability: "available".to_owned(),
+        }];
+
+        cache_observed_devices(&mut observation, &devices);
+
+        let observation = observation.unwrap_or_default();
+        assert_eq!(observation.state, LifecycleState::Stopped);
+        assert_eq!(observation.devices, devices);
+        assert_eq!(observation.input_display_name, "System default");
     }
 
     #[test]

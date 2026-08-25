@@ -92,7 +92,7 @@ enum Setting {
 mod tests {
     use clap::Parser;
 
-    use super::{Arguments, Command, Setting};
+    use super::{Arguments, Command, Setting, error_code};
 
     #[test]
     fn explicit_false_boolean_settings_are_parseable() -> Result<(), clap::Error> {
@@ -113,6 +113,14 @@ mod tests {
             }
         ));
         Ok(())
+    }
+
+    #[test]
+    fn rollback_failures_keep_their_stable_error_code() {
+        assert_eq!(
+            error_code("io.github.rayan6ms.Noire.Noire1.Error.RollbackFailed"),
+            "config-rollback-failed"
+        );
     }
 }
 
@@ -245,6 +253,8 @@ fn error_code(message: &str) -> &'static str {
         "conflict"
     } else if message.contains(".InvalidArgument") {
         "invalid-argument"
+    } else if message.contains(".RollbackFailed") {
+        "config-rollback-failed"
     } else if message.contains(".Unavailable") {
         "unavailable"
     } else if message.contains(".Persistence") {

@@ -335,6 +335,8 @@ pub enum ServiceError {
     InvalidArgument(String),
     /// Audio or input resource is unavailable.
     Unavailable(String),
+    /// Durable persistence failed and the prior audio state could not be restored.
+    RollbackFailed(String),
     /// Durable persistence failed.
     Persistence(String),
     /// Launch-at-login manager operation failed.

@@ -20,12 +20,15 @@ pub(crate) enum TrayCommand {
     Show,
     ToggleProcessing,
     Quit,
+    HostOnline,
+    HostOffline,
 }
 
 struct NoireTray {
     active: bool,
     busy: bool,
     commands: Sender<TrayCommand>,
+    host_available: Arc<AtomicBool>,
 }
 
 impl ksni::Tray for NoireTray {
@@ -57,6 +60,17 @@ impl ksni::Tray for NoireTray {
 
     fn activate(&mut self, _x: i32, _y: i32) {
         let _ignored = self.commands.send(TrayCommand::Show);
+    }
+
+    fn watcher_online(&self) {
+        self.host_available.store(true, Ordering::Release);
+        let _ignored = self.commands.send(TrayCommand::HostOnline);
+    }
+
+    fn watcher_offline(&self, _reason: ksni::OfflineReason) -> bool {
+        self.host_available.store(false, Ordering::Release);
+        let _ignored = self.commands.send(TrayCommand::HostOffline);
+        true
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
@@ -201,6 +215,7 @@ struct TrayInner {
     commands: Mutex<Receiver<TrayCommand>>,
     handle: Option<Handle<NoireTray>>,
     _activation: Option<ActivationListener>,
+    host_available: Arc<AtomicBool>,
     active: AtomicBool,
     busy: AtomicBool,
 }
@@ -262,11 +277,7 @@ fn activation_path() -> Option<PathBuf> {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)?;
-    let expected = runtime.join("noire-controller.activate");
-    let configured = std::env::var_os("NOIRE_ACTIVATION_FILE")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)?;
-    (configured == expected).then_some(configured)
+    Some(runtime.join("noire-controller.activate"))
 }
 
 impl TrayRuntime {
@@ -274,16 +285,19 @@ impl TrayRuntime {
     pub fn start() -> Self {
         let (sender, commands) = mpsc::channel();
         let activation = ActivationListener::start(sender.clone());
+        let host_available = Arc::new(AtomicBool::new(true));
         let tray = NoireTray {
             active: false,
             busy: false,
             commands: sender,
+            host_available: Arc::clone(&host_available),
         };
         let sandboxed = std::env::var_os("FLATPAK_ID").is_some();
         let handle = match tray.disable_dbus_name(sandboxed).spawn() {
             Ok(handle) => Some(handle),
             Err(error) => {
                 eprintln!("Noire could not register its system tray item: {error}");
+                host_available.store(false, Ordering::Release);
                 None
             }
         };
@@ -292,6 +306,7 @@ impl TrayRuntime {
                 commands: Mutex::new(commands),
                 handle,
                 _activation: activation,
+                host_available,
                 active: AtomicBool::new(false),
                 busy: AtomicBool::new(false),
             }),
@@ -301,7 +316,11 @@ impl TrayRuntime {
     /// Whether a `StatusNotifierItem` host accepted the tray service.
     #[must_use]
     pub fn available(&self) -> bool {
-        self.inner.handle.is_some()
+        self.inner
+            .handle
+            .as_ref()
+            .is_some_and(|handle| !handle.is_closed())
+            && self.inner.host_available.load(Ordering::Acquire)
     }
 
     #[must_use]
@@ -348,7 +367,11 @@ impl Drop for TrayInner {
 
 #[cfg(test)]
 mod tests {
-    use super::tray_icon;
+    use std::sync::{Arc, atomic::Ordering, mpsc};
+
+    use ksni::Tray as _;
+
+    use super::{NoireTray, TrayCommand, tray_icon};
 
     #[test]
     fn embedded_tray_icon_has_valid_argb_pixels() {
@@ -372,5 +395,25 @@ mod tests {
                 .chunks_exact(4)
                 .any(|pixel| (1..255).contains(&pixel[0]))
         );
+    }
+
+    #[test]
+    fn tray_host_transitions_are_observable_without_stopping_reregistration() {
+        let (commands, received) = mpsc::channel();
+        let host_available = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let tray = NoireTray {
+            active: false,
+            busy: false,
+            commands,
+            host_available: Arc::clone(&host_available),
+        };
+
+        assert!(tray.watcher_offline(ksni::OfflineReason::No));
+        assert!(!host_available.load(Ordering::Acquire));
+        assert_eq!(received.try_recv(), Ok(TrayCommand::HostOffline));
+
+        tray.watcher_online();
+        assert!(host_available.load(Ordering::Acquire));
+        assert_eq!(received.try_recv(), Ok(TrayCommand::HostOnline));
     }
 }

@@ -768,6 +768,13 @@ fn mutation_error_copy(technical: &str) -> UserError {
             "Correct the value and retry; current daemon settings were restored.",
             false,
         )
+    } else if technical.contains(".RollbackFailed") {
+        UserError::new(
+            "config-rollback-failed",
+            "Noire could not restore the previous audio state after saving the setting failed.",
+            "Restart Noire, then check configuration permissions and free storage.",
+            false,
+        )
     } else if technical.contains(".Persistence") {
         UserError::new(
             "config-persistence",
@@ -981,6 +988,9 @@ mod tests {
         );
         assert!(unavailable.recovery.contains("PipeWire"));
         assert!(!unavailable.cause.contains("org.freedesktop"));
+        let rollback = mutation_error_copy("service.Error.RollbackFailed");
+        assert_eq!(rollback.code, "config-rollback-failed");
+        assert!(rollback.recovery.contains("Restart Noire"));
         let conflict = mutation_error_copy("service.Error.Conflict");
         assert_eq!(conflict.code, "conflict");
         assert!(conflict.cause.contains("changed Noire"));

@@ -466,7 +466,7 @@ fn map_error(error: ControlError) -> ServiceError {
         ControlError::Persistence(_) | ControlError::ReadOnly => {
             ServiceError::Persistence(error.to_string())
         }
-        ControlError::PersistenceRollback { .. } => ServiceError::Unavailable(error.to_string()),
+        ControlError::PersistenceRollback { .. } => ServiceError::RollbackFailed(error.to_string()),
         ControlError::LaunchManager(_) => ServiceError::LaunchManager(error.to_string()),
     }
 }
@@ -617,5 +617,20 @@ mod tests {
             );
             assert!(!public.component.is_empty(), "{}", public.code);
         }
+    }
+
+    #[test]
+    fn rollback_failure_uses_its_dedicated_dbus_error() {
+        let error = ControlError::PersistenceRollback {
+            persistence: "save failed".to_owned(),
+            rollback: EngineError {
+                code: "audio-stream-failed",
+                message: "rollback failed".to_owned(),
+                recovery: "restart test",
+                retryable: false,
+            },
+        };
+
+        assert!(matches!(map_error(error), ServiceError::RollbackFailed(_)));
     }
 }
