@@ -13,7 +13,8 @@ use gpui::{
     AnyWindowHandle, App, Application, Bounds, Context, Div, Entity, FontWeight, IntoElement,
     Render, ScrollHandle, SharedString, Styled as _, Subscription, Timer, TitlebarOptions, Window,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowOptions, div, img, prelude::*, px, relative, rgb, size, svg,
+    WindowDecorations, WindowKind, WindowOptions, div, img, prelude::*, px, relative, rgb, size,
+    svg,
 };
 use noire_ipc::{DiagnosticReport, ErrorInfo, Snapshot};
 
@@ -231,8 +232,10 @@ impl AppRuntime {
             }
             TrayHostTransition::Recovered => {
                 let preferences = DesktopPreferences::load();
-                self.close_to_tray
-                    .store(preferences.close_to_tray, Ordering::Relaxed);
+                self.close_to_tray.store(
+                    preferences.close_to_tray && self.tray.available(),
+                    Ordering::Relaxed,
+                );
             }
             TrayHostTransition::FallbackDue => {
                 self.show_window(cx);
@@ -1465,6 +1468,9 @@ impl Render for NoireView {
 
 /// Runs the desktop application. Command-line minimization overrides the saved preference.
 pub(crate) fn run(start_minimized: bool) {
+    if let Err(error) = autostart::refresh_if_enabled() {
+        eprintln!("Noire could not refresh login startup: {error}");
+    }
     let preferences = DesktopPreferences::load();
     let tray = TrayRuntime::start();
     let tray_available = tray.available();
@@ -1479,13 +1485,17 @@ pub(crate) fn run(start_minimized: bool) {
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             // GPUI's Linux event loop stops after its final platform window is
-            // removed. Keep one never-shown controller window alive so tray
+            // removed. Keep one minimized controller window alive so tray
             // sessions can close and reopen the visible window inside a single
             // Application instance without relying on unsupported reuse.
-            let _controller_window = cx.open_window(
+            let controller_window = cx.open_window(
                 WindowOptions {
-                    show: false,
-                    app_id: Some(APPLICATION_ID.to_owned()),
+                    // GPUI 0.2.2 maps every Linux window regardless of
+                    // `show`. Park this event-loop keepalive as a minimized
+                    // notification window so tray-only startup does not leak
+                    // a second visible/task-switcher controller.
+                    focus: false,
+                    kind: WindowKind::PopUp,
                     window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                         None,
                         size(px(1.0), px(1.0)),
@@ -1496,6 +1506,11 @@ pub(crate) fn run(start_minimized: bool) {
                 },
                 |_window, cx| cx.new(|_| ControllerWindow),
             );
+            if let Ok(controller_window) = controller_window {
+                let _ignored = controller_window.update(cx, |_, window, _| {
+                    window.minimize_window();
+                });
+            }
             let runtime = cx.new(|_| {
                 AppRuntime::new(
                     application_tray,

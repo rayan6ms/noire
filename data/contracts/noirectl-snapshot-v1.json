@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "api_version": "1.0",
-  "build_version": "1.1.7",
+  "build_version": "1.1.8",
   "revision": 7,
   "device_revision": 3,
   "state": "stopped",

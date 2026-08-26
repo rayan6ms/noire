@@ -42,6 +42,29 @@ pub(crate) fn set_enabled(enabled: bool) -> io::Result<()> {
     }
 }
 
+/// Refreshes a managed login entry after a portable image or executable moves.
+///
+/// `AppImage` managers commonly replace the integrated image when upgrading. A
+/// previously-created autostart file otherwise keeps launching the removed
+/// image, so login startup appears to succeed while no tray service remains.
+pub(crate) fn refresh_if_enabled() -> io::Result<()> {
+    let Some(path) = autostart_path() else {
+        return Ok(());
+    };
+    let Some(command) = launch_command() else {
+        return Ok(());
+    };
+    let contents = match fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if !contents.lines().any(|line| line == MANAGED_MARKER) {
+        return Ok(());
+    }
+    write_managed(&path, &command)
+}
+
 fn autostart_path() -> Option<PathBuf> {
     // A sandbox-local ~/.config/autostart is not consumed by the host desktop.
     // Flatpak support must use the Background portal rather than pretending a
@@ -222,6 +245,27 @@ mod tests {
             Some(io::ErrorKind::PermissionDenied)
         );
         assert!(path.exists());
+        fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn managed_entry_can_be_refreshed_after_the_launch_path_changes() -> io::Result<()> {
+        let root = temporary_path("refresh");
+        let path = root.join(AUTOSTART_FILE);
+        write_managed(
+            &path,
+            &["/old/Noire.AppImage".to_owned(), "--minimized".to_owned()],
+        )?;
+        assert!(fs::read_to_string(&path)?.contains("/old/Noire.AppImage"));
+
+        write_managed(
+            &path,
+            &["/new/Noire.AppImage".to_owned(), "--minimized".to_owned()],
+        )?;
+        let contents = fs::read_to_string(&path)?;
+        assert!(contents.contains("/new/Noire.AppImage"));
+        assert!(!contents.contains("/old/Noire.AppImage"));
         fs::remove_dir_all(root)?;
         Ok(())
     }

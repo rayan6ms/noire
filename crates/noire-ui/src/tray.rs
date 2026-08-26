@@ -293,7 +293,15 @@ impl TrayRuntime {
             host_available: Arc::clone(&host_available),
         };
         let sandboxed = std::env::var_os("FLATPAK_ID").is_some();
-        let handle = match tray.disable_dbus_name(sandboxed).spawn() {
+        // Login autostart can run before the desktop's StatusNotifier host has
+        // appeared. Keep the service alive in that case so ksni can register
+        // when the host announces itself instead of permanently losing the
+        // tray icon during the session.
+        let handle = match tray
+            .disable_dbus_name(sandboxed)
+            .assume_sni_available(true)
+            .spawn()
+        {
             Ok(handle) => Some(handle),
             Err(error) => {
                 eprintln!("Noire could not register its system tray item: {error}");
