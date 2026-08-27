@@ -2,10 +2,15 @@
 
 use std::borrow::Cow;
 
-use gpui::{AssetSource, Result, SharedString};
+use gpui::{AssetSource, Result, SharedString, WindowIcon};
 
 /// Keeps icons available to native packages, Flatpak, and an unintegrated `AppImage`.
 pub(crate) struct Assets;
+
+/// Rasterized application icon advertised directly to desktop window managers.
+pub(crate) fn window_icon() -> Option<WindowIcon> {
+    WindowIcon::from_svg(include_bytes!("../../../icons/noire.svg"), 64).ok()
+}
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {

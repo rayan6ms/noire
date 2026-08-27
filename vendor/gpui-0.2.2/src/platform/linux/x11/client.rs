@@ -247,9 +247,9 @@ impl X11ClientStatePtr {
         }
         state.cursor_styles.remove(&x_window);
 
-        if state.windows.is_empty() {
-            state.common.signal.stop();
-        }
+        // Keep the client event loop alive after the last window is removed.
+        // Tray applications can intentionally have zero desktop windows while
+        // continuing to receive tray commands and reopen a controller later.
     }
 
     pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {

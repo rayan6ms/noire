@@ -2382,6 +2382,7 @@ dependencies = [
  "stacksafe",
  "strum 0.27.2",
  "taffy",
+ "tempfile",
  "thiserror 2.0.20",
  "usvg",
  "uuid",
@@ -2389,7 +2390,7 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-cursor",
- "wayland-protocols 0.31.2",
+ "wayland-protocols 0.32.13",
  "wayland-protocols-plasma",
  "windows 0.61.3",
  "windows-core 0.61.2",
@@ -3553,7 +3554,7 @@ dependencies = [
 
 [[package]]
 name = "noire-config"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "proptest",
  "serde",
@@ -3563,14 +3564,14 @@ dependencies = [
 
 [[package]]
 name = "noire-core"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "noire-dsp"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "criterion",
  "proptest",
@@ -3578,7 +3579,7 @@ dependencies = [
 
 [[package]]
 name = "noire-ipc"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "noire-core",
  "serde",
@@ -3590,14 +3591,14 @@ dependencies = [
 
 [[package]]
 name = "noire-model"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "noire-model-fastenhancer"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "criterion",
  "noire-model",
@@ -3607,14 +3608,14 @@ dependencies = [
 
 [[package]]
 name = "noire-model-fastenhancer-sys"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "noire-model-rnnoise"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "criterion",
  "hound",
@@ -3627,7 +3628,7 @@ dependencies = [
 
 [[package]]
 name = "noire-pipewire"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "libspa",
  "noire-core",
@@ -3642,7 +3643,7 @@ dependencies = [
 
 [[package]]
 name = "noire-test-support"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "noire-core",
  "proptest",
@@ -3650,7 +3651,7 @@ dependencies = [
 
 [[package]]
 name = "noire-ui"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "clap",
  "futures-util",
@@ -3668,7 +3669,7 @@ dependencies = [
 
 [[package]]
 name = "noirectl"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "anyhow",
  "clap",
@@ -3682,7 +3683,7 @@ dependencies = [
 
 [[package]]
 name = "noired"
-version = "1.1.9"
+version = "1.1.10"
 dependencies = [
  "anyhow",
  "clap",

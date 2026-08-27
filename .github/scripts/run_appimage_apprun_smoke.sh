@@ -10,8 +10,14 @@ home_dir="$work_dir/home"
 data_dir="$home_dir/data"
 runtime_dir="$work_dir/run"
 fake_appimage="$work_dir/Noire.AppImage"
-mkdir -p "$app_dir/usr/bin" "$data_dir/applications" "$runtime_dir"
+mkdir -p "$app_dir/usr/bin" "$app_dir/usr/share/applications" \
+    "$app_dir/usr/share/icons/hicolor/scalable/apps" \
+    "$data_dir/applications" "$runtime_dir"
 install -m 0755 "$repo_dir/packaging/appimage/AppRun" "$app_dir/AppRun"
+install -m 0644 "$repo_dir/data/applications/io.github.rayan6ms.Noire.desktop" \
+    "$app_dir/usr/share/applications/io.github.rayan6ms.Noire.desktop"
+install -m 0644 "$repo_dir/icons/noire.svg" \
+    "$app_dir/usr/share/icons/hicolor/scalable/apps/io.github.rayan6ms.Noire.svg"
 # The generated script, rather than this parent, expands these variables.
 # shellcheck disable=SC2016
 {
@@ -63,14 +69,51 @@ legacy_launcher="$data_dir/applications/io.github.rayan6ms.Noire.desktop"
     echo "Exec=\"$fake_appimage\""
 } >"$legacy_launcher"
 
-# Opening either duplicate must remove the legacy launcher. In particular, the
-# old launcher does not set DESKTOPINTEGRATION.
+# Informational commands stay read-only, including when an old portable
+# launcher exists.
 appimage_version=$(APPDIR="$app_dir" APPIMAGE="$fake_appimage" \
     HOME="$home_dir" XDG_DATA_HOME="$data_dir" XDG_RUNTIME_DIR="$runtime_dir" \
     "$app_dir/AppRun" --version)
 [ "$appimage_version" = 'noire 1.1.0' ]
 [ -f "$integrated_launcher" ]
+[ -f "$legacy_launcher" ]
+
+# Opening either duplicate must remove the legacy launcher. In particular, the
+# old launcher does not set DESKTOPINTEGRATION.
+APPDIR="$app_dir" APPIMAGE="$fake_appimage" HOME="$home_dir" \
+    XDG_DATA_HOME="$data_dir" XDG_RUNTIME_DIR="$runtime_dir" \
+    "$app_dir/AppRun" >/dev/null
 [ ! -e "$legacy_launcher" ]
+
+# A direct AppImage launch installs the desktop metadata needed by older
+# Wayland compositors to resolve the application icon. A repeated launch must
+# leave the same managed files in place.
+managed_data_dir="$home_dir/managed-data"
+managed_runtime_dir="$work_dir/run-managed"
+managed_launcher="$managed_data_dir/applications/io.github.rayan6ms.Noire.desktop"
+managed_icon="$managed_data_dir/icons/hicolor/scalable/apps/io.github.rayan6ms.Noire.svg"
+mkdir -p "$managed_runtime_dir"
+APPDIR="$app_dir" APPIMAGE="$fake_appimage" HOME="$home_dir" \
+    XDG_DATA_HOME="$managed_data_dir" XDG_RUNTIME_DIR="$managed_runtime_dir" \
+    "$app_dir/AppRun" >/dev/null
+[ -f "$managed_launcher" ]
+[ -f "$managed_icon" ]
+grep -Fqx "Exec=\"$fake_appimage\"" "$managed_launcher"
+grep -Fqx 'X-Noire-AppImage-Managed=true' "$managed_launcher"
+managed_launcher_checksum=$(sha256sum "$managed_launcher")
+managed_icon_checksum=$(sha256sum "$managed_icon")
+APPDIR="$app_dir" APPIMAGE="$fake_appimage" HOME="$home_dir" \
+    XDG_DATA_HOME="$managed_data_dir" XDG_RUNTIME_DIR="$managed_runtime_dir" \
+    "$app_dir/AppRun" >/dev/null
+[ "$(sha256sum "$managed_launcher")" = "$managed_launcher_checksum" ]
+[ "$(sha256sum "$managed_icon")" = "$managed_icon_checksum" ]
+
+# Even a completely empty data home stays untouched for informational calls.
+info_data_dir="$home_dir/info-data"
+APPDIR="$app_dir" APPIMAGE="$fake_appimage" HOME="$home_dir" \
+    XDG_DATA_HOME="$info_data_dir" XDG_RUNTIME_DIR="$runtime_dir" \
+    "$app_dir/AppRun" --version >/dev/null
+[ ! -e "$info_data_dir" ]
 
 # AppRun must preserve the XDG specification's implicit host defaults. Vulkan
 # loaders use these paths to find the user's graphics driver manifests, and an
@@ -137,4 +180,4 @@ APPDIR="$app_dir" APPIMAGE="$app_dir/AppRun" HOME="$home_dir" \
 wait "$controller"
 [ "$(cat "$runtime_activation/activation-request")" = show ]
 
-echo 'NOIRE_APPIMAGE_APPRUN legacy_migration=pass unrelated_launcher=preserved lifecycle=pass activation=pass'
+echo 'NOIRE_APPIMAGE_APPRUN metadata=pass info_read_only=pass legacy_migration=pass unrelated_launcher=preserved lifecycle=pass activation=pass'

@@ -302,9 +302,9 @@ jobs:
       - name: Smoke-test binary interfaces
         run: |
           {
-            test "$(target/release/noired --version)" = "noired 1.1.9"
-            test "$(target/release/noire --version)" = "noire 1.1.9"
-            test "$(target/release/noirectl --version)" = "noirectl 1.1.9"
+            test "$(target/release/noired --version)" = "noired 1.1.10"
+            test "$(target/release/noire --version)" = "noire 1.1.10"
+            test "$(target/release/noirectl --version)" = "noirectl 1.1.10"
             target/release/noired --help >/dev/null
             target/release/noire --help >/dev/null
             target/release/noirectl --help >/dev/null

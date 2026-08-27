@@ -42,8 +42,10 @@ Choose one format:
   ./Noire-*-x86_64.AppImage
   ```
 
-  The AppImage stays portable: running it does not install or overwrite desktop
-  launchers. Desktop integration is left to the user or an AppImage manager.
+  On a normal launch, Noire installs its small launcher and icon metadata in
+  your user data directory so Wayland taskbars can resolve the application
+  icon. It defers to an existing AppImage-manager integration and does not
+  replace unrelated launchers; `--help` and `--version` remain read-only.
 
 ## Use
 

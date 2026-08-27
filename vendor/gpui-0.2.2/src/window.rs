@@ -944,6 +944,7 @@ impl Window {
             display_id,
             window_background,
             app_id,
+            window_icon,
             window_min_size,
             window_decorations,
             #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
@@ -1200,6 +1201,9 @@ impl Window {
 
         if let Some(app_id) = app_id {
             platform_window.set_app_id(&app_id);
+        }
+        if let Some(window_icon) = window_icon.as_ref() {
+            platform_window.set_window_icon(window_icon);
         }
 
         // A hidden window still participates in the application event loop,

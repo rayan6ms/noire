@@ -11,10 +11,9 @@ use std::{
 
 use gpui::{
     AnyWindowHandle, App, Application, Bounds, Context, Div, Entity, FontWeight, IntoElement,
-    Pixels, Render, ScrollHandle, SharedString, Styled as _, Subscription, Timer, TitlebarOptions,
-    Window, WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
-    WindowDecorations, WindowKind, WindowOptions, div, img, prelude::*, px, relative, rgb, size,
-    svg,
+    Render, ScrollHandle, SharedString, Styled as _, Subscription, Timer, TitlebarOptions, Window,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea,
+    WindowDecorations, WindowOptions, div, img, prelude::*, px, relative, rgb, size, svg,
 };
 use noire_ipc::{DiagnosticReport, ErrorInfo, Snapshot};
 
@@ -176,7 +175,6 @@ struct AppRuntime {
     tray: TrayRuntime,
     tray_controller: client::TrayController,
     window: Option<AnyWindowHandle>,
-    controller_window: Option<AnyWindowHandle>,
     close_to_tray: Arc<AtomicBool>,
     tray_host: TrayHostState,
 }
@@ -185,7 +183,6 @@ impl AppRuntime {
     fn new(
         tray: TrayRuntime,
         tray_controller: client::TrayController,
-        controller_window: Option<AnyWindowHandle>,
         close_to_tray: Arc<AtomicBool>,
     ) -> Self {
         let tray_host = TrayHostState::new(tray.available());
@@ -193,21 +190,8 @@ impl AppRuntime {
             tray,
             tray_controller,
             window: None,
-            controller_window,
             close_to_tray,
             tray_host,
-        }
-    }
-
-    fn remove_controller_window(&mut self, cx: &mut Context<Self>) {
-        if let Some(handle) = self.controller_window.take() {
-            let _ignored = handle.update(cx, |_, window, _| window.remove_window());
-        }
-    }
-
-    fn ensure_controller_window(&mut self, cx: &mut Context<Self>) {
-        if self.controller_window.is_none() {
-            self.controller_window = open_controller_window(cx);
         }
     }
 
@@ -259,7 +243,6 @@ impl AppRuntime {
     }
 
     fn show_window(&mut self, cx: &mut Context<Self>) -> Option<AnyWindowHandle> {
-        self.remove_controller_window(cx);
         if let Some(handle) = self.window
             && handle
                 .update(cx, |_, window, _| window.activate_window())
@@ -289,6 +272,7 @@ impl AppRuntime {
             }),
             show: true,
             app_id: Some(APPLICATION_ID.to_owned()),
+            window_icon: crate::assets::window_icon(),
             window_min_size: Some(size(px(500.0), px(480.0))),
             window_background: WindowBackgroundAppearance::Transparent,
             window_decorations: Some(WindowDecorations::Client),
@@ -297,9 +281,8 @@ impl AppRuntime {
         match cx.open_window(options, move |window, cx| {
             window.on_window_should_close(cx, move |window, cx| {
                 if close_flag.load(Ordering::Relaxed) {
-                    runtime_for_close.update(cx, |runtime, cx| {
+                    runtime_for_close.update(cx, |runtime, _cx| {
                         runtime.window = None;
-                        runtime.ensure_controller_window(cx);
                     });
                     window.remove_window();
                 } else {
@@ -331,41 +314,6 @@ impl AppRuntime {
                 None
             }
         }
-    }
-}
-
-fn open_controller_window(cx: &mut Context<AppRuntime>) -> Option<AnyWindowHandle> {
-    let bounds = Bounds::centered(None, size(px(1.0), px(1.0)), cx);
-    let handle = cx
-        .open_window(controller_window_options(bounds), |_window, cx| {
-            cx.new(|_| ControllerWindow)
-        })
-        .ok()?;
-    Some(AnyWindowHandle::from(handle))
-}
-
-fn open_controller_window_from_app(cx: &mut App) -> Option<AnyWindowHandle> {
-    let bounds = Bounds::centered(None, size(px(1.0), px(1.0)), cx);
-    let handle = cx
-        .open_window(controller_window_options(bounds), |_window, cx| {
-            cx.new(|_| ControllerWindow)
-        })
-        .ok()?;
-    Some(AnyWindowHandle::from(handle))
-}
-
-fn controller_window_options(bounds: Bounds<Pixels>) -> WindowOptions {
-    // GPUI 0.2.2 maps Linux windows even when `show` is false. Keep this
-    // fallback is hidden and grouped with Noire, and only retain it while
-    // there is no visible controller window.
-    WindowOptions {
-        show: false,
-        focus: false,
-        kind: WindowKind::PopUp,
-        app_id: Some(APPLICATION_ID.to_owned()),
-        window_bounds: Some(WindowBounds::Windowed(bounds)),
-        window_decorations: Some(WindowDecorations::Client),
-        ..Default::default()
     }
 }
 
@@ -703,9 +651,8 @@ impl NoireView {
 
     fn close_window(&self, window: &mut Window, cx: &mut Context<Self>) {
         if self.runtime.read(cx).close_to_tray.load(Ordering::Relaxed) {
-            self.runtime.update(cx, |runtime, cx| {
+            self.runtime.update(cx, |runtime, _cx| {
                 runtime.window = None;
-                runtime.ensure_controller_window(cx);
             });
             window.remove_window();
         } else {
@@ -854,7 +801,7 @@ impl NoireView {
         let model = snapshot.map_or("FastEnhancer-B", |snapshot| snapshot.model_id.as_str());
         let input = self.state.input_display_name();
 
-        div().flex_1().min_h_0().w_full().px_5().pt_5().child(
+        div().flex_1().min_h_0().w_full().px_6().py_5().child(
             div()
                 .w_full()
                 .max_w(px(720.0))
@@ -1346,8 +1293,12 @@ impl NoireView {
                     .track_scroll(&self.settings_scroll)
                     .pt_5()
                     .pb_5()
-                    .pl_5()
-                    .pr_5()
+                    .pl_6()
+                    // The scroll viewport reserves a 12 px scrollbar gutter;
+                    // 12 px padding keeps the visible right outer margin at
+                    // the same 24 px as the left margin. The 20 px vertical
+                    // margins remain the visual reference for the window.
+                    .pr_3()
                     .child(self.settings_content(cx)),
             )
             .child(settings_scrollbar(&self.settings_scroll, p))
@@ -1541,18 +1492,10 @@ pub(crate) fn run(start_minimized: bool) {
     Application::new()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
-            // GPUI's Linux event loop stops after its final platform window is
-            // removed. Keep a fallback only for tray-only sessions, and retire
-            // it before opening the real controller so it cannot appear as a
-            // second desktop window.
-            let controller_window = hidden
-                .then(|| open_controller_window_from_app(cx))
-                .flatten();
             let runtime = cx.new(|_| {
                 AppRuntime::new(
                     application_tray,
                     application_controller,
-                    controller_window,
                     application_close_to_tray,
                 )
             });
@@ -1575,14 +1518,6 @@ pub(crate) fn run(start_minimized: bool) {
 
     if !tray_controller.stop_and_shutdown(Duration::from_secs(3)) {
         eprintln!("Noire could not confirm that noise reduction stopped before exit.");
-    }
-}
-
-struct ControllerWindow;
-
-impl Render for ControllerWindow {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
     }
 }
 

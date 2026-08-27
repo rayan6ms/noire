@@ -30,22 +30,34 @@ if [ "${NOIRE_APPIMAGE_ROLE:-}" = daemon ]; then
     exec "$app_dir/usr/bin/noired" "$@"
 fi
 
-# An AppImage is portable and must not silently install or overwrite desktop
-# launchers. Desktop integration remains an explicit user or AppImage-manager
-# choice; the metadata embedded at the AppDir root supports those tools.
-#
-# Noire 1.1.0 did install its canonical launcher automatically. When an
-# AppImage manager has integrated the same image, remove that legacy launcher
-# only after proving that both files point to this exact AppImage. This works
-# regardless of which duplicate the user opens, while leaving native-package
-# launchers and unrelated AppImages untouched.
-cleanup_legacy_desktop_launcher() {
-    [ -n "${APPIMAGE:-}" ] || return 0
+# Wayland compositors that do not yet implement xdg-toplevel-icon resolve an
+# app-id through the desktop database. Keep one managed user launcher/icon for
+# a directly opened AppImage, but defer to an AppImage manager when present.
+appimage_manager_launcher_exists() {
+    [ -n "${APPIMAGE:-}" ] || return 1
     case "$APPIMAGE" in
         /*) ;;
-        *) return 0 ;;
+        *) return 1 ;;
     esac
 
+    user_data_dir=${XDG_DATA_HOME:-${HOME:+"$HOME/.local/share"}}
+    case "$user_data_dir" in
+        /*) ;;
+        *) return 1 ;;
+    esac
+    application_dir="$user_data_dir/applications"
+    [ -d "$application_dir" ] || return 1
+    for integrated_launcher in "$application_dir"/*.desktop; do
+        [ -f "$integrated_launcher" ] && [ ! -L "$integrated_launcher" ] || continue
+        grep -Fqx "TryExec=$APPIMAGE" "$integrated_launcher" || continue
+        grep -Fqx "X-AppImage-Name=Noire" "$integrated_launcher" || continue
+        return 0
+    done
+    return 1
+}
+
+cleanup_legacy_desktop_launcher() {
+    [ -n "${APPIMAGE:-}" ] || return 0
     user_data_dir=${XDG_DATA_HOME:-${HOME:+"$HOME/.local/share"}}
     case "$user_data_dir" in
         /*) ;;
@@ -62,24 +74,79 @@ cleanup_legacy_desktop_launcher() {
         legacy_matches=true
     fi
     [ "$legacy_matches" = true ] || return 0
-
-    for integrated_launcher in "$application_dir"/*.desktop; do
-        [ "$integrated_launcher" != "$legacy_launcher" ] || continue
-        [ -f "$integrated_launcher" ] && [ ! -L "$integrated_launcher" ] || continue
-        grep -Fqx "TryExec=$APPIMAGE" "$integrated_launcher" || continue
-        grep -Fqx "X-AppImage-Name=Noire" "$integrated_launcher" || continue
+    if appimage_manager_launcher_exists; then
         rm -f -- "$legacy_launcher"
-        return 0
-    done
+    fi
 }
-
-cleanup_legacy_desktop_launcher
 
 # Informational commands do not need the audio service and may exit before the
 # AppImage runtime has mounted long enough for a background daemon to remain.
+# Keep these paths entirely read-only as well.
 case "${1:-}" in
     -h|--help|-V|--version) exec "$app_dir/usr/bin/noire" "$@" ;;
 esac
+
+install_portable_desktop_metadata() {
+    [ -n "${APPIMAGE:-}" ] || return 0
+    case "$APPIMAGE" in
+        /*) ;;
+        *) return 0 ;;
+    esac
+    appimage_manager_launcher_exists && return 0
+
+    user_data_dir=${XDG_DATA_HOME:-${HOME:+"$HOME/.local/share"}}
+    case "$user_data_dir" in
+        /*) ;;
+        *) return 0 ;;
+    esac
+    application_dir="$user_data_dir/applications"
+    icon_dir="$user_data_dir/icons/hicolor/scalable/apps"
+    launcher="$application_dir/io.github.rayan6ms.Noire.desktop"
+    icon="$icon_dir/io.github.rayan6ms.Noire.svg"
+
+    # Never replace a user-authored or native-package override. Older Noire
+    # launchers pointing at this exact image are safe to adopt and mark.
+    if [ -e "$launcher" ]; then
+        [ -f "$launcher" ] && [ ! -L "$launcher" ] || return 0
+        if ! grep -Fqx 'X-Noire-AppImage-Managed=true' "$launcher" &&
+            ! grep -Fqx "Exec=\"$APPIMAGE\"" "$launcher" &&
+            ! grep -Fqx "Exec=$APPIMAGE" "$launcher"
+        then
+            return 0
+        fi
+    fi
+
+    mkdir -p "$application_dir" "$icon_dir"
+    escaped_appimage=$(printf '%s' "$APPIMAGE" | sed 's/[\\&|]/\\&/g; s/"/\\"/g')
+    launcher_tmp=$(mktemp "$application_dir/.io.github.rayan6ms.Noire.desktop.XXXXXX")
+    sed "s|^Exec=noire$|Exec=\"${escaped_appimage}\"|" \
+        "$app_dir/usr/share/applications/io.github.rayan6ms.Noire.desktop" \
+        >"$launcher_tmp"
+    printf '%s\n' 'X-Noire-AppImage-Managed=true' >>"$launcher_tmp"
+    chmod 0644 "$launcher_tmp"
+    if [ -f "$launcher" ] && cmp -s "$launcher_tmp" "$launcher"; then
+        rm -f -- "$launcher_tmp"
+    else
+        mv -f -- "$launcher_tmp" "$launcher"
+    fi
+
+    icon_tmp=$(mktemp "$icon_dir/.io.github.rayan6ms.Noire.svg.XXXXXX")
+    cp "$app_dir/usr/share/icons/hicolor/scalable/apps/io.github.rayan6ms.Noire.svg" \
+        "$icon_tmp"
+    chmod 0644 "$icon_tmp"
+    if [ -f "$icon" ] && cmp -s "$icon_tmp" "$icon"; then
+        rm -f -- "$icon_tmp"
+    else
+        mv -f -- "$icon_tmp" "$icon"
+        if [ -x /usr/bin/gtk-update-icon-cache ]; then
+            env -u LD_LIBRARY_PATH /usr/bin/gtk-update-icon-cache -f -t \
+                "$user_data_dir/icons/hicolor" >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+cleanup_legacy_desktop_launcher
+install_portable_desktop_metadata
 
 # Keep one controller and one tray registration per desktop session. A repeated
 # AppImage launch asks the existing controller to show its window instead of

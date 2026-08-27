@@ -294,6 +294,9 @@ fn run_native(receiver: &Receiver<NativeCommand>, shutdown_complete: &SyncSender
                         previous.input_display_name.clone(),
                         connection.runtime_version().unwrap_or_default(),
                         applied.as_ref().is_some_and(|config| config.active),
+                        applied
+                            .as_ref()
+                            .is_some_and(|config| config.suppression.enabled),
                     );
                     next.devices.clone_from(&previous.devices);
                     observation = Some(next);
@@ -687,6 +690,7 @@ fn apply_native(
             .and_then(PipewireConnection::runtime_version)
             .unwrap_or_default(),
         config.active,
+        config.suppression.enabled,
     );
     next.devices = if requires_rebuild {
         connection
@@ -811,10 +815,19 @@ fn observe_graph(
     input_display_name: String,
     pipewire_version: String,
     processing_active: bool,
+    suppression_enabled: bool,
 ) -> EngineObservation {
     let live = graph.telemetry().snapshot();
     let capture = graph.capture().telemetry().snapshot();
     let source = graph.source().telemetry().snapshot();
+    // Describe the audio path users are actually hearing: processed output
+    // while suppression is active, physical input while it is bypassed.
+    let (rms, peak) = meter_levels(
+        processing_active,
+        suppression_enabled,
+        (live.rms, live.peak),
+        (capture.rms, capture.recent_peak),
+    );
     let fault = processing_active
         .then(|| live_state_error(live.state))
         .flatten();
@@ -854,11 +867,24 @@ fn observe_graph(
                 .sanitized_samples
                 .saturating_add(capture.counters.non_finite_samples),
             vad_probability: f64::from(live.vad_probability),
-            rms: f64::from(live.rms),
-            peak: f64::from(live.peak),
+            rms: f64::from(rms),
+            peak: f64::from(peak),
         },
         fault,
         devices: Vec::new(),
+    }
+}
+
+const fn meter_levels(
+    processing_active: bool,
+    suppression_enabled: bool,
+    processed: (f32, f32),
+    physical: (f32, f32),
+) -> (f32, f32) {
+    if processing_active && suppression_enabled {
+        processed
+    } else {
+        physical
     }
 }
 
@@ -890,6 +916,7 @@ mod tests {
     use super::{
         LIVE_FAILURE_RESET_INTERVAL, LiveState, NativeAudioEngine, NativeCommand,
         cache_observed_devices, live_failure_latched, live_failure_reset_due, live_state_error,
+        meter_levels,
     };
     use crate::{EngineObservation, LifecycleState};
     use noire_ipc::InputDescriptor;
@@ -931,6 +958,15 @@ mod tests {
             live_state_error(LiveState::TransportFailed).map(|error| error.code),
             Some("audio-transport-failed")
         );
+    }
+
+    #[test]
+    fn meter_levels_follow_the_audible_signal_path() {
+        let processed = (0.1, 0.2);
+        let physical = (0.6, 0.8);
+        assert_eq!(meter_levels(true, true, processed, physical), processed);
+        assert_eq!(meter_levels(true, false, processed, physical), physical);
+        assert_eq!(meter_levels(false, true, processed, physical), physical);
     }
 
     #[test]

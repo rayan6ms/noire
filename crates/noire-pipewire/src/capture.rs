@@ -132,6 +132,8 @@ struct CaptureTelemetryInner {
     subnormal_samples: AtomicU64,
     input_generation_resets: AtomicU64,
     peak_bits: AtomicU32,
+    recent_peak_bits: AtomicU32,
+    rms_bits: AtomicU32,
 }
 
 impl Default for CaptureTelemetryInner {
@@ -147,6 +149,8 @@ impl Default for CaptureTelemetryInner {
             subnormal_samples: AtomicU64::new(0),
             input_generation_resets: AtomicU64::new(0),
             peak_bits: AtomicU32::new(0),
+            recent_peak_bits: AtomicU32::new(0),
+            rms_bits: AtomicU32::new(0),
         }
     }
 }
@@ -160,6 +164,10 @@ pub struct CaptureTelemetrySnapshot {
     pub counters: CaptureCounters,
     /// Largest absolute finite sample observed since construction.
     pub peak: f32,
+    /// Absolute peak of the most recent physical-input callback.
+    pub recent_peak: f32,
+    /// RMS level of the most recent callback of physical input samples.
+    pub rms: f32,
 }
 
 impl CaptureTelemetry {
@@ -180,6 +188,8 @@ impl CaptureTelemetry {
                 input_generation_resets: load(&self.inner.input_generation_resets),
             },
             peak: f32::from_bits(self.inner.peak_bits.load(Ordering::Relaxed)),
+            recent_peak: f32::from_bits(self.inner.recent_peak_bits.load(Ordering::Relaxed)),
+            rms: f32::from_bits(self.inner.rms_bits.load(Ordering::Relaxed)),
         }
     }
 
@@ -212,13 +222,28 @@ impl CaptureTelemetry {
         let peak = samples
             .iter()
             .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+        let rms = if samples.is_empty() {
+            0.0
+        } else {
+            // Capture callbacks are bounded by MAX_CALLBACK_FRAMES, whose
+            // sample count is exactly representable by f32.
+            #[allow(clippy::cast_precision_loss)]
+            let sample_count = samples.len() as f32;
+            (samples.iter().map(|sample| sample * sample).sum::<f32>() / sample_count).sqrt()
+        };
         self.inner
             .peak_bits
             .fetch_max(peak.to_bits(), Ordering::Relaxed);
+        self.inner
+            .recent_peak_bits
+            .store(peak.to_bits(), Ordering::Relaxed);
+        self.inner.rms_bits.store(rms.to_bits(), Ordering::Relaxed);
     }
 
     fn reset_generation(&self, counters: CaptureCounters, generation: InputGeneration) {
         self.inner.peak_bits.store(0, Ordering::Relaxed);
+        self.inner.recent_peak_bits.store(0, Ordering::Relaxed);
+        self.inner.rms_bits.store(0, Ordering::Relaxed);
         self.publish(counters, generation, &[]);
     }
 }
@@ -867,6 +892,8 @@ mod tests {
         assert_eq!(processor.meter_snapshot().peak, 0.5);
         assert_eq!(telemetry.snapshot().counters.frames, 3);
         assert_eq!(telemetry.snapshot().peak, 0.5);
+        assert_eq!(telemetry.snapshot().recent_peak, 0.5);
+        assert!((telemetry.snapshot().rms - 0.322_748_6).abs() < 1.0e-6);
         Ok(())
     }
 
@@ -940,6 +967,8 @@ mod tests {
         assert_eq!(processor.meter_snapshot().samples, 0);
         assert_eq!(telemetry.snapshot().generation, second_generation);
         assert_eq!(telemetry.snapshot().peak, 0.0);
+        assert_eq!(telemetry.snapshot().recent_peak, 0.0);
+        assert_eq!(telemetry.snapshot().rms, 0.0);
 
         let second = encoded(&[0.25]);
         let report = processor

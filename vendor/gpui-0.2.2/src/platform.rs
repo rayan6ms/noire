@@ -539,6 +539,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         Decorations::Server
     }
     fn set_app_id(&mut self, _app_id: &str) {}
+    fn set_window_icon(&mut self, _icon: &WindowIcon) {}
     fn map_window(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
@@ -1123,6 +1124,9 @@ pub struct WindowOptions {
     /// Application identifier of the window. Can by used by desktop environments to group applications together.
     pub app_id: Option<String>,
 
+    /// Pixel icon advertised by the window to taskbars and window switchers.
+    pub window_icon: Option<WindowIcon>,
+
     /// Window minimum size
     pub window_min_size: Option<Size<Pixels>>,
 
@@ -1236,10 +1240,82 @@ impl Default for WindowOptions {
             display_id: None,
             window_background: WindowBackgroundAppearance::default(),
             app_id: None,
+            window_icon: None,
             window_min_size: None,
             window_decorations: None,
             tabbing_identifier: None,
         }
+    }
+}
+
+/// A square ARGB window icon for desktop taskbars and window switchers.
+#[derive(Clone, Debug)]
+pub struct WindowIcon {
+    width: u32,
+    height: u32,
+    pixels: Arc<[u32]>,
+}
+
+impl WindowIcon {
+    /// Rasterizes an SVG into a square ARGB icon.
+    pub fn from_svg(svg: &[u8], dimension: u32) -> anyhow::Result<Self> {
+        anyhow::ensure!(dimension > 0, "window icon dimensions must be non-zero");
+        let tree = usvg::Tree::from_data(svg, &usvg::Options::default())?;
+        anyhow::ensure!(
+            tree.size().width() == tree.size().height(),
+            "window icon SVG must be square"
+        );
+        let mut pixmap = resvg::tiny_skia::Pixmap::new(dimension, dimension)
+            .ok_or_else(|| anyhow::anyhow!("window icon dimensions are invalid"))?;
+        let scale = dimension as f32 / tree.size().width();
+        resvg::render(
+            &tree,
+            resvg::tiny_skia::Transform::from_scale(scale, scale),
+            &mut pixmap.as_mut(),
+        );
+        let pixels: Vec<u32> = pixmap
+            .pixels()
+            .iter()
+            .map(|pixel| {
+                (u32::from(pixel.alpha()) << 24)
+                    | (u32::from(pixel.red()) << 16)
+                    | (u32::from(pixel.green()) << 8)
+                    | u32::from(pixel.blue())
+            })
+            .collect();
+        Self::from_argb(dimension, dimension, pixels)
+    }
+
+    /// Creates an icon from premultiplied `0xAARRGGBB` pixels.
+    pub fn from_argb(
+        width: u32,
+        height: u32,
+        pixels: impl Into<Arc<[u32]>>,
+    ) -> anyhow::Result<Self> {
+        let pixels = pixels.into();
+        anyhow::ensure!(width > 0 && height > 0, "window icon dimensions must be non-zero");
+        anyhow::ensure!(width == height, "window icon must be square");
+        anyhow::ensure!(
+            pixels.len() == width as usize * height as usize,
+            "window icon pixel count does not match its dimensions"
+        );
+        Ok(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
+    pub(crate) fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub(crate) fn height(&self) -> u32 {
+        self.height
+    }
+
+    pub(crate) fn pixels(&self) -> &[u32] {
+        &self.pixels
     }
 }
 

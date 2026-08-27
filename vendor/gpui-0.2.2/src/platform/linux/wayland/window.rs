@@ -1,6 +1,8 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
     ffi::c_void,
+    io::Write as _,
+    os::fd::AsFd as _,
     ptr::NonNull,
     rc::Rc,
     sync::Arc,
@@ -13,7 +15,10 @@ use futures::channel::oneshot::Receiver;
 use raw_window_handle as rwh;
 use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
-use wayland_client::{Proxy, protocol::wl_surface};
+use wayland_client::{
+    Proxy,
+    protocol::{wl_shm, wl_surface},
+};
 use wayland_protocols::wp::viewporter::client::wp_viewport;
 use wayland_protocols::xdg::decoration::zv1::client::zxdg_toplevel_decoration_v1;
 use wayland_protocols::xdg::shell::client::xdg_surface;
@@ -28,7 +33,8 @@ use crate::{
     AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptButton, PromptLevel, RequestFrameOptions,
     ResizeEdge, Size, Tiling, WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowParams, px, size,
+    WindowBounds, WindowControlArea, WindowControls, WindowDecorations, WindowIcon, WindowParams,
+    px, size,
 };
 use crate::{
     Capslock,
@@ -944,6 +950,59 @@ impl PlatformWindow for WaylandWindow {
         let mut state = self.borrow_mut();
         state.toplevel.set_app_id(app_id.to_owned());
         state.app_id = Some(app_id.to_owned());
+    }
+
+    fn set_window_icon(&mut self, icon: &WindowIcon) {
+        let state = self.borrow();
+        let Some(manager) = state.globals.toplevel_icon_manager.as_ref() else {
+            return;
+        };
+        let byte_len = icon.pixels().len().saturating_mul(size_of::<u32>());
+        let Ok(byte_len) = i32::try_from(byte_len) else {
+            log::warn!("Wayland: Window icon is too large");
+            return;
+        };
+        let Ok(width) = i32::try_from(icon.width()) else {
+            return;
+        };
+        let Ok(height) = i32::try_from(icon.height()) else {
+            return;
+        };
+        let Some(stride) = width.checked_mul(size_of::<u32>() as i32) else {
+            return;
+        };
+        let Ok(mut file) = tempfile::tempfile() else {
+            log::warn!("Wayland: Failed to create window icon shared memory");
+            return;
+        };
+        for pixel in icon.pixels() {
+            if file.write_all(&pixel.to_ne_bytes()).is_err() {
+                log::warn!("Wayland: Failed to write window icon shared memory");
+                return;
+            }
+        }
+
+        let pool = state
+            .globals
+            .shm
+            .create_pool(file.as_fd(), byte_len, &state.globals.qh, ());
+        let buffer = pool.create_buffer(
+            0,
+            width,
+            height,
+            stride,
+            wl_shm::Format::Argb8888,
+            &state.globals.qh,
+            (),
+        );
+        pool.destroy();
+
+        let toplevel_icon = manager.create_icon(&state.globals.qh, ());
+        toplevel_icon.add_buffer(&buffer, 1);
+        manager.set_icon(&state.toplevel, Some(&toplevel_icon));
+        toplevel_icon.destroy();
+        buffer.destroy();
+        state.surface.commit();
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {

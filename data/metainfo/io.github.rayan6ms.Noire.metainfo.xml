@@ -30,6 +30,17 @@
   <url type="homepage">https://github.com/rayan6ms/noire</url>
   <url type="bugtracker">https://github.com/rayan6ms/noire/issues</url>
   <releases>
+    <release version="1.1.10" date="2026-08-27" type="stable">
+      <description>
+        <p>Polishes controller layout, portable desktop behavior, and live meters.</p>
+        <ul>
+          <li>Balances the home and settings side margins against the existing top spacing.</li>
+          <li>Supplies the embedded Noire icon to Wayland and X11 taskbars, including unintegrated AppImages.</li>
+          <li>Removes the mapped tray keepalive window while preserving zero-window tray operation.</li>
+          <li>Shows physical-input telemetry while bypassed and processed-output telemetry while noise reduction is active.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.9" date="2026-08-26" type="stable">
       <description>
         <p>Fixes tray-only window lifetime and settings page spacing.</p>
