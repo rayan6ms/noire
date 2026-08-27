@@ -2312,8 +2312,6 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "979b45cfa6ec723b6f42330915a1b3769b930d02b2d505f9697f8ca602bee707"
 dependencies = [
  "anyhow",
  "as-raw-xcb-connection",
@@ -3555,7 +3553,7 @@ dependencies = [
 
 [[package]]
 name = "noire-config"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "proptest",
  "serde",
@@ -3565,14 +3563,14 @@ dependencies = [
 
 [[package]]
 name = "noire-core"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "noire-dsp"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "criterion",
  "proptest",
@@ -3580,7 +3578,7 @@ dependencies = [
 
 [[package]]
 name = "noire-ipc"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "noire-core",
  "serde",
@@ -3592,14 +3590,14 @@ dependencies = [
 
 [[package]]
 name = "noire-model"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "noire-model-fastenhancer"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "criterion",
  "noire-model",
@@ -3609,14 +3607,14 @@ dependencies = [
 
 [[package]]
 name = "noire-model-fastenhancer-sys"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "noire-model-rnnoise"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "criterion",
  "hound",
@@ -3629,7 +3627,7 @@ dependencies = [
 
 [[package]]
 name = "noire-pipewire"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "libspa",
  "noire-core",
@@ -3644,7 +3642,7 @@ dependencies = [
 
 [[package]]
 name = "noire-test-support"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "noire-core",
  "proptest",
@@ -3652,7 +3650,7 @@ dependencies = [
 
 [[package]]
 name = "noire-ui"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "clap",
  "futures-util",
@@ -3670,7 +3668,7 @@ dependencies = [
 
 [[package]]
 name = "noirectl"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -3684,7 +3682,7 @@ dependencies = [
 
 [[package]]
 name = "noired"
-version = "1.1.8"
+version = "1.1.9"
 dependencies = [
  "anyhow",
  "clap",

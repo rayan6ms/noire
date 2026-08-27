@@ -1,4 +1,4 @@
-%{!?noire_version:%global noire_version 1.1.8}
+%{!?noire_version:%global noire_version 1.1.9}
 %{!?noire_release:%global noire_release 1}
 %{!?noire_daemon_stage:%global noire_daemon_stage /nonexistent/noire-daemon}
 %{!?noire_ui_stage:%global noire_ui_stage /nonexistent/noire-ui}
@@ -73,6 +73,9 @@ cp -a %{noire_ui_stage}/. %{buildroot}/
 /usr/share/man/man1/noire.1*
 
 %changelog
+* Wed Aug 26 2026 rayan6ms - 1.1.9-1
+- Remove mapped tray keepalive windows and align settings spacing
+
 * Wed Aug 26 2026 rayan6ms - 1.1.8-1
 - Fix tray-only startup, duplicate ghost windows, and AppImage login startup
 

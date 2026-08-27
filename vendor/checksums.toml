@@ -10,3 +10,8 @@ tree_sha256 = "0b2ab4402262f72af65472ebc60670a41549c8de33fdf73e0419da6c95c0834d"
 path = "vendor/pipewire-sys-0.10.0"
 files = 7
 tree_sha256 = "e67e1f08fb355d7f5ddbf68d262899ae7ed9214e041e813cac278cf7216d6a59"
+
+[[crate]]
+path = "vendor/gpui-0.2.2"
+files = 140
+tree_sha256 = "fa66695eaa4d6634078718825e0627d6ac05f8486ec55877a0e00ec9c712e4f1"

@@ -30,6 +30,16 @@
   <url type="homepage">https://github.com/rayan6ms/noire</url>
   <url type="bugtracker">https://github.com/rayan6ms/noire/issues</url>
   <releases>
+    <release version="1.1.9" date="2026-08-26" type="stable">
+      <description>
+        <p>Fixes tray-only window lifetime and settings page spacing.</p>
+        <ul>
+          <li>Keeps tray-only event-loop support unmapped so closing to tray leaves no desktop window.</li>
+          <li>Ensures opening and closing the controller cannot create duplicate windows.</li>
+          <li>Matches settings margins and header padding to the home screen.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.8" date="2026-08-26" type="stable">
       <description>
         <p>Fixes tray-only startup and login behavior on Linux desktops.</p>
