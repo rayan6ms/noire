@@ -30,7 +30,9 @@ const APPLICATION_ID: &str = "io.github.rayan6ms.Noire";
 const RESPONSE_INTERVAL: Duration = Duration::from_millis(33);
 const TRANSITION_DURATION: Duration = Duration::from_millis(160);
 const TOAST_LIFETIME: Duration = Duration::from_secs(6);
-const TRAY_LOSS_GRACE: Duration = Duration::from_secs(2);
+const TRAY_LOSS_GRACE: Duration = Duration::from_secs(5);
+const TRAY_UNAVAILABLE_CAUSE: &str = "This desktop does not expose a compatible system tray.";
+const TRAY_UNAVAILABLE_RECOVERY: &str = "Noire will remain visible and exit normally when closed.";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Page {
@@ -122,10 +124,13 @@ struct TrayHostState {
 }
 
 impl TrayHostState {
-    const fn new(available: bool) -> Self {
+    fn new(available: bool, now: Instant) -> Self {
         Self {
             available,
-            loss_started: None,
+            // Login startup can race the desktop's StatusNotifier host.
+            // Begin the grace period immediately when the initial probe is
+            // unavailable instead of treating it as permanently settled.
+            loss_started: (!available).then_some(now),
         }
     }
 
@@ -185,7 +190,7 @@ impl AppRuntime {
         tray_controller: client::TrayController,
         close_to_tray: Arc<AtomicBool>,
     ) -> Self {
-        let tray_host = TrayHostState::new(tray.available());
+        let tray_host = TrayHostState::new(tray.available(), Instant::now());
         Self {
             tray,
             tray_controller,
@@ -235,9 +240,31 @@ impl AppRuntime {
                     preferences.close_to_tray && self.tray.available(),
                     Ordering::Relaxed,
                 );
+                if let Some(handle) = self
+                    .window
+                    .and_then(|handle| handle.downcast::<NoireView>())
+                {
+                    let _ignored = handle.update(cx, |view, _window, cx| {
+                        view.clear_tray_unavailable_toast();
+                        cx.notify();
+                    });
+                }
             }
             TrayHostTransition::FallbackDue => {
                 self.show_window(cx);
+                if let Some(handle) = self
+                    .window
+                    .and_then(|handle| handle.downcast::<NoireView>())
+                {
+                    let _ignored = handle.update(cx, |view, _window, cx| {
+                        view.show_toast(Toast {
+                            cause: TRAY_UNAVAILABLE_CAUSE.to_owned(),
+                            recovery: TRAY_UNAVAILABLE_RECOVERY.to_owned(),
+                            retryable: false,
+                        });
+                        cx.notify();
+                    });
+                }
             }
         }
     }
@@ -259,7 +286,6 @@ impl AppRuntime {
         let close_flag = Arc::clone(&self.close_to_tray);
         let runtime = cx.entity();
         let runtime_for_close = runtime.clone();
-        let tray_available = self.tray.available();
         let initial_active = self.tray.active();
         let tray_controller = self.tray_controller.clone();
         let bounds = Bounds::centered(None, size(px(680.0), px(512.0)), cx);
@@ -295,7 +321,6 @@ impl AppRuntime {
                     preferences,
                     runtime,
                     tray_controller,
-                    tray_available,
                     initial_active,
                     window,
                     cx,
@@ -352,7 +377,6 @@ impl NoireView {
         preferences: DesktopPreferences,
         runtime: Entity<AppRuntime>,
         tray_controller: client::TrayController,
-        tray_available: bool,
         initial_active: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -398,13 +422,6 @@ impl NoireView {
             system_dark_theme: appearance_is_dark(window.appearance()),
             _appearance_subscription: appearance_subscription,
         };
-        if !tray_available {
-            this.show_toast(Toast {
-                cause: "This desktop does not expose a compatible system tray.".to_owned(),
-                recovery: "Noire will remain visible and exit normally when closed.".to_owned(),
-                retryable: false,
-            });
-        }
         this.send(Request::Refresh, false);
         this
     }
@@ -480,14 +497,17 @@ impl NoireView {
                     if let Some(toast) = daemon_error {
                         self.show_toast(toast);
                     }
-                    if self.optimistic_active == Some(active) {
-                        self.optimistic_active = None;
-                    } else if previous_active.is_some_and(|previous| previous != active)
-                        && !transition_targets(self.processing_transition, active)
+                    // The tray value is only a bootstrap hint. The first
+                    // daemon reply is authoritative even when it disagrees;
+                    // retaining the hint here made the window and tray show
+                    // different processing states after a relaunch.
+                    if let Some((from, to)) =
+                        active_hint_transition(&mut self.optimistic_active, previous_active, active)
+                        && !transition_targets(self.processing_transition, to)
                     {
                         self.processing_transition = Some(ProcessingTransition {
-                            from: !active,
-                            to: active,
+                            from,
+                            to,
                             started: Instant::now(),
                         });
                     }
@@ -562,6 +582,17 @@ impl NoireView {
             toast,
             Instant::now(),
         );
+    }
+
+    fn clear_tray_unavailable_toast(&mut self) {
+        if self
+            .toast
+            .as_ref()
+            .is_some_and(|toast| toast.cause == TRAY_UNAVAILABLE_CAUSE)
+        {
+            self.toast = None;
+            self.toast_expires = None;
+        }
     }
 
     fn dismiss_toast(&mut self) {
@@ -1588,6 +1619,17 @@ fn transition_targets(transition: Option<ProcessingTransition>, active: bool) ->
     transition.is_some_and(|transition| transition.to == active)
 }
 
+/// Replaces the tray-derived bootstrap hint with the first authoritative
+/// daemon value and reports a visible correction when they disagree.
+fn active_hint_transition(
+    optimistic: &mut Option<bool>,
+    previous: Option<bool>,
+    active: bool,
+) -> Option<(bool, bool)> {
+    let from = optimistic.take().or(previous)?;
+    (from != active).then_some((from, active))
+}
+
 fn processing_status(status: &str, healthy: bool, p: Palette) -> Div {
     div()
         .flex()
@@ -2110,9 +2152,9 @@ mod tests {
 
     use super::{
         ProcessingTransition, TOAST_LIFETIME, TRAY_LOSS_GRACE, Toast, TrayHostState,
-        TrayHostTransition, admit_toast, error_resolved, meter_level, processing_state_is_healthy,
-        refresh_toast, scrollbar_thumb_geometry, should_start_hidden, strength_is_preset,
-        transition_targets,
+        TrayHostTransition, active_hint_transition, admit_toast, error_resolved, meter_level,
+        processing_state_is_healthy, refresh_toast, scrollbar_thumb_geometry, should_start_hidden,
+        strength_is_preset, transition_targets,
     };
 
     #[test]
@@ -2143,6 +2185,24 @@ mod tests {
         });
         assert!(transition_targets(disabling, false));
         assert!(!transition_targets(disabling, true));
+    }
+
+    #[test]
+    fn first_daemon_state_replaces_a_disagreeing_tray_hint() {
+        let mut hint = Some(true);
+        assert_eq!(
+            active_hint_transition(&mut hint, None, false),
+            Some((true, false))
+        );
+        assert!(hint.is_none());
+
+        // Once the hint has been consumed, later replies use the prior
+        // authoritative state and cannot resurrect the stale bootstrap value.
+        assert_eq!(
+            active_hint_transition(&mut hint, Some(false), true),
+            Some((false, true))
+        );
+        assert!(hint.is_none());
     }
 
     #[test]
@@ -2224,7 +2284,7 @@ mod tests {
     #[test]
     fn momentary_tray_loss_is_cancelled_when_the_host_recovers() {
         let started = Instant::now();
-        let mut host = TrayHostState::new(true);
+        let mut host = TrayHostState::new(true, started);
 
         assert_eq!(host.observe(false, started), TrayHostTransition::Lost);
         assert_eq!(
@@ -2244,7 +2304,7 @@ mod tests {
     #[test]
     fn prolonged_tray_loss_requests_one_visible_fallback() {
         let started = Instant::now();
-        let mut host = TrayHostState::new(true);
+        let mut host = TrayHostState::new(true, started);
 
         assert_eq!(host.observe(false, started), TrayHostTransition::Lost);
         assert_eq!(
@@ -2254,6 +2314,21 @@ mod tests {
         assert_eq!(
             host.observe(false, started + TRAY_LOSS_GRACE + Duration::from_secs(1)),
             TrayHostTransition::None
+        );
+    }
+
+    #[test]
+    fn initial_tray_loss_gets_the_same_grace_period_as_runtime_loss() {
+        let started = Instant::now();
+        let mut host = TrayHostState::new(false, started);
+
+        assert_eq!(
+            host.observe(false, started + Duration::from_secs(1)),
+            TrayHostTransition::None
+        );
+        assert_eq!(
+            host.observe(false, started + TRAY_LOSS_GRACE),
+            TrayHostTransition::FallbackDue
         );
     }
 
