@@ -57,8 +57,9 @@ assert "no audio" in report["privacy"]
 assert report["journal_hint"].startswith("journalctl --user-unit=noire.service")
 PY
 
-timeout 2s target/debug/noirectl --json stop --revision 1 >"$phase6_root/stopped.json"
-if timeout 2s target/debug/noirectl --json stop --revision 1 \
+timeout 2s target/debug/noirectl --json set --revision 1 strength 0.75 \
+  >"$phase6_root/changed.json"
+if timeout 2s target/debug/noirectl --json set --revision 1 strength 0.5 \
   >"$phase6_root/unexpected.json" 2>"$phase6_root/conflict.json"; then
   echo "stale revision unexpectedly succeeded" >&2
   exit 1
@@ -82,6 +83,7 @@ import sys
 snapshot = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert snapshot["revision"] == 2
 assert snapshot["active"] is False
+assert snapshot["strength"] == 0.75
 PY
 
 echo "NOIRE_PHASE6_SESSION dbus_contract=pass cli_json=pass stale_revision=pass diagnostics_privacy=pass"
