@@ -42,6 +42,15 @@ pub enum StreamLatency {
 }
 
 impl StreamLatency {
+    /// Requested graph quantum in canonical 48 kHz frames.
+    #[must_use]
+    pub const fn quantum_frames(self) -> usize {
+        match self {
+            Self::Low => 256,
+            Self::Balanced => 512,
+        }
+    }
+
     /// `PipeWire` `node.latency` value shared by both ends of the graph.
     #[must_use]
     pub const fn node_property(self) -> &'static str {
@@ -529,6 +538,8 @@ mod tests {
 
     #[test]
     fn latency_profiles_request_distinct_bounded_quanta() {
+        assert_eq!(StreamLatency::Low.quantum_frames(), 256);
+        assert_eq!(StreamLatency::Balanced.quantum_frames(), 512);
         assert_eq!(StreamLatency::Low.node_property(), "256/48000");
         assert_eq!(StreamLatency::Balanced.node_property(), "512/48000");
     }

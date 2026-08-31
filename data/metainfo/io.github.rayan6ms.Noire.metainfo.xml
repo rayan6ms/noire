@@ -32,9 +32,10 @@
   <releases>
     <release version="1.1.12" date="2026-08-31" type="stable">
       <description>
-        <p>Hardens release validation and polishes desktop recovery feedback.</p>
+        <p>Hardens release validation and restores bounded low-latency behavior.</p>
         <ul>
           <li>Makes every CI gate propagate failures correctly and verifies the audited native boundary.</li>
+          <li>Keeps low-latency bypass startup below the 20 ms software-latency ceiling.</li>
           <li>Restores tray-loss feedback after recovery and exercises managed login-entry refresh behavior.</li>
           <li>Adds a subtle theme-aware window border and preserves Rust 1.92 compatibility.</li>
         </ul>

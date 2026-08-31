@@ -75,6 +75,7 @@ cp -a %{noire_ui_stage}/. %{buildroot}/
 %changelog
 * Mon Aug 31 2026 rayan6ms - 1.1.12-1
 - Harden release validation, tray recovery feedback, and window styling
+- Restore the 20 ms low-latency bypass ceiling
 
 * Sat Aug 29 2026 rayan6ms - 1.1.11-1
 - Fix startup tray warnings and synchronize window state with the tray

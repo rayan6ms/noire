@@ -15,7 +15,12 @@ use crate::{CaptureSink, InputGeneration};
 /// Fixed overload boundary from the architecture plan.
 pub const BYPASS_RING_CAPACITY: usize = 2 * MAX_CALLBACK_FRAMES + 2 * MODEL_FRAME_SAMPLES;
 /// Graph quanta retained beyond the model-frame delay to absorb stream jitter.
-pub const BYPASS_STARTUP_QUANTA: usize = 3;
+///
+/// One low-latency quantum keeps the callback-aligned reserve at 768 samples,
+/// below the 960-sample release ceiling. Retaining the former three quanta
+/// after the graph quantum increased to 256 samples produced 1,280 samples of
+/// added latency.
+pub const BYPASS_STARTUP_QUANTA: usize = 1;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct TaggedSample {
@@ -543,7 +548,22 @@ mod tests {
     use noire_dsp::{FAULT_RAMP_SAMPLES, MODEL_FRAME_SAMPLES};
 
     use super::{BYPASS_RING_CAPACITY, BYPASS_STARTUP_QUANTA, create_bypass_channel};
+    #[cfg(feature = "pipewire-backend")]
+    use crate::StreamLatency;
     use crate::{CaptureSink, InputGeneration};
+
+    #[test]
+    #[cfg(feature = "pipewire-backend")]
+    fn low_latency_startup_reserve_stays_below_release_ceiling() {
+        const RELEASE_CEILING_SAMPLES: usize = 960;
+
+        let quantum = StreamLatency::Low.quantum_frames();
+        let required = MODEL_FRAME_SAMPLES + BYPASS_STARTUP_QUANTA * quantum;
+        let callback_aligned = required.div_ceil(quantum) * quantum;
+
+        assert_eq!(callback_aligned, 768);
+        assert!(callback_aligned <= RELEASE_CEILING_SAMPLES);
+    }
 
     #[test]
     fn startup_retains_exact_model_lead_and_fades_in() -> Result<(), super::BypassOutputError> {

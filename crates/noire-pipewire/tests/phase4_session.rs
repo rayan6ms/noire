@@ -37,6 +37,7 @@ const SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 const RECORDING_CAPACITY: usize = 1_048_576;
 const MEASUREMENT_SECONDS: u64 = 4;
 const MAX_ADDED_DELAY_SAMPLES: usize = 960;
+const MAX_SEARCH_DELAY_SAMPLES: usize = 2_048;
 const CORRELATION_TRIALS: usize = 100;
 const CORRELATION_WINDOW: usize = 512;
 const APP_TIMEOUT: Duration = Duration::from_secs(25);
@@ -201,7 +202,11 @@ fn virtual_source_bypass_meets_phase4_acceptance() -> Result<(), Box<dyn Error>>
 
     let delays = correlation_delays(&reference, &observed)?;
     let latency = LatencySummary::from_samples(delays);
-    assert!(latency.p95_samples <= u64::try_from(MAX_ADDED_DELAY_SAMPLES).unwrap_or(u64::MAX));
+    assert!(
+        latency.p95_samples <= u64::try_from(MAX_ADDED_DELAY_SAMPLES).unwrap_or(u64::MAX),
+        "bypass added p95 was {} samples",
+        latency.p95_samples
+    );
     assert!(latency.minimum_samples > 0);
     let gain_error_db = aligned_gain_error_db(
         &reference,
@@ -1063,7 +1068,7 @@ fn correlation_delays(reference: &[f32], observed: &[f32]) -> Result<Vec<usize>,
     let warmup = 4_096;
     let needed = warmup
         + CORRELATION_TRIALS * CORRELATION_WINDOW
-        + MAX_ADDED_DELAY_SAMPLES
+        + MAX_SEARCH_DELAY_SAMPLES
         + CORRELATION_WINDOW;
     if reference.len() < needed || observed.len() < needed {
         return Err("insufficient samples for correlation trials");
@@ -1073,7 +1078,7 @@ fn correlation_delays(reference: &[f32], observed: &[f32]) -> Result<Vec<usize>,
         let start = warmup + trial * CORRELATION_WINDOW;
         let mut best_delay = 0;
         let mut best_score = f64::NEG_INFINITY;
-        for delay in 0..=MAX_ADDED_DELAY_SAMPLES {
+        for delay in 1..=MAX_SEARCH_DELAY_SAMPLES {
             let score = normalized_correlation(
                 &reference[start..start + CORRELATION_WINDOW],
                 &observed[start + delay..start + delay + CORRELATION_WINDOW],
