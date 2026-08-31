@@ -30,6 +30,16 @@
   <url type="homepage">https://github.com/rayan6ms/noire</url>
   <url type="bugtracker">https://github.com/rayan6ms/noire/issues</url>
   <releases>
+    <release version="1.1.12" date="2026-08-31" type="stable">
+      <description>
+        <p>Hardens release validation and polishes desktop recovery feedback.</p>
+        <ul>
+          <li>Makes every CI gate propagate failures correctly and verifies the audited native boundary.</li>
+          <li>Restores tray-loss feedback after recovery and exercises managed login-entry refresh behavior.</li>
+          <li>Adds a subtle theme-aware window border and preserves Rust 1.92 compatibility.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.11" date="2026-08-29" type="stable">
       <description>
         <p>Fixes startup tray feedback and controller state synchronization.</p>

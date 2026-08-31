@@ -257,11 +257,7 @@ impl AppRuntime {
                     .and_then(|handle| handle.downcast::<NoireView>())
                 {
                     let _ignored = handle.update(cx, |view, _window, cx| {
-                        view.show_toast(Toast {
-                            cause: TRAY_UNAVAILABLE_CAUSE.to_owned(),
-                            recovery: TRAY_UNAVAILABLE_RECOVERY.to_owned(),
-                            retryable: false,
-                        });
+                        view.show_toast(tray_unavailable_toast());
                         cx.notify();
                     });
                 }
@@ -585,14 +581,11 @@ impl NoireView {
     }
 
     fn clear_tray_unavailable_toast(&mut self) {
-        if self
-            .toast
-            .as_ref()
-            .is_some_and(|toast| toast.cause == TRAY_UNAVAILABLE_CAUSE)
-        {
-            self.toast = None;
-            self.toast_expires = None;
-        }
+        clear_tray_unavailable_toast_state(
+            &mut self.toast,
+            &mut self.toast_expires,
+            &mut self.dismissed_toast,
+        );
     }
 
     fn dismiss_toast(&mut self) {
@@ -1467,6 +1460,34 @@ fn admit_toast(dismissed: &mut Option<Toast>, incoming: &Toast) -> bool {
     true
 }
 
+fn tray_unavailable_toast() -> Toast {
+    Toast {
+        cause: TRAY_UNAVAILABLE_CAUSE.to_owned(),
+        recovery: TRAY_UNAVAILABLE_RECOVERY.to_owned(),
+        retryable: false,
+    }
+}
+
+fn is_tray_unavailable_toast(toast: &Toast) -> bool {
+    toast.cause == TRAY_UNAVAILABLE_CAUSE
+        && toast.recovery == TRAY_UNAVAILABLE_RECOVERY
+        && !toast.retryable
+}
+
+fn clear_tray_unavailable_toast_state(
+    visible: &mut Option<Toast>,
+    expires: &mut Option<Instant>,
+    dismissed: &mut Option<Toast>,
+) {
+    if visible.as_ref().is_some_and(is_tray_unavailable_toast) {
+        *visible = None;
+        *expires = None;
+    }
+    if dismissed.as_ref().is_some_and(is_tray_unavailable_toast) {
+        *dismissed = None;
+    }
+}
+
 impl Render for NoireView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.system_dark_theme = appearance_is_dark(window.appearance());
@@ -1477,6 +1498,8 @@ impl Render for NoireView {
             .min_h_0()
             .overflow_hidden()
             .rounded(px(13.0))
+            .border_1()
+            .border_color(rgb(p.border_soft))
             .text_color(rgb(p.text))
             .child(
                 img(if self.dark_theme() {
@@ -2152,9 +2175,10 @@ mod tests {
 
     use super::{
         ProcessingTransition, TOAST_LIFETIME, TRAY_LOSS_GRACE, Toast, TrayHostState,
-        TrayHostTransition, active_hint_transition, admit_toast, error_resolved, meter_level,
+        TrayHostTransition, active_hint_transition, admit_toast,
+        clear_tray_unavailable_toast_state, error_resolved, meter_level,
         processing_state_is_healthy, refresh_toast, scrollbar_thumb_geometry, should_start_hidden,
-        strength_is_preset, transition_targets,
+        strength_is_preset, transition_targets, tray_unavailable_toast,
     };
 
     #[test]
@@ -2271,6 +2295,23 @@ mod tests {
         };
         assert!(admit_toast(&mut suppression, &changed));
         assert!(suppression.is_none());
+    }
+
+    #[test]
+    fn tray_recovery_ends_dismissal_suppression_for_the_next_outage() {
+        let warning = tray_unavailable_toast();
+        let mut visible = Some(warning.clone());
+        let mut expires = Some(Instant::now() + TOAST_LIFETIME);
+        let mut dismissed = visible.take();
+        let dismissed_deadline = expires.take();
+        assert!(dismissed_deadline.is_some());
+
+        clear_tray_unavailable_toast_state(&mut visible, &mut expires, &mut dismissed);
+
+        assert!(visible.is_none());
+        assert!(expires.is_none());
+        assert!(dismissed.is_none());
+        assert!(admit_toast(&mut dismissed, &warning));
     }
 
     #[test]

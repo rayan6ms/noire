@@ -1,4 +1,4 @@
-%{!?noire_version:%global noire_version 1.1.11}
+%{!?noire_version:%global noire_version 1.1.12}
 %{!?noire_release:%global noire_release 1}
 %{!?noire_daemon_stage:%global noire_daemon_stage /nonexistent/noire-daemon}
 %{!?noire_ui_stage:%global noire_ui_stage /nonexistent/noire-ui}
@@ -73,6 +73,9 @@ cp -a %{noire_ui_stage}/. %{buildroot}/
 /usr/share/man/man1/noire.1*
 
 %changelog
+* Mon Aug 31 2026 rayan6ms - 1.1.12-1
+- Harden release validation, tray recovery feedback, and window styling
+
 * Sat Aug 29 2026 rayan6ms - 1.1.11-1
 - Fix startup tray warnings and synchronize window state with the tray
 

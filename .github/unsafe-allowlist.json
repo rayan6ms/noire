@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "files": {
+    "crates/noire-model-fastenhancer-sys/src/lib.rs": {
+      "sha256": "fddcc8980c5b73d625decd6e10465c8f9413615e581d5be31624731d61cb7287",
+      "unsafe": [
+        "unsafe extern \"C\" {",
+        "unsafe impl Send for State {}",
+        "let raw = unsafe { fe_init(FE_MODEL_BASE, weights.as_ptr(), length) };",
+        "let hop_size = unsafe { fe_get_hop_size(state.raw.as_ptr()) };",
+        "let result = unsafe { fe_process(self.raw.as_ptr(), input.as_ptr(), output.as_mut_ptr()) };",
+        "unsafe { fe_reset(self.raw.as_ptr()) };",
+        "unsafe { fe_destroy(self.raw.as_ptr()) };"
+      ]
+    }
+  }
+}

@@ -17,6 +17,10 @@ env:
   CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -eo pipefail {0}
+
 jobs:
   hardening:
     name: Fuzz regressions, Miri, and sanitizer
@@ -69,13 +73,15 @@ jobs:
             --component clippy,rustfmt --no-self-update \
               2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
 
-      - name: Install GPUI build requirements
+      - name: Install complete native build requirements
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes \
+            gcc pkg-config libclang-dev \
             libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
             libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
-            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev
+            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libpipewire-0.3-dev libspa-0.2-dev
 
       - name: Restore Cargo sources
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -192,19 +198,16 @@ jobs:
           RUSTUP_TOOLCHAIN: 1.97.0
         run: cargo-deny --locked check 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/cargo-deny.log"
 
-      - name: Audit the locked dependency graph
-        run: cargo-audit audit --deny warnings --file Cargo.lock 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/cargo-audit.log"
+      - name: Audit locked dependencies for vulnerabilities
+        # cargo-deny above owns the explicit yanked and unmaintained-package
+        # policy. cargo-audit remains an independent vulnerability scan of the
+        # complete lockfile while still reporting informational warnings.
+        run: cargo-audit audit --file Cargo.lock 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/cargo-audit.log"
 
-      - name: Enforce the empty unsafe allowlist
+      - name: Enforce the audited unsafe allowlist
         run: |
-          {
-            unsafe_pattern='(^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|impl|trait|extern|\()'
-            if grep --extended-regexp --recursive --line-number \
-              --include='*.rs' "$unsafe_pattern" crates; then
-              echo "unsafe Rust requires an explicit SECURITY.md allowlist entry" >&2
-              exit 1
-            fi
-          } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/unsafe-policy.log"
+          python3 .github/scripts/verify_unsafe_policy.py --self-test \
+            2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/unsafe-policy.log"
 
       - name: Upload failure evidence
         if: ${{ failure() }}
@@ -226,13 +229,15 @@ jobs:
           rustup toolchain install 1.92.0 --profile minimal --no-self-update \
               2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
 
-      - name: Install GPUI build requirements
+      - name: Install complete native build requirements
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes \
+            gcc pkg-config libclang-dev \
             libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
             libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
-            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev
+            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libpipewire-0.3-dev libspa-0.2-dev
 
       - name: Restore Cargo sources
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -267,13 +272,15 @@ jobs:
           rustup toolchain install 1.97.0 --profile minimal --no-self-update \
               2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/toolchain.log"
 
-      - name: Install GPUI build requirements
+      - name: Install complete native build requirements
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends --yes \
-            dbus-x11 libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
+            gcc pkg-config libclang-dev dbus-x11 \
+            libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
             libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
-            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev xauth xvfb
+            libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libpipewire-0.3-dev libspa-0.2-dev xauth xvfb
 
       - name: Restore Cargo sources
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -302,9 +309,9 @@ jobs:
       - name: Smoke-test binary interfaces
         run: |
           {
-            test "$(target/release/noired --version)" = "noired 1.1.10"
-            test "$(target/release/noire --version)" = "noire 1.1.10"
-            test "$(target/release/noirectl --version)" = "noirectl 1.1.10"
+            version="$(awk -F '"' '/^version = "/ { print $2; exit }' Cargo.toml)"
+            test -n "$version"
+            packaging/validate-binaries.sh "$version" x86_64 "$PWD/target/release"
             target/release/noired --help >/dev/null
             target/release/noire --help >/dev/null
             target/release/noirectl --help >/dev/null

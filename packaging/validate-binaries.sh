@@ -12,7 +12,7 @@ architecture=$2
 binary_dir=$3
 
 [ "$architecture" = x86_64 ] || {
-    echo "Noire 1.0 package binaries must target x86_64" >&2
+    echo "Noire package binaries must target x86_64" >&2
     exit 2
 }
 

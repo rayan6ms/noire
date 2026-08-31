@@ -54,7 +54,11 @@ pub(crate) fn refresh_if_enabled() -> io::Result<()> {
     let Some(command) = launch_command() else {
         return Ok(());
     };
-    let contents = match fs::read_to_string(&path) {
+    refresh_managed(&path, &command)
+}
+
+fn refresh_managed(path: &Path, command: &[String]) -> io::Result<()> {
+    let contents = match fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error),
@@ -62,7 +66,7 @@ pub(crate) fn refresh_if_enabled() -> io::Result<()> {
     if !contents.lines().any(|line| line == MANAGED_MARKER) {
         return Ok(());
     }
-    write_managed(&path, &command)
+    write_managed(path, command)
 }
 
 fn autostart_path() -> Option<PathBuf> {
@@ -259,13 +263,34 @@ mod tests {
         )?;
         assert!(fs::read_to_string(&path)?.contains("/old/Noire.AppImage"));
 
-        write_managed(
+        refresh_managed(
             &path,
             &["/new/Noire.AppImage".to_owned(), "--minimized".to_owned()],
         )?;
         let contents = fs::read_to_string(&path)?;
         assert!(contents.contains("/new/Noire.AppImage"));
         assert!(!contents.contains("/old/Noire.AppImage"));
+
+        let foreign = "[Desktop Entry]\nName=Foreign\n";
+        fs::write(&path, foreign)?;
+        refresh_managed(
+            &path,
+            &[
+                "/ignored/Noire.AppImage".to_owned(),
+                "--minimized".to_owned(),
+            ],
+        )?;
+        assert_eq!(fs::read_to_string(&path)?, foreign);
+
+        fs::remove_file(&path)?;
+        refresh_managed(
+            &path,
+            &[
+                "/ignored/Noire.AppImage".to_owned(),
+                "--minimized".to_owned(),
+            ],
+        )?;
+        assert!(!path.exists());
         fs::remove_dir_all(root)?;
         Ok(())
     }

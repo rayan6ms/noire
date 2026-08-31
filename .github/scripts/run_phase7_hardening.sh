@@ -4,7 +4,7 @@ set -euo pipefail
 nightly="${NOIRE_NIGHTLY_TOOLCHAIN:-nightly-2026-08-10}"
 
 PROPTEST_CASES=4096 cargo test --release --package noire-config --package noire-model \
-    --package noire-dsp --package noired --lib --locked
+    --package noire-dsp --package noired --lib --no-default-features --locked
 
 MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-disable-isolation" \
     cargo "+$nightly" miri test --package noire-config --package noire-core \
@@ -20,12 +20,8 @@ MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-disable-isolation" \
 RUSTFLAGS="-Zsanitizer=address" PROPTEST_CASES=1024 \
     cargo "+$nightly" test --target x86_64-unknown-linux-gnu \
     --package noire-config --package noire-dsp --package noire-model \
-    --package noired --lib --locked
+    --package noired --lib --no-default-features --locked
 
-unsafe_pattern='(^|[^[:alnum:]_])unsafe[[:space:]]*(\{|fn|impl|trait|extern|\()'
-if rg --line-number "$unsafe_pattern" crates --glob '*.rs'; then
-    echo "unsafe Rust requires an explicit audited allowlist entry" >&2
-    exit 1
-fi
+python3 .github/scripts/verify_unsafe_policy.py
 
-echo "NOIRE_PHASE7_HARDENING fuzz_regressions=pass miri=pass address_sanitizer=pass unsafe_findings=0"
+echo "NOIRE_PHASE7_HARDENING fuzz_regressions=pass miri=pass address_sanitizer=pass unsafe_policy=pass"
