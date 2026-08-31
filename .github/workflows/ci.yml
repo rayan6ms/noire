@@ -280,7 +280,7 @@ jobs:
             libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
             libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
             libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            libpipewire-0.3-dev libspa-0.2-dev xauth xvfb
+            libpipewire-0.3-dev libspa-0.2-dev mesa-vulkan-drivers xauth xvfb
 
       - name: Restore Cargo sources
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -393,7 +393,7 @@ jobs:
             mkdir -p "$headless_source"
             git archive --format=tar HEAD -- \
               Cargo.toml Cargo.lock rust-toolchain.toml crates \
-              data \
+              data vendor \
               .github/scripts/run_pipewire_session.sh \
               .github/scripts/run_phase6_session.sh \
               .github/scripts/run_phase7_session.sh \
@@ -457,7 +457,7 @@ jobs:
               libegl1-mesa-dev libfontconfig-dev libvulkan-dev libwayland-dev \
               libx11-xcb-dev libxcb1-dev libxcb-render0-dev libxcb-shape0-dev \
               libxcb-xfixes0-dev libxkbcommon-dev libxkbcommon-x11-dev \
-              libpipewire-0.3-dev libspa-0.2-dev
+              libpipewire-0.3-dev libspa-0.2-dev mesa-vulkan-drivers
             pkg-config --modversion libpipewire-0.3
             pkg-config --modversion libspa-0.2
           } 2>&1 | tee "$RUNNER_TEMP/noire-ci-logs/native-packages.log"
