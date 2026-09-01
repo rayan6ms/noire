@@ -1204,7 +1204,7 @@ impl NoireView {
                     .child(toggle_row(
                         "start-with-noise-reduction",
                         "Start with noise reduction enabled",
-                        "Apply noise reduction automatically when the background service starts.",
+                        "Apply noise reduction automatically when Noire starts.",
                         self.start_with_noise_reduction,
                         controls_enabled,
                         p,
@@ -1498,8 +1498,6 @@ impl Render for NoireView {
             .min_h_0()
             .overflow_hidden()
             .rounded(px(13.0))
-            .border_1()
-            .border_color(rgb(p.border_soft))
             .text_color(rgb(p.text))
             .child(
                 img(if self.dark_theme() {
@@ -1525,6 +1523,20 @@ impl Render for NoireView {
                     })
                     .when_some(self.toast_view(cx), gpui::ParentElement::child),
             )
+            .child(
+                // Keep the frame wholly inside the transparent client-side
+                // window. A border on the full-size root can paint on the
+                // outer edge and be clipped or appear wider than the surface.
+                div()
+                    .absolute()
+                    .top(px(1.0))
+                    .right(px(1.0))
+                    .bottom(px(1.0))
+                    .left(px(1.0))
+                    .rounded(px(12.0))
+                    .border_1()
+                    .border_color(rgb(p.border_soft)),
+            )
     }
 }
 
@@ -1539,6 +1551,10 @@ pub(crate) fn run(start_minimized: bool) {
     let hidden = should_start_hidden(start_minimized, preferences.start_minimized, tray_available);
     let (tray_controller, initialization) = client::TrayController::start(tray.clone());
     let _initialized = initialization.recv_timeout(Duration::from_secs(3));
+    // Reannounce the authoritative startup artwork after the controller
+    // handshake. Some tray hosts cache the pixmap they read during item
+    // registration and can otherwise miss a near-simultaneous NewIcon signal.
+    tray.reannounce_icon();
     let close_to_tray = Arc::new(AtomicBool::new(preferences.close_to_tray && tray_available));
     let application_tray = tray.clone();
     let application_controller = tray_controller.clone();

@@ -27,6 +27,7 @@ pub(crate) enum TrayCommand {
 struct NoireTray {
     active: bool,
     busy: bool,
+    icon_epoch: bool,
     commands: Sender<TrayCommand>,
     host_available: Arc<AtomicBool>,
 }
@@ -54,7 +55,7 @@ impl ksni::Tray for NoireTray {
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         [16, 22, 24, 32, 48, 64]
             .into_iter()
-            .map(|size| tray_icon(size, self.active))
+            .map(|size| tray_icon(size, self.active, self.icon_epoch))
             .collect()
     }
 
@@ -115,7 +116,7 @@ impl ksni::Tray for NoireTray {
     }
 }
 
-fn tray_icon(requested_size: i32, active: bool) -> ksni::Icon {
+fn tray_icon(requested_size: i32, active: bool, icon_epoch: bool) -> ksni::Icon {
     const SAMPLES: u16 = 4;
     let dimension = u16::try_from(requested_size).unwrap_or(32);
     let pixel_count = usize::from(dimension).pow(2);
@@ -150,6 +151,13 @@ fn tray_icon(requested_size: i32, active: bool) -> ksni::Icon {
             };
             data.extend_from_slice(&[alpha, red, green, blue]);
         }
+    }
+    // A fully transparent corner byte provides a visually inert cache epoch.
+    // Toggling it lets us re-emit NewIcon after the startup handshake even
+    // when the semantic active state has not changed.
+    debug_assert_eq!(data.first(), Some(&0));
+    if icon_epoch && let Some(blue) = data.get_mut(3) {
+        *blue ^= 1;
     }
     ksni::Icon {
         width: i32::from(dimension),
@@ -289,6 +297,7 @@ impl TrayRuntime {
         let tray = NoireTray {
             active: false,
             busy: false,
+            icon_epoch: false,
             commands: sender,
             host_available: Arc::clone(&host_available),
         };
@@ -354,6 +363,15 @@ impl TrayRuntime {
         }
     }
 
+    /// Forces hosts to fetch the current pixmap after startup registration races.
+    pub fn reannounce_icon(&self) {
+        if let Some(handle) = &self.inner.handle {
+            let _ignored = handle.update(|tray| {
+                tray.icon_epoch = !tray.icon_epoch;
+            });
+        }
+    }
+
     /// Prevents repeated tray mutations while one authoritative change is pending.
     pub fn set_busy(&self, busy: bool) {
         self.inner.busy.store(busy, Ordering::Release);
@@ -383,7 +401,7 @@ mod tests {
 
     #[test]
     fn embedded_tray_icon_has_valid_argb_pixels() {
-        let icon = tray_icon(32, false);
+        let icon = tray_icon(32, false, false);
 
         assert_eq!((icon.width, icon.height), (32, 32));
         assert_eq!(icon.data.len(), 32 * 32 * 4);
@@ -392,16 +410,34 @@ mod tests {
 
     #[test]
     fn active_tray_icon_has_a_distinct_accent() {
-        assert_ne!(tray_icon(32, false).data, tray_icon(32, true).data);
+        assert_ne!(
+            tray_icon(32, false, false).data,
+            tray_icon(32, true, false).data
+        );
     }
 
     #[test]
     fn embedded_tray_icon_edges_are_antialiased() {
         assert!(
-            tray_icon(22, false)
+            tray_icon(22, false, false)
                 .data
                 .chunks_exact(4)
                 .any(|pixel| (1..255).contains(&pixel[0]))
+        );
+    }
+
+    #[test]
+    fn icon_reannouncement_changes_only_a_transparent_cache_byte() {
+        let first = tray_icon(32, true, false);
+        let refreshed = tray_icon(32, true, true);
+
+        assert_ne!(first.data, refreshed.data);
+        assert!(
+            first
+                .data
+                .chunks_exact(4)
+                .zip(refreshed.data.chunks_exact(4))
+                .all(|(before, after)| before[0] == 0 || before == after)
         );
     }
 
@@ -412,6 +448,7 @@ mod tests {
         let tray = NoireTray {
             active: false,
             busy: false,
+            icon_epoch: false,
             commands,
             host_available: Arc::clone(&host_available),
         };

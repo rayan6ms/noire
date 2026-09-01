@@ -107,12 +107,24 @@ enum TrayControlCommand {
 }
 
 enum PendingTrayAction {
-    Startup(SyncSender<bool>),
+    Startup {
+        reply: SyncSender<bool>,
+        activation_requested: bool,
+    },
     Toggle,
     Stop {
         reply: SyncSender<bool>,
         attempts: u8,
     },
+}
+
+impl PendingTrayAction {
+    const fn startup(reply: SyncSender<bool>) -> Self {
+        Self::Startup {
+            reply,
+            activation_requested: false,
+        }
+    }
 }
 
 /// Keeps tray state synchronized even while no GPUI window exists.
@@ -214,7 +226,7 @@ fn tray_control_loop(
         let _ignored = initialized.send(false);
         return;
     }
-    let mut pending = Some(PendingTrayAction::Startup(initialized));
+    let mut pending = Some(PendingTrayAction::startup(initialized));
     let mut queued_stop = None;
 
     loop {
@@ -258,17 +270,20 @@ fn tray_control_loop(
         match channels.responses.recv_timeout(Duration::from_millis(33)) {
             Ok(Response::State {
                 snapshot,
+                start_with_noise_reduction,
                 request_complete,
                 ..
             }) => {
-                tray.set_active(snapshot.active);
-                let initialization_completed =
-                    matches!(pending.as_ref(), Some(PendingTrayAction::Startup(_)));
-                if request_complete || initialization_completed {
-                    let action = pending.take();
-                    if finish_tray_action(&channels, tray, busy, action, true, snapshot.active) {
-                        return;
-                    }
+                if handle_tray_state(
+                    &channels,
+                    tray,
+                    busy,
+                    &mut pending,
+                    snapshot.active,
+                    start_with_noise_reduction,
+                    request_complete,
+                ) {
+                    return;
                 }
             }
             Ok(Response::Rejected {
@@ -288,7 +303,7 @@ fn tray_control_loop(
                     continue;
                 }
                 if request_complete
-                    && !matches!(pending.as_ref(), Some(PendingTrayAction::Startup(_)))
+                    && !matches!(pending.as_ref(), Some(PendingTrayAction::Startup { .. }))
                 {
                     if (!authoritative || active) && retry_pending_stop(&channels, &mut pending) {
                         continue;
@@ -306,6 +321,76 @@ fn tray_control_loop(
                 return;
             }
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StartupSyncAction {
+    Activate,
+    Waiting,
+    Ready,
+    NotStarting,
+}
+
+const fn startup_sync_action(
+    pending: Option<&PendingTrayAction>,
+    active: bool,
+    start_with_noise_reduction: bool,
+) -> StartupSyncAction {
+    match pending {
+        Some(PendingTrayAction::Startup {
+            activation_requested: false,
+            ..
+        }) if start_with_noise_reduction && !active => StartupSyncAction::Activate,
+        Some(PendingTrayAction::Startup {
+            activation_requested: true,
+            ..
+        }) if !active => StartupSyncAction::Waiting,
+        Some(PendingTrayAction::Startup { .. }) => StartupSyncAction::Ready,
+        Some(PendingTrayAction::Toggle | PendingTrayAction::Stop { .. }) | None => {
+            StartupSyncAction::NotStarting
+        }
+    }
+}
+
+fn handle_tray_state(
+    channels: &WorkerChannels,
+    tray: &TrayRuntime,
+    busy: &AtomicBool,
+    pending: &mut Option<PendingTrayAction>,
+    active: bool,
+    start_with_noise_reduction: bool,
+    request_complete: bool,
+) -> bool {
+    tray.set_active(active);
+    match startup_sync_action(pending.as_ref(), active, start_with_noise_reduction) {
+        StartupSyncAction::Activate => {
+            if let Some(PendingTrayAction::Startup {
+                activation_requested,
+                ..
+            }) = pending.as_mut()
+            {
+                *activation_requested = true;
+            }
+            if channels
+                .requests
+                .blocking_send(Request::SetActive(true))
+                .is_err()
+            {
+                let action = pending.take();
+                return finish_tray_action(channels, tray, busy, action, false, active);
+            }
+            false
+        }
+        StartupSyncAction::Ready => {
+            let action = pending.take();
+            finish_tray_action(channels, tray, busy, action, true, active)
+        }
+        StartupSyncAction::NotStarting if request_complete => {
+            let action = pending.take();
+            finish_tray_action(channels, tray, busy, action, true, active)
+        }
+        StartupSyncAction::Waiting | StartupSyncAction::NotStarting => false,
     }
 }
 
@@ -336,7 +421,7 @@ fn complete_pending_startup(
     succeeded: bool,
     active: bool,
 ) -> bool {
-    if !request_complete || !matches!(pending.as_ref(), Some(PendingTrayAction::Startup(_))) {
+    if !request_complete || !matches!(pending.as_ref(), Some(PendingTrayAction::Startup { .. })) {
         return false;
     }
     let action = pending.take();
@@ -365,7 +450,7 @@ fn fail_pending_tray_actions(
     queued_stop: Option<SyncSender<bool>>,
 ) {
     match pending {
-        Some(PendingTrayAction::Startup(reply) | PendingTrayAction::Stop { reply, .. }) => {
+        Some(PendingTrayAction::Startup { reply, .. } | PendingTrayAction::Stop { reply, .. }) => {
             let _ignored = reply.send(false);
         }
         Some(PendingTrayAction::Toggle) | None => {}
@@ -377,7 +462,7 @@ fn fail_pending_tray_actions(
 
 fn complete_tray_action(action: Option<PendingTrayAction>, succeeded: bool, active: bool) -> bool {
     match action {
-        Some(PendingTrayAction::Startup(reply)) => {
+        Some(PendingTrayAction::Startup { reply, .. }) => {
             let _ignored = reply.send(succeeded);
             false
         }
@@ -846,7 +931,8 @@ mod tests {
 
     use super::{
         INITIAL_RECONNECT_BACKOFF, MAX_RECONNECT_BACKOFF, PendingTrayAction, Request, Response,
-        complete_pending_startup, complete_tray_action, mutation_error_copy, next_backoff, spawn,
+        StartupSyncAction, complete_pending_startup, complete_tray_action, mutation_error_copy,
+        next_backoff, spawn, startup_sync_action,
     };
 
     #[derive(Default)]
@@ -1043,12 +1129,54 @@ mod tests {
     #[test]
     fn rejected_startup_clears_pending_state_and_reports_initialization() {
         let (sender, receiver) = mpsc::sync_channel(1);
-        let mut pending = Some(PendingTrayAction::Startup(sender));
+        let mut pending = Some(PendingTrayAction::startup(sender));
         assert!(!complete_pending_startup(&mut pending, false, false, false));
         assert!(pending.is_some());
         assert!(complete_pending_startup(&mut pending, true, false, false));
         assert!(pending.is_none());
         assert!(!receiver.recv().unwrap_or(true));
+    }
+
+    #[test]
+    fn tray_startup_applies_the_explicit_noise_reduction_preference() {
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        let mut pending = PendingTrayAction::startup(sender);
+
+        assert_eq!(
+            startup_sync_action(Some(&pending), false, true),
+            StartupSyncAction::Activate
+        );
+        let PendingTrayAction::Startup {
+            activation_requested,
+            ..
+        } = &mut pending
+        else {
+            unreachable!();
+        };
+        *activation_requested = true;
+        assert_eq!(
+            startup_sync_action(Some(&pending), false, true),
+            StartupSyncAction::Waiting
+        );
+        assert_eq!(
+            startup_sync_action(Some(&pending), true, true),
+            StartupSyncAction::Ready
+        );
+    }
+
+    #[test]
+    fn tray_startup_preserves_an_explicitly_off_default() {
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        let pending = PendingTrayAction::startup(sender);
+
+        assert_eq!(
+            startup_sync_action(Some(&pending), false, false),
+            StartupSyncAction::Ready
+        );
+        assert_eq!(
+            startup_sync_action(None, false, true),
+            StartupSyncAction::NotStarting
+        );
     }
 
     #[test]
