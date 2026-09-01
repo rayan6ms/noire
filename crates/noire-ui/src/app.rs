@@ -65,7 +65,7 @@ impl Palette {
             raised: 0x131313,
             hover: 0x171717,
             border: 0x1e1e1e,
-            border_soft: 0x1e1e1e,
+            border_soft: crate::assets::WINDOW_DARK_FRAME_COLOR,
             text: 0xe8e8e8,
             muted: 0xa0a0a0,
             faint: 0x707070,
@@ -83,7 +83,7 @@ impl Palette {
             raised: 0xffffff,
             hover: 0xeeeeeb,
             border: 0xd4d4d0,
-            border_soft: 0xe3e3df,
+            border_soft: crate::assets::WINDOW_LIGHT_FRAME_COLOR,
             text: 0x202020,
             muted: 0x60605c,
             faint: 0x85857f,
@@ -1522,20 +1522,6 @@ impl Render for NoireView {
                         Page::Settings => self.settings_view(cx),
                     })
                     .when_some(self.toast_view(cx), gpui::ParentElement::child),
-            )
-            .child(
-                // Keep the frame wholly inside the transparent client-side
-                // window. A border on the full-size root can paint on the
-                // outer edge and be clipped or appear wider than the surface.
-                div()
-                    .absolute()
-                    .top(px(1.0))
-                    .right(px(1.0))
-                    .bottom(px(1.0))
-                    .left(px(1.0))
-                    .rounded(px(12.0))
-                    .border_1()
-                    .border_color(rgb(p.border_soft)),
             )
     }
 }

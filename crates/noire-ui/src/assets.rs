@@ -7,6 +7,9 @@ use gpui::{AssetSource, Result, SharedString, WindowIcon};
 /// Keeps icons available to native packages, Flatpak, and an unintegrated `AppImage`.
 pub(crate) struct Assets;
 
+pub(crate) const WINDOW_DARK_FRAME_COLOR: u32 = 0x001e_1e1e;
+pub(crate) const WINDOW_LIGHT_FRAME_COLOR: u32 = 0x00e3_e3df;
+
 /// Rasterized application icon advertised directly to desktop window managers.
 pub(crate) fn window_icon() -> Option<WindowIcon> {
     WindowIcon::from_svg(include_bytes!("../../../icons/noire.svg"), 64).ok()
@@ -81,6 +84,29 @@ const CHEVRON: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24
 const RETRY: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5v6h-6"/><path d="M19.1 15a8 8 0 1 1 .9-4"/></svg>"#;
 const SPINNER: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 0 0-9-9"/><path opacity=".25" d="M12 3a9 9 0 1 0 9 9"/></svg>"#;
 const WINDOW_DARK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 520" preserveAspectRatio="none"><rect x=".5" y=".5" width="679" height="519" rx="12.5" fill="#0a0a0a" stroke="#1e1e1e"/></svg>"##;
-const WINDOW_LIGHT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 520" preserveAspectRatio="none"><rect x=".5" y=".5" width="679" height="519" rx="12.5" fill="#f1f1ef" stroke="#d4d4d0"/></svg>"##;
+const WINDOW_LIGHT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 520" preserveAspectRatio="none"><rect x=".5" y=".5" width="679" height="519" rx="12.5" fill="#f1f1ef" stroke="#e3e3df"/></svg>"##;
 const NEW_MOON_EMOJI: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><defs><radialGradient id="n" cx="35%" cy="28%" r="72%"><stop offset="0" stop-color="#454545"/><stop offset=".58" stop-color="#292929"/><stop offset="1" stop-color="#101010"/></radialGradient></defs><circle cx="18" cy="18" r="15.5" fill="url(#n)" stroke="#666"/><circle cx="12" cy="12" r="3.2" fill="#202020" opacity=".7"/><circle cx="23" cy="20" r="4.4" fill="#171717" opacity=".58"/><circle cx="15" cy="26" r="2.3" fill="#363636" opacity=".55"/></svg>"##;
 const FULL_MOON_EMOJI: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><defs><radialGradient id="f" cx="35%" cy="28%" r="72%"><stop offset="0" stop-color="#fff9cf"/><stop offset=".62" stop-color="#f1df9a"/><stop offset="1" stop-color="#cfb96e"/></radialGradient></defs><circle cx="18" cy="18" r="15.5" fill="url(#f)" stroke="#d5c27f"/><circle cx="12" cy="11" r="3.3" fill="#cfb96e" opacity=".62"/><path d="M20 5.4a7 7 0 0 1 6.2 4.3c-3.1.9-5.7.2-7.8-2.1z" fill="#e1cc80" opacity=".65"/><circle cx="24" cy="21" r="4.2" fill="#c7ae60" opacity=".52"/><circle cx="13" cy="26" r="2.4" fill="#d2bb6d" opacity=".58"/></svg>"##;
+
+#[cfg(test)]
+mod tests {
+    use super::{WINDOW_DARK, WINDOW_DARK_FRAME_COLOR, WINDOW_LIGHT, WINDOW_LIGHT_FRAME_COLOR};
+
+    #[test]
+    fn window_backdrops_use_the_shared_frame_colors() {
+        for (backdrop, color) in [
+            (WINDOW_DARK, WINDOW_DARK_FRAME_COLOR),
+            (WINDOW_LIGHT, WINDOW_LIGHT_FRAME_COLOR),
+        ] {
+            assert!(backdrop.contains(&format!("stroke=\"#{color:06x}\"")));
+        }
+    }
+
+    #[test]
+    fn window_backdrop_frame_is_inside_its_viewbox() {
+        for backdrop in [WINDOW_DARK, WINDOW_LIGHT] {
+            assert!(backdrop.contains("<rect x=\".5\" y=\".5\""));
+            assert!(backdrop.contains("width=\"679\" height=\"519\""));
+        }
+    }
+}
