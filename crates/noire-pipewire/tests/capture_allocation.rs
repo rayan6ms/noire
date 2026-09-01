@@ -3,8 +3,10 @@
 use std::alloc::System;
 
 use noire_dsp::MODEL_FRAME_SAMPLES;
+use noire_model::DenoiserFactory;
+#[cfg(not(debug_assertions))]
 use noire_model::{
-    Denoiser, DenoiserFactory, FrameStats, ModelDescriptor, ModelDescriptorSpec, ProcessError,
+    Denoiser, FrameStats, ModelDescriptor, ModelDescriptorSpec, ProcessError,
     finalize_process_output, prepare_process_frame,
 };
 use noire_model_fastenhancer::FastEnhancerFactory;
@@ -17,12 +19,15 @@ use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 #[global_allocator]
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 const BYPASS_QUANTUM: usize = 128;
+#[cfg(not(debug_assertions))]
 const PHASE5_CALLBACK_INVOCATIONS: usize = 10_000_000;
 
+#[cfg(not(debug_assertions))]
 struct AllocationModel {
     descriptor: ModelDescriptor,
 }
 
+#[cfg(not(debug_assertions))]
 impl AllocationModel {
     fn new() -> Result<Self, noire_model::DescriptorError> {
         Ok(Self {
@@ -42,6 +47,7 @@ impl AllocationModel {
     }
 }
 
+#[cfg(not(debug_assertions))]
 impl Denoiser for AllocationModel {
     fn descriptor(&self) -> &ModelDescriptor {
         &self.descriptor
@@ -157,6 +163,7 @@ fn warmed_capture_and_bypass_callbacks_have_zero_allocator_calls()
 }
 
 #[test]
+#[cfg(not(debug_assertions))]
 #[ignore = "10 million callback allocation acceptance; run explicitly in release mode"]
 fn ten_million_live_callback_invocations_have_zero_allocator_calls()
 -> Result<(), Box<dyn std::error::Error>> {

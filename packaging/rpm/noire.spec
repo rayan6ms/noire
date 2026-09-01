@@ -75,6 +75,7 @@ cp -a %{noire_ui_stage}/. %{buildroot}/
 %changelog
 * Tue Sep 01 2026 rayan6ms - 1.1.14-1
 - Remove the duplicate window frame and unify theme-aware separator colors
+- Stabilize zero-allocation callback validation across debug and release profiles
 
 * Tue Sep 01 2026 rayan6ms - 1.1.13-1
 - Keep the window frame inside its surface and synchronize startup tray state

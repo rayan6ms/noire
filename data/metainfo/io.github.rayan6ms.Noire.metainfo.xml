@@ -37,6 +37,7 @@
           <li>Removes the redundant inset frame so the window has one subtle perimeter stroke.</li>
           <li>Uses the title-bar separator color for the frame in both light and dark themes.</li>
           <li>Adds regression coverage for frame color ownership and safe viewbox positioning.</li>
+          <li>Isolates debug callback-allocation checks from release-only test-harness bookkeeping.</li>
         </ul>
       </description>
     </release>
