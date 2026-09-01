@@ -17,7 +17,7 @@ members = [
 resolver = "3"
 
 [workspace.package]
-version = "1.1.13"
+version = "1.1.14"
 edition = "2024"
 rust-version = "1.92"
 license = "GPL-3.0-or-later"
@@ -36,16 +36,16 @@ hound = "=3.5.1"
 ksni = { version = "=0.3.5", default-features = false, features = ["blocking", "tokio"] }
 libspa = "=0.10.0"
 nnnoiseless = { version = "=0.5.2", default-features = false }
-noire-config = { version = "=1.1.13", path = "crates/noire-config" }
-noire-core = { version = "=1.1.13", path = "crates/noire-core" }
-noire-dsp = { version = "=1.1.13", path = "crates/noire-dsp" }
-noire-ipc = { version = "=1.1.13", path = "crates/noire-ipc" }
-noire-model = { version = "=1.1.13", path = "crates/noire-model" }
-noire-model-fastenhancer = { version = "=1.1.13", path = "crates/noire-model-fastenhancer" }
-noire-model-fastenhancer-sys = { version = "=1.1.13", path = "crates/noire-model-fastenhancer-sys" }
-noire-model-rnnoise = { version = "=1.1.13", path = "crates/noire-model-rnnoise" }
-noire-pipewire = { version = "=1.1.13", path = "crates/noire-pipewire" }
-noired = { version = "=1.1.13", path = "crates/noired", default-features = false }
+noire-config = { version = "=1.1.14", path = "crates/noire-config" }
+noire-core = { version = "=1.1.14", path = "crates/noire-core" }
+noire-dsp = { version = "=1.1.14", path = "crates/noire-dsp" }
+noire-ipc = { version = "=1.1.14", path = "crates/noire-ipc" }
+noire-model = { version = "=1.1.14", path = "crates/noire-model" }
+noire-model-fastenhancer = { version = "=1.1.14", path = "crates/noire-model-fastenhancer" }
+noire-model-fastenhancer-sys = { version = "=1.1.14", path = "crates/noire-model-fastenhancer-sys" }
+noire-model-rnnoise = { version = "=1.1.14", path = "crates/noire-model-rnnoise" }
+noire-pipewire = { version = "=1.1.14", path = "crates/noire-pipewire" }
+noired = { version = "=1.1.14", path = "crates/noired", default-features = false }
 pipewire = "=0.10.0"
 proptest = "=1.11.0"
 rtrb = "=0.3.5"
