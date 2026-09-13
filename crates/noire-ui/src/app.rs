@@ -1,5 +1,9 @@
 //! Custom adaptive GPUI desktop shell for Noire.
 
+mod strength_slider;
+
+use strength_slider::{StrengthChanged, StrengthSlider};
+
 use std::{
     sync::{
         Arc,
@@ -347,6 +351,8 @@ struct NoireView {
     runtime: Entity<AppRuntime>,
     tray_controller: client::TrayController,
     settings_scroll: ScrollHandle,
+    strength_slider: Entity<StrengthSlider>,
+    _strength_subscription: Subscription,
     diagnostics: Option<String>,
     toast: Option<Toast>,
     toast_expires: Option<Instant>,
@@ -377,6 +383,12 @@ impl NoireView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let strength_slider = cx.new(StrengthSlider::new);
+        let strength_subscription =
+            cx.subscribe(&strength_slider, |view, _, StrengthChanged(value), cx| {
+                view.send(Request::SetStrength(*value), true);
+                cx.notify();
+            });
         let appearance_subscription = cx.observe_window_appearance(window, |view, window, cx| {
             view.system_dark_theme = appearance_is_dark(window.appearance());
             cx.notify();
@@ -407,6 +419,8 @@ impl NoireView {
             runtime,
             tray_controller,
             settings_scroll: ScrollHandle::new(),
+            strength_slider,
+            _strength_subscription: strength_subscription,
             diagnostics: None,
             toast: None,
             toast_expires: None,
@@ -707,7 +721,13 @@ impl NoireView {
                     .gap_2()
                     .text_xs()
                     .text_color(rgb(p.faint))
-                    .child(img("icons/noire-icon.svg").size(px(24.0)))
+                    .child(
+                        svg()
+                            .path("icons/noire-symbolic.svg")
+                            .size(px(24.0))
+                            .flex_shrink_0()
+                            .text_color(rgb(p.muted)),
+                    )
                     .child(
                         div()
                             .text_sm()
@@ -1030,6 +1050,10 @@ impl NoireView {
         let controls_enabled = self.state.presentation().controls_enabled;
         let selected_input = snapshot.map_or("", |snapshot| snapshot.input_stable_id.as_str());
         let strength = snapshot.map_or(0.55, |snapshot| snapshot.strength);
+        self.strength_slider.update(cx, |slider, cx| {
+            slider.sync(strength, controls_enabled, p);
+            cx.notify();
+        });
         let latency = snapshot.map_or("low", |snapshot| snapshot.latency_profile.as_str());
         let fail_mode = snapshot.map_or("closed", |snapshot| snapshot.fail_mode.as_str());
         let suppression = snapshot.is_none_or(|snapshot| snapshot.suppression_enabled);
@@ -1103,7 +1127,7 @@ impl NoireView {
                             cx.notify();
                         }),
                     ))
-                    .child(strength_row(strength, controls_enabled, p, cx))
+                    .child(self.strength_slider.clone())
                     .child(choice_row(
                         "Latency",
                         "Low minimizes delay; Balanced tolerates a busier system.",
@@ -1534,7 +1558,7 @@ pub(crate) fn run(start_minimized: bool) {
     let preferences = DesktopPreferences::load();
     let tray = TrayRuntime::start();
     let tray_available = tray.available();
-    let hidden = should_start_hidden(start_minimized, preferences.start_minimized, tray_available);
+    let hidden = should_start_hidden(start_minimized, preferences.start_minimized);
     let (tray_controller, initialization) = client::TrayController::start(tray.clone());
     let _initialized = initialization.recv_timeout(Duration::from_secs(3));
     // Reannounce the authoritative startup artwork after the controller
@@ -1577,12 +1601,11 @@ pub(crate) fn run(start_minimized: bool) {
     }
 }
 
-const fn should_start_hidden(
-    command_line_minimized: bool,
-    preference_minimized: bool,
-    tray_available: bool,
-) -> bool {
-    (command_line_minimized || preference_minimized) && tray_available
+const fn should_start_hidden(command_line_minimized: bool, preference_minimized: bool) -> bool {
+    // Tray registration is asynchronous and may lag behind login startup.
+    // Honor the launch intent immediately; TrayHostState opens a fallback
+    // window after the grace period if the host never becomes available.
+    command_line_minimized || preference_minimized
 }
 
 const fn error_resolved(previously_had_error: bool, has_error: bool) -> bool {
@@ -1841,81 +1864,6 @@ fn toggle_row(
                     p.faint
                 }))),
         )
-}
-
-fn strength_row(strength: f64, interactive: bool, p: Palette, cx: &mut Context<NoireView>) -> Div {
-    let has_selected_preset = strength_is_preset(strength);
-    div()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .rounded_lg()
-        .p_3()
-        .child(
-            div()
-                .flex()
-                .justify_between()
-                .child(div().font_weight(FontWeight::MEDIUM).child("Strength"))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(rgb(p.muted))
-                        .child(format!("{:.0}%", strength * 100.0)),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .gap_2()
-                .children(
-                    [0.35, 0.55, 0.75, 1.0]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, value)| {
-                            let selected = (strength - value).abs() < 0.01;
-                            div()
-                                .id(SharedString::from(format!("strength-{index}")))
-                                .flex_1()
-                                .cursor_pointer()
-                                .rounded_lg()
-                                .border_1()
-                                .border_color(rgb(if selected { p.accent } else { p.border }))
-                                .bg(rgb(if selected { p.accent_soft } else { p.raised }))
-                                .py_2()
-                                .text_center()
-                                .text_sm()
-                                .when(interactive, |button| {
-                                    button.hover(move |style| style.bg(rgb(p.hover))).on_click(
-                                        cx.listener(move |view, _, _, cx| {
-                                            view.send(Request::SetStrength(value), true);
-                                            cx.notify();
-                                        }),
-                                    )
-                                })
-                                .child(format!("{:.0}%", value * 100.0))
-                        }),
-                )
-                .when(!has_selected_preset, |row| {
-                    row.child(
-                        div()
-                            .flex_1()
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(rgb(p.accent))
-                            .bg(rgb(p.accent_soft))
-                            .py_2()
-                            .text_center()
-                            .text_sm()
-                            .child("Custom"),
-                    )
-                }),
-        )
-}
-
-fn strength_is_preset(strength: f64) -> bool {
-    [0.35, 0.55, 0.75, 1.0]
-        .into_iter()
-        .any(|preset| (strength - preset).abs() < 0.01)
 }
 
 fn theme_row(selected: ThemePreference, p: Palette, cx: &mut Context<NoireView>) -> Div {
@@ -2180,15 +2128,15 @@ mod tests {
         TrayHostTransition, active_hint_transition, admit_toast,
         clear_tray_unavailable_toast_state, error_resolved, meter_level,
         processing_state_is_healthy, refresh_toast, scrollbar_thumb_geometry, should_start_hidden,
-        strength_is_preset, transition_targets, tray_unavailable_toast,
+        transition_targets, tray_unavailable_toast,
     };
 
     #[test]
-    fn minimized_start_requires_a_tray_and_honors_both_entry_points() {
-        assert!(should_start_hidden(true, false, true));
-        assert!(should_start_hidden(false, true, true));
-        assert!(!should_start_hidden(false, false, true));
-        assert!(!should_start_hidden(true, true, false));
+    fn minimized_start_honors_both_entry_points_before_tray_registration() {
+        assert!(should_start_hidden(true, false));
+        assert!(should_start_hidden(false, true));
+        assert!(!should_start_hidden(false, false));
+        assert!(should_start_hidden(true, true));
     }
 
     #[test]
@@ -2238,12 +2186,6 @@ mod tests {
         assert!((meter_level(0.01) - (1.0 / 3.0)).abs() < 0.001);
         assert!((meter_level(0.1) - (2.0 / 3.0)).abs() < 0.001);
         assert!((meter_level(1.0) - 1.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn externally_configured_strengths_are_identified_as_custom() {
-        assert!(strength_is_preset(0.55));
-        assert!(!strength_is_preset(0.42));
     }
 
     #[test]

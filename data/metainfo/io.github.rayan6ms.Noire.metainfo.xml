@@ -30,6 +30,16 @@
   <url type="homepage">https://github.com/rayan6ms/noire</url>
   <url type="bugtracker">https://github.com/rayan6ms/noire/issues</url>
   <releases>
+    <release version="1.1.15" date="2026-09-13" type="stable">
+      <description>
+        <p>Improves desktop controls and minimized startup.</p>
+        <ul>
+          <li>Renders a crisp microphone symbol at the display scale in the title bar.</li>
+          <li>Replaces suppression strength presets with a 0–100% slider, a live percentage, and mouse and keyboard controls.</li>
+          <li>Honors Start minimized while the desktop tray registers, with a visible fallback if the tray remains unavailable.</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.1.14" date="2026-09-01" type="stable">
       <description>
         <p>Corrects the client-side window frame.</p>

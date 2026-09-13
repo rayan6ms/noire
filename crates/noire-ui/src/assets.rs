@@ -20,6 +20,7 @@ impl AssetSource for Assets {
         let bytes: Option<&'static [u8]> = match path {
             "icons/noire.svg" => Some(include_bytes!("../../../icons/noire.svg")),
             "icons/noire-icon.svg" => Some(include_bytes!("../../../icons/noire-icon.svg")),
+            "icons/noire-symbolic.svg" => Some(include_bytes!("../../../icons/noire-symbolic.svg")),
             "icons/window-dark.svg" => Some(WINDOW_DARK.as_bytes()),
             "icons/window-light.svg" => Some(WINDOW_LIGHT.as_bytes()),
             "icons/new-moon-emoji.svg" => Some(NEW_MOON_EMOJI.as_bytes()),
@@ -48,6 +49,7 @@ impl AssetSource for Assets {
         Ok([
             "noire.svg",
             "noire-icon.svg",
+            "noire-symbolic.svg",
             "window-dark.svg",
             "window-light.svg",
             "new-moon-emoji.svg",
