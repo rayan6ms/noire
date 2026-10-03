@@ -367,7 +367,7 @@ fn update_meter_monitoring(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn service_native(
     connection: &mut Option<PipewireConnection>,
     graph: &mut Option<LiveGraph>,
@@ -382,7 +382,22 @@ fn service_native(
     let now_millis = elapsed_millis(origin);
     if let Some(current) = connection.as_ref() {
         let _ = current.dispatch_once(Duration::ZERO);
-        if current.take_failure().is_some() {
+        if let Some(failure) = current.take_failure() {
+            tracing::error!(
+                event = "pipewire.core-failure",
+                object_id = failure.object_id,
+                result = failure.result,
+                message = %failure.message,
+                "PipeWire reported a fatal core error"
+            );
+            if let Some(active_graph) = graph.as_ref() {
+                log_graph_snapshot(
+                    active_graph,
+                    "audio.graph-teardown",
+                    Some(RecoveryFault::Core),
+                    None,
+                );
+            }
             *graph = None;
             *connection = None;
             mark_degraded(observation, RecoveryFault::Core);
@@ -402,15 +417,27 @@ fn service_native(
         observation.devices = input_descriptors(snapshot);
     }
 
+    let mut graph_invalidated = false;
     if let (Some(active_graph), Some(config)) = (graph.as_ref(), applied) {
-        let graph_fault = active_graph.take_health_issue().map(|issue| match issue {
-            GraphHealthIssue::CaptureStream | GraphHealthIssue::CaptureFormat => {
-                RecoveryFault::CaptureStream
-            }
-            GraphHealthIssue::SourceStream | GraphHealthIssue::SourceFormat => {
-                RecoveryFault::SourceStream
-            }
-        });
+        let graph_diagnostic = active_graph.take_health_diagnostic();
+        let graph_fault = graph_diagnostic
+            .as_ref()
+            .map(|diagnostic| match diagnostic.issue {
+                GraphHealthIssue::CaptureStream | GraphHealthIssue::CaptureFormat => {
+                    RecoveryFault::CaptureStream
+                }
+                GraphHealthIssue::SourceStream | GraphHealthIssue::SourceFormat => {
+                    RecoveryFault::SourceStream
+                }
+            });
+        if let (Some(diagnostic), Some(fault)) = (graph_diagnostic.as_ref(), graph_fault) {
+            log_graph_snapshot(
+                active_graph,
+                "audio.graph-health-fault",
+                Some(fault),
+                diagnostic.detail.as_deref(),
+            );
+        }
         let resolved_fault = graph_fault.or_else(|| {
             registry_snapshot.as_ref().and_then(|snapshot| {
                 resolve_input(snapshot, config).map_or(
@@ -423,16 +450,56 @@ fn service_native(
             })
         });
         if let Some(fault) = resolved_fault {
-            *graph = None;
+            if graph_fault.is_none() {
+                tracing::warn!(
+                    event = "audio.graph-input-fault",
+                    fault = ?fault,
+                    configured_input = ?config.input.mode,
+                    target_input = %active_graph.target_node_name(),
+                    "the active graph no longer matches the resolved input"
+                );
+                log_graph_snapshot(active_graph, "audio.graph-teardown", Some(fault), None);
+            }
+            graph_invalidated = true;
             mark_degraded(observation, fault);
             recovery.fault(fault, now_millis);
-        } else if active_graph.service_demand(now).is_err() {
-            *graph = None;
-            mark_degraded(observation, RecoveryFault::CaptureStream);
-            recovery.fault(RecoveryFault::CaptureStream, now_millis);
-        } else if live_failure_latched(active_graph.telemetry().snapshot().state)
+        } else {
+            match active_graph.service_demand(now) {
+                Ok(service) if service != noire_pipewire::BypassGraphService::Unchanged => {
+                    tracing::debug!(event = "audio.graph-demand", transition = ?service);
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::error!(
+                        event = "audio.graph-demand-failure",
+                        error = %error,
+                        "PipeWire rejected a graph demand transition"
+                    );
+                    log_graph_snapshot(
+                        active_graph,
+                        "audio.graph-teardown",
+                        Some(RecoveryFault::CaptureStream),
+                        Some(error.to_string().as_str()),
+                    );
+                    graph_invalidated = true;
+                    mark_degraded(observation, RecoveryFault::CaptureStream);
+                    recovery.fault(RecoveryFault::CaptureStream, now_millis);
+                }
+            }
+        }
+        if !graph_invalidated
+            && live_failure_latched(active_graph.telemetry().snapshot().state)
             && live_failure_reset_due(*last_live_failure_reset, now)
         {
+            let live = active_graph.telemetry().snapshot();
+            tracing::warn!(
+                event = "audio.live-failure-reset",
+                state = ?live.state,
+                model_errors = live.model_errors,
+                underflows = live.transport.underflows,
+                overflows = live.transport.overflows,
+                "resetting the live capture generation after a latched processing failure"
+            );
             // The live sink latches model and transport faults until its
             // documented deactivated reset runs. Without this poll a single
             // transient transport overflow or model error keeps the processed
@@ -445,6 +512,14 @@ fn service_native(
             *last_live_failure_reset = Some(now);
         }
     }
+    if graph_invalidated {
+        tracing::info!(
+            event = "audio.graph-destroyed",
+            fault = ?recovery.fault_kind(),
+            "discarding the invalid PipeWire audio graph"
+        );
+        *graph = None;
+    }
 
     let Some(config) = applied.filter(|config| config.active || meter_monitoring) else {
         recovery.stop();
@@ -453,24 +528,51 @@ fn service_native(
     if graph.is_some() {
         return;
     }
-    if recovery.poll(now_millis).is_none() {
+    let Some(attempt) = recovery.poll(now_millis) else {
         return;
-    }
-    if let Ok(recovered) = apply_native(
+    };
+    tracing::info!(
+        event = "audio.recovery-attempt",
+        generation = attempt.generation,
+        attempt = attempt.number,
+        fault = ?attempt.fault,
+        "rebuilding the PipeWire audio graph"
+    );
+    let result = apply_native(
         connection,
         graph,
         None,
         observation.as_ref(),
         config,
         meter_monitoring,
-    ) {
-        *observation = Some(recovered);
-        recovery.recovered();
-    } else {
-        if let Some(fault) = recovery.fault_kind() {
-            mark_degraded(observation, fault);
+    );
+    match result {
+        Ok(recovered) => {
+            tracing::info!(
+                event = "audio.recovery-succeeded",
+                generation = attempt.generation,
+                attempt = attempt.number,
+                fault = ?attempt.fault,
+                "the PipeWire audio graph was rebuilt"
+            );
+            *observation = Some(recovered);
+            recovery.recovered();
         }
-        recovery.failed(now_millis);
+        Err(error) => {
+            tracing::warn!(
+                event = "audio.recovery-failed",
+                generation = attempt.generation,
+                attempt = attempt.number,
+                fault = ?attempt.fault,
+                error_code = error.code,
+                error = %error.message,
+                "the PipeWire audio graph rebuild failed"
+            );
+            if let Some(fault) = recovery.fault_kind() {
+                mark_degraded(observation, fault);
+            }
+            recovery.failed(now_millis);
+        }
     }
 }
 
@@ -637,22 +739,41 @@ fn apply_native(
             recovery: "restart Noire; reinstall if the condition persists",
             retryable: true,
         })?;
-        *graph = Some(
-            LiveGraph::connect_with_latency(
-                connection,
-                &selected.node_name,
-                model,
-                match config.output.latency_profile {
-                    LatencyProfile::Low => StreamLatency::Low,
-                    LatencyProfile::Balanced => StreamLatency::Balanced,
-                },
-            )
-            .map_err(|error| EngineError {
-                code: "audio-graph-unavailable",
-                message: format!("the live PipeWire graph could not start: {error}"),
-                recovery: "verify PipeWire and the selected input, then retry",
-                retryable: true,
-            })?,
+        let latency = match config.output.latency_profile {
+            LatencyProfile::Low => StreamLatency::Low,
+            LatencyProfile::Balanced => StreamLatency::Balanced,
+        };
+        tracing::debug!(
+            event = "audio.graph-build-start",
+            input = %selected.node_name,
+            input_id = selected.global_id,
+            latency = ?latency,
+            "building the live PipeWire graph"
+        );
+        let connected =
+            LiveGraph::connect_with_latency(connection, &selected.node_name, model, latency)
+                .map_err(|error| {
+                    tracing::warn!(
+                        event = "audio.graph-build-failed",
+                        input = %selected.node_name,
+                        input_id = selected.global_id,
+                        error = %error,
+                        "the live PipeWire graph could not start"
+                    );
+                    EngineError {
+                        code: "audio-graph-unavailable",
+                        message: format!("the live PipeWire graph could not start: {error}"),
+                        recovery: "verify PipeWire and the selected input, then retry",
+                        retryable: true,
+                    }
+                })?;
+        *graph = Some(connected);
+        tracing::info!(
+            event = "audio.graph-ready",
+            input = %selected.node_name,
+            input_id = selected.global_id,
+            latency = ?latency,
+            "the live PipeWire graph is connected"
         );
         selected.label
     } else if config.input.mode == InputMode::Selected {
@@ -757,14 +878,29 @@ fn ensure_connection(
     connection: &mut Option<PipewireConnection>,
 ) -> Result<&PipewireConnection, EngineError> {
     if connection.is_none() {
-        *connection = Some(
-            PipewireConnection::connect_default().map_err(|error| EngineError {
+        tracing::debug!(
+            event = "pipewire.connect-attempt",
+            "connecting to the user PipeWire server"
+        );
+        let connected = PipewireConnection::connect_default().map_err(|error| {
+            tracing::warn!(
+                event = "pipewire.connect-failed",
+                error = %error,
+                "could not connect to the user PipeWire server"
+            );
+            EngineError {
                 code: "pipewire-unavailable",
                 message: format!("could not connect to the user PipeWire server: {error}"),
                 recovery: "start or repair the user PipeWire session, then retry",
                 retryable: true,
-            })?,
+            }
+        })?;
+        tracing::info!(
+            event = "pipewire.connected",
+            runtime_version = ?connected.runtime_version(),
+            "connected to the user PipeWire server"
         );
+        *connection = Some(connected);
     }
     connection.as_ref().ok_or_else(|| EngineError {
         code: "pipewire-unavailable",
@@ -779,6 +915,45 @@ fn refresh_registry(connection: &PipewireConnection) {
     for _ in 0..25 {
         let _ = connection.dispatch_once(Duration::from_millis(2));
     }
+}
+
+fn log_graph_snapshot(
+    graph: &LiveGraph,
+    event: &'static str,
+    fault: Option<RecoveryFault>,
+    detail: Option<&str>,
+) {
+    let live = graph.telemetry().snapshot();
+    let capture = graph.capture().telemetry().snapshot();
+    let source = graph.source().telemetry().snapshot();
+    tracing::warn!(
+        event = event,
+        fault = ?fault,
+        detail = ?detail,
+        input = %graph.target_node_name(),
+        demand = ?graph.demand(),
+        capture_state = ?graph.capture().state(),
+        source_state = ?graph.source().state(),
+        live_state = ?live.state,
+        input_samples = live.input_samples,
+        model_frames = live.model_frames,
+        model_errors = live.model_errors,
+        deadline_misses = live.deadline_misses,
+        transport_underflows = live.transport.underflows,
+        transport_overflows = live.transport.overflows,
+        transport_dropped_frames = live.transport.dropped_frames,
+        transport_generation_resets = live.transport.generation_resets,
+        capture_callbacks = capture.counters.callbacks,
+        capture_frames = capture.counters.frames,
+        capture_malformed_chunks = capture.counters.malformed_chunks,
+        capture_oversized_chunks = capture.counters.oversized_chunks,
+        capture_non_finite_samples = capture.counters.non_finite_samples,
+        source_callbacks = source.callbacks,
+        source_empty_dequeues = source.empty_dequeues,
+        source_missing_buffers = source.missing_buffers,
+        source_malformed_buffers = source.malformed_buffers,
+        "audio graph health snapshot"
+    );
 }
 
 fn input_descriptors(snapshot: &RegistrySnapshot) -> Vec<InputDescriptor> {

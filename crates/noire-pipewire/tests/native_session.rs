@@ -4,18 +4,99 @@
 
 use std::{
     error::Error,
-    fs, thread,
+    fs,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    thread,
     time::{Duration, Instant},
 };
 
 use noire_pipewire::{
-    CANONICAL_CAPTURE_FORMAT, CaptureStreamState, NativeCaptureStream, NegotiatedFormatEvent,
-    PipewireConnection, SYNTHETIC_SOURCE_RATE, SyntheticSource,
+    CANONICAL_CAPTURE_FORMAT, CaptureSink, CaptureStreamState, InputGeneration,
+    NativeCaptureStream, NegotiatedFormatEvent, PipewireConnection, SYNTHETIC_SOURCE_RATE,
+    SyntheticSource,
 };
 
 const SOURCE_NAME: &str = "noire.integration.source.44100";
 const SESSION_TIMEOUT: Duration = Duration::from_secs(10);
 const RSS_GROWTH_LIMIT_KIB: u64 = 16 * 1024;
+
+struct ResetThreadSink {
+    callback_thread: Option<thread::ThreadId>,
+    wrong_thread: Arc<AtomicBool>,
+    resets: Arc<AtomicU64>,
+}
+
+impl CaptureSink for ResetThreadSink {
+    fn reset(&mut self, _generation: InputGeneration) {
+        if self.callback_thread != Some(thread::current().id()) {
+            self.wrong_thread.store(true, Ordering::Release);
+        }
+        self.resets.fetch_add(1, Ordering::Relaxed);
+        // Widen the reset/process overlap that used to abort the daemon. This
+        // delay is test-only; production callbacks never sleep or block.
+        thread::sleep(Duration::from_millis(12));
+    }
+
+    fn write(&mut self, _generation: InputGeneration, _samples: &[f32]) {
+        self.callback_thread = Some(thread::current().id());
+    }
+}
+
+#[test]
+#[ignore = "requires a disposable native PipeWire session"]
+fn generation_resets_stay_on_the_data_thread_during_active_capture() -> Result<(), Box<dyn Error>> {
+    let connection = PipewireConnection::connect_default()?;
+    let source = SyntheticSource::connect(&connection, "noire.integration.reset-race")?;
+    wait_until(&connection, SESSION_TIMEOUT, || {
+        connection
+            .registry_snapshot_now()
+            .candidates()
+            .iter()
+            .any(|node| node.node_name == source.node_name())
+    })?;
+    let wrong_thread = Arc::new(AtomicBool::new(false));
+    let resets = Arc::new(AtomicU64::new(0));
+    let capture = NativeCaptureStream::connect_with_sink(
+        &connection,
+        source.node_name(),
+        ResetThreadSink {
+            callback_thread: None,
+            wrong_thread: Arc::clone(&wrong_thread),
+            resets: Arc::clone(&resets),
+        },
+        true,
+    )?;
+    wait_until(&connection, SESSION_TIMEOUT, || {
+        capture.telemetry().snapshot().counters.frames > 0
+    })?;
+    let mut requested = InputGeneration::INITIAL;
+    for _ in 0..100 {
+        requested = capture.advance_input_generation();
+        let _ = connection.dispatch_once(Duration::from_millis(1));
+        thread::sleep(Duration::from_millis(1));
+    }
+    wait_until(&connection, SESSION_TIMEOUT, || {
+        capture.telemetry().snapshot().generation == requested
+    })?;
+    let before = capture.telemetry().snapshot().counters.frames;
+    wait_until(&connection, SESSION_TIMEOUT, || {
+        capture.telemetry().snapshot().counters.frames > before + 4_800
+    })?;
+    assert!(!wrong_thread.load(Ordering::Acquire));
+    assert!(resets.load(Ordering::Relaxed) > 1);
+    assert_eq!(capture.state(), CaptureStreamState::Streaming);
+    assert!(capture.take_error().is_none());
+    assert!(connection.take_failure().is_none());
+    println!(
+        "NOIRE_CAPTURE_RESET_RACE commands=100 resets={} generation={}",
+        resets.load(Ordering::Relaxed),
+        requested.get()
+    );
+    Ok(())
+}
 
 #[test]
 #[ignore = "requires a disposable native PipeWire session"]

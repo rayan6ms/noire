@@ -52,6 +52,7 @@ test -S "$runtime_dir/pulse/native"
 cargo test --release --package noire-pipewire --features native-test \
     --test native_session --test phase4_session --test phase5_session \
     --locked -- --ignored --nocapture --test-threads=1 \
+    --skip generation_resets_stay_on_the_data_thread_during_active_capture \
     2>&1 | tee "$log_dir/native-session.log"
 
 cargo test --release --package noired --features native-test \
@@ -64,6 +65,15 @@ if grep -Eiq '(^|[^[:alpha:]])(xrun|underrun|overrun)([^[:alpha:]]|$)' \
     echo "The disposable PipeWire session reported an xrun" >&2
     exit 1
 fi
+
+# This regression deliberately stalls reset work past a graph quantum to
+# reproduce the former control/data-thread race. Run it after the xrun gate;
+# fault injection is not a steady-state scheduling qualification.
+cargo test --release --package noire-pipewire --features native-test \
+    --test native_session --locked \
+    generation_resets_stay_on_the_data_thread_during_active_capture \
+    -- --ignored --nocapture --test-threads=1 \
+    2>&1 | tee "$log_dir/callback-reset-race.log"
 
 kill "$pipewire_pulse_pid" "$wireplumber_pid" "$pipewire_pid" 2>/dev/null || true
 wait "$pipewire_pulse_pid" "$wireplumber_pid" "$pipewire_pid" 2>/dev/null || true

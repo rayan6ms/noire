@@ -2,7 +2,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
 use noire_dsp::{
@@ -31,6 +31,7 @@ struct TaggedSample {
 #[derive(Debug)]
 struct SharedState {
     generation: AtomicU64,
+    publication_enabled: AtomicBool,
     produced_frames: AtomicU64,
     output_callbacks: AtomicU64,
     output_frames: AtomicU64,
@@ -51,6 +52,7 @@ impl Default for SharedState {
     fn default() -> Self {
         Self {
             generation: AtomicU64::new(1),
+            publication_enabled: AtomicBool::new(true),
             produced_frames: AtomicU64::new(0),
             output_callbacks: AtomicU64::new(0),
             output_frames: AtomicU64::new(0),
@@ -142,6 +144,16 @@ pub struct BypassControl {
 }
 
 impl BypassControl {
+    /// Enables publication only while a source consumer drives output callbacks.
+    ///
+    /// Meter-only capture still processes audio but must not fill an idle queue.
+    #[cfg(any(feature = "pipewire-backend", test))]
+    pub(crate) fn set_publication_enabled(&self, enabled: bool) {
+        self.shared
+            .publication_enabled
+            .store(enabled, Ordering::Release);
+    }
+
     /// Invalidates queued samples and returns the new monotonic generation.
     #[must_use]
     pub fn request_resync(&self) -> u64 {
@@ -174,6 +186,14 @@ impl BypassCaptureSink {
     /// Returns `false` after requesting a bounded generation resynchronization
     /// when the block cannot fit atomically.
     pub(crate) fn write_processed(&mut self, samples: &[f32]) -> bool {
+        if !self
+            .control
+            .shared
+            .publication_enabled
+            .load(Ordering::Acquire)
+        {
+            return true;
+        }
         let generation = self.control.generation();
         if self.producer.slots() < samples.len() {
             self.record_overflow(samples.len());
@@ -282,6 +302,12 @@ pub struct BypassOutput {
 }
 
 impl BypassOutput {
+    /// Returns the atomic producer gate for native source lifecycle events.
+    #[cfg(feature = "pipewire-backend")]
+    pub(crate) fn publication_control(&self) -> BypassControl {
+        self.control.clone()
+    }
+
     /// Records an oversized graph request rejected before a typed destination
     /// slice can be formed.
     #[cfg(feature = "pipewire-backend")]
@@ -551,6 +577,31 @@ mod tests {
     #[cfg(feature = "pipewire-backend")]
     use crate::StreamLatency;
     use crate::{CaptureSink, InputGeneration};
+
+    #[test]
+    fn idle_source_does_not_fill_or_fault_the_producer_queue()
+    -> Result<(), super::BypassOutputError> {
+        let (mut producer, mut output, control, telemetry) = create_bypass_channel();
+        control.set_publication_enabled(false);
+        for _ in 0..100 {
+            assert!(producer.write_processed(&[0.75; MODEL_FRAME_SAMPLES]));
+        }
+        let idle = telemetry.snapshot();
+        assert_eq!(idle.current_frames, 0);
+        assert_eq!(idle.produced_frames, 0);
+        assert_eq!(idle.overflows, 0);
+        control.set_publication_enabled(true);
+        assert!(producer.write_processed(&[0.25; MODEL_FRAME_SAMPLES + 128]));
+        let mut samples = [0.0; 128];
+        assert!(!output.fill(&mut samples)?.startup);
+        assert!(
+            samples
+                .iter()
+                .all(|sample| *sample > 0.0 && *sample <= 0.25)
+        );
+        assert_eq!(telemetry.snapshot().overflows, 0);
+        Ok(())
+    }
 
     #[test]
     #[cfg(feature = "pipewire-backend")]

@@ -183,6 +183,15 @@ pub enum GraphHealthIssue {
     SourceFormat,
 }
 
+/// One graph health issue with the native detail retained for diagnostics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GraphHealthDiagnostic {
+    /// Broad recovery classification.
+    pub issue: GraphHealthIssue,
+    /// Native stream or format error, when one was provided.
+    pub detail: Option<String>,
+}
+
 impl std::fmt::Display for LiveGraphError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -363,23 +372,37 @@ impl LiveGraph {
     /// Removes and classifies one owner-thread health fault, if present.
     #[must_use]
     pub fn take_health_issue(&self) -> Option<GraphHealthIssue> {
-        if self.capture.state() == CaptureStreamState::Error {
-            return Some(GraphHealthIssue::CaptureStream);
+        self.take_health_diagnostic()
+            .map(|diagnostic| diagnostic.issue)
+    }
+
+    /// Removes and classifies one owner-thread health fault with its detail.
+    #[must_use]
+    pub fn take_health_diagnostic(&self) -> Option<GraphHealthDiagnostic> {
+        if self.capture.state() == CaptureStreamState::Error || self.capture.has_error() {
+            return Some(GraphHealthDiagnostic {
+                issue: GraphHealthIssue::CaptureStream,
+                detail: self.capture.take_error(),
+            });
         }
-        if self.source.state() == SourceStreamState::Error || self.source.take_error().is_some() {
-            return Some(GraphHealthIssue::SourceStream);
+        if self.source.state() == SourceStreamState::Error || self.source.has_error() {
+            return Some(GraphHealthDiagnostic {
+                issue: GraphHealthIssue::SourceStream,
+                detail: self.source.take_error(),
+            });
         }
-        if matches!(
-            self.capture.take_negotiated_format(),
-            Some(NegotiatedFormatEvent::Rejected(_))
-        ) {
-            return Some(GraphHealthIssue::CaptureFormat);
+        if let Some(NegotiatedFormatEvent::Rejected(error)) = self.capture.take_negotiated_format()
+        {
+            return Some(GraphHealthDiagnostic {
+                issue: GraphHealthIssue::CaptureFormat,
+                detail: Some(error.to_string()),
+            });
         }
-        if matches!(
-            self.source.take_negotiated_format(),
-            Some(NegotiatedFormatEvent::Rejected(_))
-        ) {
-            return Some(GraphHealthIssue::SourceFormat);
+        if let Some(NegotiatedFormatEvent::Rejected(error)) = self.source.take_negotiated_format() {
+            return Some(GraphHealthDiagnostic {
+                issue: GraphHealthIssue::SourceFormat,
+                detail: Some(error.to_string()),
+            });
         }
         None
     }

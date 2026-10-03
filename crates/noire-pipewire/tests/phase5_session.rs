@@ -327,6 +327,91 @@ fn virtual_source_carries_noise_reduced_audio() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[test]
+#[ignore = "requires a disposable native PipeWire and WirePlumber session"]
+fn active_call_keeps_its_source_and_consumer_through_repeated_resets() -> Result<(), Box<dyn Error>>
+{
+    let connection = PipewireConnection::connect_default()?;
+    let selected = SyntheticSource::connect(&connection, "noire.integration.call-reset-race")?;
+    wait_until(&connection, SESSION_TIMEOUT, || {
+        connection
+            .registry_snapshot_now()
+            .candidates()
+            .iter()
+            .any(|node| node.node_name == selected.node_name())
+    })?;
+    let graph = LiveGraph::connect(
+        &connection,
+        selected.node_name(),
+        FastEnhancerFactory::new()?.create()?,
+    )?;
+    let consumer = NativeCaptureStream::connect(&connection, graph.source().node_name())?;
+    wait_graph(
+        &connection,
+        &graph,
+        SESSION_TIMEOUT,
+        "call activation",
+        || {
+            let _ = graph.service_demand(Instant::now());
+            graph.capture().state() == CaptureStreamState::Streaming
+                && consumer.telemetry().snapshot().counters.frames > 0
+        },
+    )?;
+    let source_id = graph.source().node_id();
+    let duration = std::env::var("NOIRE_CALL_TEST_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map_or(Duration::from_secs(5), Duration::from_secs);
+    let deadline = Instant::now() + duration;
+    let mut reset_commands = 0;
+    let mut last_reset = Instant::now();
+    let mut last_progress = Instant::now();
+    let mut frames = consumer.telemetry().snapshot().counters.frames;
+    let mut requested = graph.capture().telemetry().snapshot().generation;
+    while Instant::now() < deadline {
+        let _ = connection.dispatch_once(Duration::from_millis(1));
+        let _ = graph.service_demand(Instant::now())?;
+        if last_reset.elapsed() >= Duration::from_millis(50) {
+            let _ = graph.capture().advance_input_generation();
+            graph.source().clear_sensitive();
+            graph.source().discard_pending_sensitive();
+            // Keep a call consumer attached while the UI meter subscription
+            // and reset requests change on the owner thread.
+            graph.set_meter_monitoring(reset_commands % 2 == 0)?;
+            requested = graph.capture().advance_input_generation();
+            reset_commands += 1;
+            last_reset = Instant::now();
+        }
+        let next_frames = consumer.telemetry().snapshot().counters.frames;
+        if next_frames > frames {
+            frames = next_frames;
+            last_progress = Instant::now();
+        }
+        assert!(
+            last_progress.elapsed() < Duration::from_secs(2),
+            "call audio stopped advancing"
+        );
+        assert_eq!(graph.source().node_id(), source_id);
+        assert!(graph.take_health_diagnostic().is_none());
+        assert!(consumer.take_error().is_none());
+        assert!(connection.take_failure().is_none());
+    }
+    wait_graph(&connection, &graph, SESSION_TIMEOUT, "final reset", || {
+        graph.capture().telemetry().snapshot().generation == requested
+    })?;
+    assert!(reset_commands >= 10);
+    assert!(frames > 48_000);
+    assert_eq!(graph.source().state(), SourceStreamState::Streaming);
+    assert_eq!(consumer.state(), CaptureStreamState::Streaming);
+    assert_eq!(graph.telemetry().snapshot().model_errors, 0);
+    println!(
+        "NOIRE_CALL_RESET_RACE duration_seconds={} resets={reset_commands} source_id={source_id} consumer_frames={frames}",
+        duration.as_secs()
+    );
+    Ok(())
+}
+
 fn recording_channel() -> (RecordingSink, Consumer<f32>, Arc<AtomicU64>) {
     let (producer, consumer) = RingBuffer::new(RECORDING_CAPACITY);
     let dropped = Arc::new(AtomicU64::new(0));

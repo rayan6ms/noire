@@ -106,7 +106,9 @@ pub struct CaptureReport {
 }
 
 /// Allocation-free destination called with validated canonical samples.
-pub trait CaptureSink {
+///
+/// Native streams move this sink to `PipeWire`'s data thread.
+pub trait CaptureSink: Send {
     /// Clears queued/stateful data before samples from a new input arrive.
     fn reset(&mut self, _generation: InputGeneration) {}
 
@@ -480,7 +482,7 @@ mod native {
         }
     }
 
-    type SharedProcessor = Rc<RefCell<CaptureProcessor<ErasedSink>>>;
+    type NativeProcessor = CaptureProcessor<ErasedSink>;
 
     /// Stream lifecycle state copied for the control plane.
     #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -511,6 +513,7 @@ mod native {
     struct ControlState {
         stream_state: CaptureStreamState,
         format_event: Option<NegotiatedFormatEvent>,
+        stream_error: Option<String>,
     }
 
     /// Construction/connect failure for the native capture stream.
@@ -541,12 +544,12 @@ mod native {
 
     /// Connected native capture stream with allocation-free process user data.
     pub struct NativeCaptureStream {
-        _listener: stream::StreamListener<SharedProcessor>,
+        _control_listener: stream::StreamListener<()>,
+        _process_listener: stream::StreamListener<NativeProcessor>,
         stream: StreamRc,
         control: Rc<RefCell<ControlState>>,
         telemetry: CaptureTelemetry,
         generation_command: Arc<AtomicU64>,
-        processor: SharedProcessor,
     }
 
     impl NativeCaptureStream {
@@ -640,17 +643,23 @@ mod native {
             let control = Rc::new(RefCell::new(ControlState::default()));
             let telemetry = CaptureTelemetry::default();
             let generation_command = Arc::new(AtomicU64::new(InputGeneration::INITIAL.get()));
-            let processor = Rc::new(RefCell::new(CaptureProcessor::with_generation_command(
+            let processor = CaptureProcessor::with_generation_command(
                 ErasedSink(Box::new(sink)),
                 telemetry.clone(),
                 Arc::clone(&generation_command),
-            )));
+            );
             let state_control = Rc::clone(&control);
             let format_control = Rc::clone(&control);
-            let listener = stream
-                .add_local_listener_with_user_data(Rc::clone(&processor))
+            // RT_PROCESS runs on PipeWire's data thread. Keep its mutable
+            // userdata separate from owner-thread state/format callbacks.
+            let control_listener = stream
+                .add_local_listener::<()>()
                 .state_changed(move |_stream, _processor, _old, new| {
-                    state_control.borrow_mut().stream_state = map_stream_state(&new);
+                    let mut control = state_control.borrow_mut();
+                    control.stream_state = map_stream_state(&new);
+                    if let StreamState::Error(message) = new {
+                        control.stream_error = Some(message);
+                    }
                 })
                 .param_changed(move |_stream, _processor, id, param| {
                     if id != ParamType::Format.as_raw() {
@@ -665,6 +674,9 @@ mod native {
                     );
                     format_control.borrow_mut().format_event = Some(event);
                 })
+                .register()?;
+            let process_listener = stream
+                .add_local_listener_with_user_data(processor)
                 .process(process_available_buffers)
                 .register()?;
 
@@ -682,12 +694,12 @@ mod native {
             }
             stream.connect(Direction::Input, target_node_id, flags, &mut params)?;
             Ok(Self {
-                _listener: listener,
+                _control_listener: control_listener,
+                _process_listener: process_listener,
                 stream,
                 control,
                 telemetry,
                 generation_command,
-                processor,
             })
         }
 
@@ -695,6 +707,18 @@ mod native {
         #[must_use]
         pub fn state(&self) -> CaptureStreamState {
             self.control.borrow().stream_state
+        }
+
+        /// Removes the latest native stream error reported by `PipeWire`.
+        #[must_use]
+        pub fn take_error(&self) -> Option<String> {
+            self.control.borrow_mut().stream_error.take()
+        }
+
+        /// Returns whether `PipeWire` has reported an unconsumed stream error.
+        #[must_use]
+        pub fn has_error(&self) -> bool {
+            self.control.borrow().stream_error.is_some()
         }
 
         /// Removes the latest format event for control-plane logging/policy.
@@ -722,17 +746,10 @@ mod native {
                     Ordering::Acquire,
                 ) {
                     Ok(_) => {
-                        let generation = InputGeneration(next);
-                        // PipeWire may deliver a demand edge re-entrantly from the
-                        // source callback while the capture processor is still
-                        // handling a buffer. The atomic command is authoritative;
-                        // apply it eagerly only when the callback does not already
-                        // hold the processor borrow. Otherwise the next buffer
-                        // synchronizes the generation before accepting samples.
-                        if let Ok(mut processor) = self.processor.try_borrow_mut() {
-                            processor.reset_input_generation(generation);
-                        }
-                        return generation;
+                        // Only the data thread may touch the processor. Its next
+                        // buffer applies this command before accepting samples,
+                        // even when a reset overlaps an in-flight callback.
+                        return InputGeneration(next);
                     }
                     Err(actual) => current = actual,
                 }
@@ -760,9 +777,8 @@ mod native {
 
     fn process_available_buffers(
         stream: &pipewire::stream::Stream,
-        processor: &mut SharedProcessor,
+        processor: &mut NativeProcessor,
     ) {
-        let mut processor = processor.borrow_mut();
         while let Some(mut buffer) = stream.dequeue_buffer() {
             let datas = buffer.datas_mut();
             if datas.len() != 1 {

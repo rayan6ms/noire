@@ -153,7 +153,7 @@ struct SourceAudio {
 
 #[derive(Debug)]
 struct SourceProcessor {
-    audio: Rc<RefCell<SourceAudio>>,
+    audio: SourceAudio,
     audio_command: Arc<AtomicU8>,
     telemetry: SourceTelemetry,
 }
@@ -186,10 +186,10 @@ impl From<pipewire::Error> for SourceStreamError {
 
 /// Stable, non-lingering `Audio/Source` backed by the processed SPSC consumer.
 pub struct VirtualSourceStream {
-    _listener: stream::StreamListener<SourceProcessor>,
+    _control_listener: stream::StreamListener<()>,
+    _process_listener: stream::StreamListener<SourceProcessor>,
     stream: StreamRc,
     control: Rc<RefCell<ControlState>>,
-    audio: Rc<RefCell<SourceAudio>>,
     audio_command: Arc<AtomicU8>,
     telemetry: SourceTelemetry,
 }
@@ -233,24 +233,32 @@ impl VirtualSourceStream {
             *keys::NODE_LATENCY => latency.node_property(),
         };
         let stream = StreamRc::new(connection.core_clone(), "noire-virtual-source", properties)?;
+        let publication = output.publication_control();
+        publication.set_publication_enabled(false);
         let control = Rc::new(RefCell::new(ControlState::default()));
         let telemetry = SourceTelemetry::default();
-        let audio = Rc::new(RefCell::new(SourceAudio {
+        let audio = SourceAudio {
             output,
             scratch: [0.0; MAX_CALLBACK_FRAMES],
-        }));
+        };
         let audio_command = Arc::new(AtomicU8::new(AUDIO_COMMAND_NONE));
         let processor = SourceProcessor {
-            audio: Rc::clone(&audio),
+            audio,
             audio_command: Arc::clone(&audio_command),
             telemetry: telemetry.clone(),
         };
 
         let state_control = Rc::clone(&control);
         let format_control = Rc::clone(&control);
-        let listener = stream
-            .add_local_listener_with_user_data(processor)
+        // Never share callback userdata between the owner thread and the
+        // RT_PROCESS data thread; only atomics cross that boundary.
+        let control_listener = stream
+            .add_local_listener::<()>()
             .state_changed(move |_stream, _processor, _old, new| {
+                // A paused source has no consumer callback to drain its queue.
+                // Gate the producer instead of touching consumer-owned audio
+                // from this thread, including during meter-only capture.
+                publication.set_publication_enabled(matches!(new, StreamState::Streaming));
                 let mut control = state_control.borrow_mut();
                 control.stream_state = map_stream_state(&new);
                 match new {
@@ -281,6 +289,9 @@ impl VirtualSourceStream {
                 );
                 format_control.borrow_mut().format_event = Some(event);
             })
+            .register()?;
+        let process_listener = stream
+            .add_local_listener_with_user_data(processor)
             .process(process_available_buffers)
             .register()?;
 
@@ -294,10 +305,10 @@ impl VirtualSourceStream {
             &mut params,
         )?;
         Ok(Self {
-            _listener: listener,
+            _control_listener: control_listener,
+            _process_listener: process_listener,
             stream,
             control,
-            audio,
             audio_command,
             telemetry,
         })
@@ -333,24 +344,20 @@ impl VirtualSourceStream {
         resolve_demand_transition(&mut self.control.borrow_mut(), now)
     }
 
-    /// Clears all source-owned sensitive samples without overlapping a callback borrow.
+    /// Schedules clearing source-owned samples before the next buffer is published.
     pub fn clear_sensitive(&self) {
         self.schedule_audio_command(AUDIO_COMMAND_CLEAR);
     }
 
-    /// Drains pending source audio without ending the current generation.
+    /// Schedules draining source audio without ending the current generation.
     pub fn discard_pending_sensitive(&self) {
         self.schedule_audio_command(AUDIO_COMMAND_DISCARD);
     }
 
     fn schedule_audio_command(&self, command: u8) {
-        // CLEAR dominates DISCARD when control events race. The atomic command
-        // is authoritative; applying it eagerly is only an optimization for
-        // the common owner-thread path where no process callback holds audio.
+        // CLEAR dominates DISCARD when control events race. Only the data
+        // thread may touch audio; apply the command in its next callback.
         self.audio_command.fetch_max(command, Ordering::AcqRel);
-        if let Ok(mut audio) = self.audio.try_borrow_mut() {
-            apply_audio_command(&mut audio, &self.audio_command);
-        }
     }
 
     /// Removes the latest negotiated format event.
@@ -365,6 +372,12 @@ impl VirtualSourceStream {
         self.control.borrow_mut().stream_error.take()
     }
 
+    /// Returns whether `PipeWire` has reported an unconsumed stream error.
+    #[must_use]
+    pub fn has_error(&self) -> bool {
+        self.control.borrow().stream_error.is_some()
+    }
+
     /// Returns a lock-free source-boundary telemetry handle.
     #[must_use]
     pub fn telemetry(&self) -> SourceTelemetry {
@@ -372,7 +385,15 @@ impl VirtualSourceStream {
     }
 }
 
+impl Drop for VirtualSourceStream {
+    fn drop(&mut self) {
+        // Stop data-thread callbacks before their exclusive userdata is freed.
+        let _ = self.stream.disconnect();
+    }
+}
+
 fn process_available_buffers(stream: &pipewire::stream::Stream, processor: &mut SourceProcessor) {
+    apply_audio_command(&mut processor.audio, &processor.audio_command);
     processor
         .telemetry
         .counters
@@ -434,11 +455,7 @@ fn process_available_buffers(stream: &pipewire::stream::Stream, processor: &mut 
             || !bytes.len().is_multiple_of(BYTES_PER_SAMPLE)
         {
             bytes.fill(0);
-            processor
-                .audio
-                .borrow_mut()
-                .output
-                .reject_oversized_request(frame_count);
+            processor.audio.output.reject_oversized_request(frame_count);
             let chunk = data.chunk_mut();
             *chunk.offset_mut() = 0;
             *chunk.size_mut() = 0;
@@ -446,9 +463,8 @@ fn process_available_buffers(stream: &pipewire::stream::Stream, processor: &mut 
             continue;
         }
 
-        let mut audio = processor.audio.borrow_mut();
-        apply_audio_command(&mut audio, &processor.audio_command);
-        let SourceAudio { output, scratch } = &mut *audio;
+        apply_audio_command(&mut processor.audio, &processor.audio_command);
+        let SourceAudio { output, scratch } = &mut processor.audio;
         let samples = &mut scratch[..frame_count];
         let published_frames = fill_output(output, samples);
         for (sample, destination) in samples[..published_frames]
