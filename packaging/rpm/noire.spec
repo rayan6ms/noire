@@ -1,4 +1,4 @@
-%{!?noire_version:%global noire_version 1.1.15}
+%{!?noire_version:%global noire_version 1.1.16}
 %{!?noire_release:%global noire_release 1}
 %{!?noire_daemon_stage:%global noire_daemon_stage /nonexistent/noire-daemon}
 %{!?noire_ui_stage:%global noire_ui_stage /nonexistent/noire-ui}
@@ -73,6 +73,11 @@ cp -a %{noire_ui_stage}/. %{buildroot}/
 /usr/share/man/man1/noire.1*
 
 %changelog
+* Sat Oct 03 2026 rayan6ms - 1.1.16-1
+- Fix an audio reset race that aborted the daemon and disconnected the microphone
+- Prevent idle metering from overflowing the source output queue
+- Retain native audio failure details in diagnostic logs
+
 * Sun Sep 13 2026 rayan6ms - 1.1.15-1
 - Render a crisp title-bar symbol and add a continuous suppression strength slider
 - Honor minimized startup while waiting for desktop tray registration
