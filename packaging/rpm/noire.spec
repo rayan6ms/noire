@@ -77,6 +77,7 @@ cp -a %{noire_ui_stage}/. %{buildroot}/
 - Fix an audio reset race that aborted the daemon and disconnected the microphone
 - Prevent idle metering from overflowing the source output queue
 - Retain native audio failure details in diagnostic logs
+- Update Rustls to 0.23.45 to address RUSTSEC-2026-0285
 
 * Sun Sep 13 2026 rayan6ms - 1.1.15-1
 - Render a crisp title-bar symbol and add a continuous suppression strength slider

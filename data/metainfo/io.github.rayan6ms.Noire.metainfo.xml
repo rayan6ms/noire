@@ -38,6 +38,7 @@
           <li>Prevents idle metering from filling the virtual microphone output queue.</li>
           <li>Preserves native stream errors and graph recovery details in diagnostic logs.</li>
           <li>Adds regression coverage for overlapping resets and continuous microphone connections.</li>
+          <li>Updates Rustls to 0.23.45 to address a TLS handshake validation advisory.</li>
         </ul>
       </description>
     </release>
